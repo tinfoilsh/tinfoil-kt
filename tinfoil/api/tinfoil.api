@@ -111,8 +111,8 @@ public final class sh/tinfoil/EnclaveHttpClient : java/lang/AutoCloseable, okhtt
 }
 
 public final class sh/tinfoil/EnclaveHttpClient$Companion {
-	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class sh/tinfoil/Measurement {
@@ -158,6 +158,26 @@ public final class sh/tinfoil/ReferenceSource$Companion {
 	public final fun getEMBEDDED-_jS_QyA ()Ljava/lang/String;
 	public final fun getENDORSEMENT-_jS_QyA ()Ljava/lang/String;
 	public final fun getPOLICY-_jS_QyA ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/RouterHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+	public static final field Companion Lsh/tinfoil/RouterHttpClient$Companion;
+	public synthetic fun <init> (Lsh/tinfoil/internal/EnclaveConnection;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun ensureVerified (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public final fun getCurrent ()Lsh/tinfoil/Verification;
+	public final fun getEnclave ()Ljava/lang/String;
+	public final fun getPin ()Lsh/tinfoil/Pin;
+	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
+	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class sh/tinfoil/RouterHttpClient$Companion {
+	public final fun create (Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/RouterHttpClient$Companion;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class sh/tinfoil/RuntimeReference {
