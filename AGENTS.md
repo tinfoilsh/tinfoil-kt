@@ -13,6 +13,10 @@ Guidance for AI agents working in this repository.
   library is built from.
 - `ehbp.properties`: the encrypted-http-body-protocol commit that the EHBP
   client is built from, as an included build of a checkout; see the README.
+- `tinfoil-conformance.properties`: the tinfoil-conformance commit whose
+  full-verify vectors the conformance tests run, and their number.
+- `tinfoil/src/androidTestConformance`: the conformance tests, compiled only
+  with `TINFOIL_CONFORMANCE=1`; see the README.
 
 ## The verifier is not written here
 
@@ -98,6 +102,17 @@ README.
   re-declare its calls.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
+- The verifier library's test-only entry points, whose names contain
+  `DangerousTestOnly`, replace the trust anchors and the clock. Only the
+  conformance tests in `tinfoil/src/androidTestConformance` call them; code
+  under `src/main` never names them, and a library that has them is never
+  packaged or published. Do not weaken or bypass the build's checks for
+  this (`checkVerifierLibraryEntryPoints` and the refusal of release tasks
+  under `TINFOIL_CONFORMANCE=1`).
+- A conformance vector that fails is a finding to investigate. Do not add it
+  to the known divergences in `ConformanceVectorTest`, and do not change the
+  decoding or the error classification to make it pass, without a decision
+  from a maintainer.
 - Comments and test names describe this code; they do not cite other SDKs.
 - Live tests take credentials from the environment and skip without them.
   An instrumented test receives the API key as the instrumentation argument
