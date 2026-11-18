@@ -108,9 +108,14 @@ class EnclaveHttpClientTest {
             "an enclave with a backslash" to { enclave.client(enclave = "localhost\\x") },
             "a pin that names nothing" to { enclave.client(pin = Pin()) },
             "a pin of empty strings" to { enclave.client(pin = Pin(repo = "", project = "")) },
-            "EHBP" to { enclave.client(transportMode = TransportMode.Ehbp) },
-            "EHBP with a proxy" to {
-                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "https://proxy.example/")
+            "a proxy over HTTP that is not on this machine" to {
+                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "http://proxy.example/")
+            },
+            "a proxy with credentials" to {
+                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "https://user:hunter2@proxy.example/")
+            },
+            "a proxy with a query" to {
+                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "https://proxy.example/?key=hunter2")
             },
             "a proxy base URL over TLS" to { enclave.client(baseUrl = "https://proxy.example/") },
             "a base URL on another port" to { enclave.client(baseUrl = "https://localhost:1/") },

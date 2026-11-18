@@ -87,6 +87,16 @@ internal object Urls {
     }
 
     /**
+     * Whether [url]'s host, as it is written, is this machine: `localhost`
+     * or a loopback IP address, which is to say `127.0.0.0/8` or `::1`. No
+     * name is resolved, so DNS cannot make a remote host pass.
+     */
+    fun isLoopback(url: HttpUrl): Boolean {
+        val host = url.host
+        return host == "localhost" || host == "::1" || (isDottedIpv4(host) && host.startsWith("127."))
+    }
+
+    /**
      * A relay: a host with an optional port, held to the rules for an
      * enclave.
      */
