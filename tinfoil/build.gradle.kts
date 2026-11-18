@@ -1,4 +1,8 @@
+import groovy.json.JsonException
+import groovy.json.JsonSlurper
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.android.library)
@@ -39,9 +43,189 @@ val unpackTinfoilGo by tasks.registering(Sync::class) {
 }
 val tinfoilGoDir = layout.buildDirectory.dir("tinfoil-go").get().asFile
 
+// TINFOIL_CONFORMANCE=1, or the tinfoilConformance Gradle property, selects
+// the conformance build: TINFOIL_GO_AAR then names a verifier library built
+// with MOBILE_BUILD_TAGS=tinfoil_conformance, and the conformance tests are
+// compiled against it. That library has two test-only entry points, which
+// replace the trust anchors and set the clock, so nothing built in this mode
+// may be packaged or published.
+val isConformanceBuild: Boolean = providers.environmentVariable("TINFOIL_CONFORMANCE")
+    .orElse(providers.gradleProperty("tinfoilConformance"))
+    .orNull
+    .let { setting ->
+        when (setting) {
+            null, "", "0" -> false
+            "1" -> true
+            else -> throw GradleException("TINFOIL_CONFORMANCE must be 1 or 0, not \"$setting\"")
+        }
+    }
+
+// Fails the build when the unpacked verifier library is not the kind that
+// this build is for: a test-only entry point outside the conformance build,
+// or none in it.
+abstract class CheckVerifierLibraryEntryPoints : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val library: DirectoryProperty
+
+    @get:Input
+    abstract val conformanceBuild: Property<Boolean>
+
+    @TaskAction
+    fun check() {
+        val directory = library.get().asFile
+        val jar = directory.resolve("classes.jar")
+        val nativeLibraries = directory.resolve("jni").walk().filter { it.isFile }.toList()
+        if (!jar.isFile || nativeLibraries.isEmpty()) {
+            throw GradleException("The verifier library in $directory has no classes or no native libraries")
+        }
+        // Names survive as plain text in a class file and in a native
+        // library, so each is searched as bytes.
+        val parts = mutableMapOf<String, String>()
+        ZipFile(jar).use { zip ->
+            for (entry in zip.entries()) {
+                if (!entry.isDirectory) {
+                    parts["classes.jar!/${entry.name}"] = zip.getInputStream(entry).use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+                }
+            }
+        }
+        for (file in nativeLibraries) {
+            parts[file.relativeTo(directory).path] = file.readBytes().toString(Charsets.ISO_8859_1)
+        }
+        val carriers = parts.filterValues { it.contains(MARKER, ignoreCase = true) }.keys
+        if (!conformanceBuild.get()) {
+            if (carriers.isNotEmpty()) {
+                throw GradleException(
+                    "TINFOIL_GO_AAR names a verifier library with test-only entry points, which replace the trust " +
+                        "anchors and must never ship (found in ${carriers.joinToString()}). Build the library " +
+                        "without MOBILE_BUILD_TAGS; only the conformance tests, with TINFOIL_CONFORMANCE=1, use one " +
+                        "that has them.",
+                )
+            }
+            return
+        }
+        val classes = parts.filterKeys { it.startsWith("classes.jar!/") }.values
+        val missing = ENTRY_POINTS.filter { entryPoint -> classes.none { it.contains(entryPoint) } } +
+            nativeLibraries.map { it.relativeTo(directory).path }.filter { it !in carriers }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "TINFOIL_CONFORMANCE=1 needs a verifier library built with MOBILE_BUILD_TAGS=tinfoil_conformance, " +
+                    "and TINFOIL_GO_AAR names one without its test-only entry points (missing: " +
+                    "${missing.joinToString()})",
+            )
+        }
+    }
+
+    private companion object {
+        const val MARKER = "DangerousTestOnly"
+        val ENTRY_POINTS = listOf("newDangerousTestOnlyVerifier", "dangerousTestOnlyVerifyAt")
+    }
+}
+
+// The check has no outputs, so it runs in every build.
+val checkVerifierLibraryEntryPoints by tasks.registering(CheckVerifierLibraryEntryPoints::class) {
+    library.set(layout.dir(unpackTinfoilGo.map { it.destinationDir }))
+    conformanceBuild.set(isConformanceBuild)
+}
+
 // Every variant's native-library, keep-rule and compile tasks read the
 // unpacked library, and each depends on preBuild.
-tasks.named("preBuild") { dependsOn(unpackTinfoilGo) }
+tasks.named("preBuild") { dependsOn(unpackTinfoilGo, checkVerifierLibraryEntryPoints) }
+
+// The conformance build exists to run instrumented tests. A task that
+// packages the library, belongs to the release variant or publishes anything
+// is refused before any task runs, so that the test-only verifier library
+// cannot reach an artifact of this SDK.
+if (isConformanceBuild) {
+    val projectPrefix = "${project.path}:"
+    val refusedNames = Regex("(?i).*release.*|publish.*|bundle.*Aar")
+    gradle.taskGraph.whenReady {
+        val refused = allTasks.map { it.path }
+            .filter { it.startsWith(projectPrefix) && refusedNames.matches(it.removePrefix(projectPrefix)) }
+        if (refused.isNotEmpty()) {
+            throw GradleException(
+                "TINFOIL_CONFORMANCE=1 builds against the test-only verifier library, which must never ship, " +
+                    "so it only runs the instrumented tests. Refused: ${refused.take(5).joinToString()}" +
+                    if (refused.size > 5) " and ${refused.size - 5} more" else "",
+            )
+        }
+    }
+}
+
+// The conformance tests run the full-verify vectors of the conformance suite
+// at the commit in tinfoil-conformance.properties. TINFOIL_CONFORMANCE_VECTORS,
+// or the tinfoilConformanceVectors Gradle property, names the suite's vectors
+// directory. Only the full-verify vectors are packaged, as assets of the test
+// APK; every JSON file in the directory must parse, so that a vector broken
+// by an edit fails the build rather than drops out.
+abstract class PackageConformanceVectors : DefaultTask() {
+    @get:Input
+    abstract val vectorsDirectory: Property<String>
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val vectorFiles: ConfigurableFileCollection
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val pin: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun pack() {
+        val source = vectorsDirectory.get().takeIf { it.isNotEmpty() }?.let(::File)
+            ?: throw GradleException(
+                "TINFOIL_CONFORMANCE=1 needs TINFOIL_CONFORMANCE_VECTORS, the conformance suite's vectors directory",
+            )
+        if (!source.isDirectory) {
+            throw GradleException("TINFOIL_CONFORMANCE_VECTORS names no directory: $source")
+        }
+        val pinned = Properties().apply { pin.get().asFile.inputStream().use(::load) }
+        val expected = pinned.getProperty(COUNT)?.toIntOrNull()
+            ?: throw GradleException("${pin.get().asFile.name} names no $COUNT")
+
+        val output = outputDir.get().asFile
+        output.deleteRecursively()
+        val vectors = output.resolve("conformance/vectors")
+        var packaged = 0
+        for (file in source.walk().filter { it.isFile && it.extension == "json" }.sortedBy { it.path }) {
+            val parsed = try {
+                JsonSlurper().parse(file)
+            } catch (e: JsonException) {
+                throw GradleException("Conformance vector $file is not JSON: ${e.message}", e)
+            }
+            if ((parsed as? Map<*, *>)?.get("stage") != FULL_VERIFY_STAGE) {
+                continue
+            }
+            file.copyTo(vectors.resolve(file.relativeTo(source).path))
+            packaged++
+        }
+        if (packaged != expected) {
+            throw GradleException(
+                "Found $packaged full-verify vectors under $source, and ${pin.get().asFile.name} pins $expected. " +
+                    "Check out the suite at the pinned commit, ${pinned.getProperty("commit")}.",
+            )
+        }
+        pin.get().asFile.copyTo(output.resolve("conformance/pin.properties"))
+    }
+
+    private companion object {
+        const val FULL_VERIFY_STAGE = "verify-attestation-v3"
+        const val COUNT = "fullVerifyVectors"
+    }
+}
+
+val packageConformanceVectors by tasks.registering(PackageConformanceVectors::class) {
+    val directory = providers.environmentVariable("TINFOIL_CONFORMANCE_VECTORS")
+        .orElse(providers.gradleProperty("tinfoilConformanceVectors"))
+        .map { rootProject.layout.projectDirectory.asFile.resolve(it).normalize().path }
+        .orElse("")
+    vectorsDirectory.set(directory)
+    vectorFiles.from(directory.map { path -> if (path.isEmpty()) files() else fileTree(path) { include("**/*.json") } })
+    pin.set(rootProject.layout.projectDirectory.file("tinfoil-conformance.properties"))
+}
 
 // The SDK's version is the Gradle project's, set in gradle.properties. It is
 // compiled in as a constant, from a source file that is written here.
@@ -82,6 +266,12 @@ val generateSdkVersion by tasks.registering(GenerateSdkVersion::class) {
 androidComponents {
     onVariants { variant ->
         variant.sources.java?.addGeneratedSourceDirectory(generateSdkVersion, GenerateSdkVersion::outputDir)
+        if (isConformanceBuild) {
+            // Assets of the test APK only; a library's own assets would be
+            // part of its AAR.
+            variant.androidTest?.sources?.assets
+                ?.addGeneratedSourceDirectory(packageConformanceVectors, PackageConformanceVectors::outputDir)
+        }
     }
 }
 
@@ -96,6 +286,12 @@ android {
     }
 
     sourceSets["main"].jniLibs.srcDir(tinfoilGoDir.resolve("jni"))
+    if (isConformanceBuild) {
+        // These tests call the test-only entry points, which only the
+        // conformance build of the verifier library has, so they are not
+        // sources of an ordinary build.
+        sourceSets["androidTest"].kotlin.srcDir("src/androidTestConformance/kotlin")
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -309,6 +309,49 @@ it. Never write it into a file:
   -Pandroid.testInstrumentationRunnerArguments.tinfoilApiKey="$TINFOIL_API_KEY"
 ```
 
+### Conformance tests
+
+`ConformanceVectorTest` runs the full-verify vectors of the
+[conformance suite](https://github.com/tinfoilsh/tinfoil-conformance) through
+the verifier library and through this SDK's decoding and error
+classification, and compares each verdict, rejection layer and verified fact
+with what the vector expects. The vectors are those of the commit in
+`tinfoil-conformance.properties`, which also records how many there are.
+
+A vector brings its own trust anchors and its own time, so these tests need a
+verifier library with two test-only entry points that accept them. It is
+built from the same tinfoil-go commit with `MOBILE_BUILD_TAGS`:
+
+```bash
+# in a tinfoil-go checkout at the commit in tinfoil-go.properties
+MOBILE_BUILD_TAGS=tinfoil_conformance \
+  bash scripts/build-mobile-android.sh /path/to/TinfoilGo-conformance.aar
+
+# the vectors
+git clone https://github.com/tinfoilsh/tinfoil-conformance ../tinfoil-conformance
+git -C ../tinfoil-conformance checkout "$(sed -n 's/^commit=//p' tinfoil-conformance.properties)"
+
+# in this repository, with a running emulator or a device
+TINFOIL_CONFORMANCE=1 \
+TINFOIL_GO_AAR=/path/to/TinfoilGo-conformance.aar \
+TINFOIL_CONFORMANCE_VECTORS=../tinfoil-conformance/vectors \
+./gradlew :tinfoil:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=sh.tinfoil.internal.verification.ConformanceVectorTest
+```
+
+The build packages the full-verify vectors into the test APK, and fails when
+a JSON file in the vectors directory does not parse or when their number is
+not the pinned one. The tests reach no network, and log each vector's outcome
+under the tag `TinfoilConformance`.
+
+**A verifier library built with `tinfoil_conformance` must never ship**: its
+test-only entry points replace the trust anchors and the clock. The build
+enforces this in both directions. Without `TINFOIL_CONFORMANCE=1`, every
+build fails when `TINFOIL_GO_AAR` names a library that has those entry
+points. With it, the build fails when the library lacks them, and refuses
+every task that packages the SDK, belongs to the release variant or
+publishes; only the instrumented tests run.
+
 The SDK's version is `version` in `gradle.properties`, and `Tinfoil.VERSION`
 is generated from it.
 
