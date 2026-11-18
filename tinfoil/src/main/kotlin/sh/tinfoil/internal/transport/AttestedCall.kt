@@ -116,9 +116,19 @@ internal class AttestedCall(
             if (!budget.isLimited) {
                 return connection.send(request) { attach(it, budget) }
             }
-            return withTimeoutOrNull(budget.remainingNanos().nanoseconds) {
-                connection.send(request) { attach(it, budget) }
-            } ?: throw InterruptedIOException("timeout")
+            // A response can arrive just as the time runs out; it is kept
+            // here so that it is closed rather than lost with its connection.
+            var response: Response? = null
+            val inTime = withTimeoutOrNull(budget.remainingNanos().nanoseconds) {
+                response = connection.send(request) { attach(it, budget) }
+                true
+            }
+            val arrived = response
+            if (inTime == null || arrived == null) {
+                arrived?.closeQuietly()
+                throw InterruptedIOException("timeout")
+            }
+            return arrived
         } catch (e: CancellationException) {
             throw IOException(CANCELED, e)
         } finally {

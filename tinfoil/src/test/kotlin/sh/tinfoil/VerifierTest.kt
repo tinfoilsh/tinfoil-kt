@@ -26,6 +26,6 @@ class VerifierTest {
             override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification =
                 throw AttestationException("a stand-in verifies nothing")
         }
-        assertSame(standIn, Verifier(standIn).backend)
+        assertSame(standIn, Verifier.appraisingWith(standIn).backend)
     }
 }

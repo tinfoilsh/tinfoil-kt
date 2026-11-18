@@ -213,7 +213,7 @@ internal class TestEnclave(
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         internals: EnclaveHttpClient.Internals = internals(),
     ): EnclaveHttpClient = EnclaveHttpClient.create(
-        enclave, pin, transportMode, baseUrl, attestationRelay, Verifier(verifier), verificationCheck,
+        enclave, pin, transportMode, baseUrl, attestationRelay, Verifier.appraisingWith(verifier), verificationCheck,
         onVerificationResult, internals,
     ).also { clients += it }
 

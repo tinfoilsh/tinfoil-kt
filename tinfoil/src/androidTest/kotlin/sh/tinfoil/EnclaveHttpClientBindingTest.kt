@@ -20,6 +20,15 @@ class EnclaveHttpClientBindingTest {
     private val nowhere = "enclave.invalid"
     private val pin = Pin(repo = "tinfoilsh/example")
 
+    /** The observer is told once a verification is over, which can be just after its caller is. */
+    private fun <T> awaitOne(results: List<T>): T {
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (results.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        return results.single()
+    }
+
     @Test
     fun theVerifiersOwnRulesRefuseOptionsBeforeAnyIo() = runBlocking<Unit> {
         val results = CopyOnWriteArrayList<Result<Verification>>()
@@ -54,7 +63,7 @@ class EnclaveHttpClientBindingTest {
 
         assertTrue(error.cause != null, "the cause is kept")
         assertEquals(1, error.suppressed.size, "the first of the two attempts is kept as well")
-        assertSame(error, results.single().exceptionOrNull())
+        assertSame(error, awaitOne(results).exceptionOrNull())
     }
 
     @Test

@@ -53,8 +53,25 @@ internal class EnclaveConnection(
 ) {
     val transportMode: TransportMode get() = protocol.mode
 
-    /** Runs verifications, which no single caller owns, and calls that are not awaited. */
-    val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("tinfoil-enclave"))
+    /**
+     * Runs calls that are not awaited. Its threads come from the shared pool
+     * for blocking work, through a view of its own, so that it is not held
+     * to that pool's limit.
+     */
+    val scope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(CALL_PARALLELISM) + CoroutineName("tinfoil-calls"))
+
+    /**
+     * Runs verifications, which no single caller owns. Callers may wait for
+     * one while they block a thread of the shared pool for blocking work,
+     * and enough of them would leave a verification on that pool without a
+     * thread to finish on. A view of the pool gets threads beyond the pool's
+     * own limit, so a verification can always run, whatever its waiters
+     * block.
+     */
+    private val refreshScope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO.limitedParallelism(REFRESH_PARALLELISM) + CoroutineName("tinfoil-verification"),
+    )
 
     private val origin = Origin.of(baseUrl)
     private val lock = Any()
@@ -222,38 +239,51 @@ internal class EnclaveConnection(
         refresh = starting
         // A refresh serves every waiting caller, so it runs under no single
         // caller's job, and its outcome reaches the waiters as a value.
-        starting.job = scope.launch {
-            var failure: TinfoilException? = AttestationException("the verification did not complete")
+        starting.job = refreshScope.launch {
+            var outcome = Outcome(AttestationException("the verification did not complete"), report = null)
             try {
-                failure = runRefresh()
+                outcome = runRefresh()
             } finally {
                 synchronized(lock) {
                     if (refresh === starting) {
                         refresh = null
                     }
                 }
-                starting.failure.complete(failure)
+                starting.failure.complete(outcome.failure)
             }
+            // The observer is told only once this verification is over for
+            // everyone: if it calls back into the client, it finds the
+            // published state or starts a verification of its own, and never
+            // waits for the one that is calling it.
+            outcome.report?.let(::observe)
         }
         return starting
     }
 
-    /** Verifies the enclave and publishes the result. Returns why it failed, or null. */
-    private suspend fun runRefresh(): TinfoilException? {
+    /** How a verification ended, and what its observer is to be told, if anything. */
+    private class Outcome(val failure: TinfoilException?, val report: Result<Verification>?)
+
+    private fun failed(failure: TinfoilException): Outcome =
+        // A verification that the client's close ended is not a failed one,
+        // so it is not reported as one.
+        Outcome(failure, if (isClosed) null else Result.failure(failure))
+
+    /** Verifies the enclave and publishes the result. */
+    private suspend fun runRefresh(): Outcome {
         val verification = try {
             attestor.attest(enclave, relay, pin)
         } catch (e: CancellationException) {
             throw e
         } catch (e: TinfoilException) {
-            return reported(e)
+            return failed(e)
         } catch (e: Exception) {
             // Whatever went wrong, the enclave is not verified.
-            return reported(AttestationException("verification failed: ${e.message ?: e.javaClass.simpleName}", cause = e))
+            return failed(AttestationException("verification failed: ${e.message ?: e.javaClass.simpleName}", cause = e))
         }
         val transport = try {
             protocol.bind(verification)
         } catch (e: TinfoilException) {
-            return reported(e)
+            return failed(e)
         }
         var replaced: BoundTransport? = null
         val failure = synchronized(lock) {
@@ -273,33 +303,29 @@ internal class EnclaveConnection(
         }
         if (failure != null) {
             transport.retire()
-            // A verification that the client's close ended is not a failed
-            // one, so it is not reported as one.
-            return if (failure is AttestationException) reported(failure) else failure
+            return if (failure is AttestationException) failed(failure) else Outcome(failure, report = null)
         }
         // Idle connections of the replaced transport are tied to its keys.
         replaced?.retire()
-        observe(Result.success(verification))
-        return null
+        return Outcome(null, Result.success(verification))
     }
 
-    private fun reported(failure: TinfoilException): TinfoilException {
-        if (!isClosed) {
-            observe(Result.failure(failure))
-        }
-        return failure
-    }
-
-    /** The observer only watches: what it throws changes nothing. */
+    /** The observer only watches: whatever it throws changes nothing. */
     private fun observe(result: Result<Verification>) {
         try {
             onVerificationResult?.invoke(result)
-        } catch (_: Exception) {
-            // Deliberately ignored.
+        } catch (_: Throwable) {
+            // Deliberately ignored, an Error included: the verification is
+            // over, and its observer's failure is not the client's.
         }
     }
 
     private fun closedError() = ConfigurationException("the client is closed")
+
+    private companion object {
+        const val REFRESH_PARALLELISM = 4
+        const val CALL_PARALLELISM = 64
+    }
 }
 
 private fun <T : Throwable> T.alsoSuppressing(earlier: Throwable?): T = apply {

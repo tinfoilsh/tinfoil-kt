@@ -28,7 +28,10 @@ import kotlin.time.Duration
  * thrown exception as its cause, and is not tried again.
  *
  * Requests wait while it runs, so keep it fast. It may be called from
- * several threads at once.
+ * several threads at once. It runs inside the verification that it judges,
+ * so it must not call back into the client: `ensureVerified`, `reverify` or
+ * a request made from it would wait for the verification that is waiting
+ * for it. Anything that it throws rejects the enclave, an [Error] included.
  */
 public fun interface VerificationCheck {
     /**
@@ -56,7 +59,7 @@ public fun interface VerificationCheck {
  * A client holds threads and connections until it is [closed][close]. It is
  * safe to use from several threads and coroutines at once.
  */
-public class EnclaveHttpClient internal constructor(
+public class EnclaveHttpClient private constructor(
     private val connection: EnclaveConnection,
 ) : Call.Factory, AutoCloseable {
     /**
@@ -103,8 +106,13 @@ public class EnclaveHttpClient internal constructor(
 
     /**
      * Verifies the enclave again, even if the last verification is still
-     * valid, and returns the new verification. If it fails, a last
-     * verification that is still valid stays in use.
+     * valid, and returns the new verification.
+     *
+     * A failure here, whether the document could not be fetched or the
+     * enclave was rejected, does not withdraw the last verification: while
+     * that one is before its freshness deadline, requests keep going out
+     * under it, to connections that still present its key. To stop using an
+     * enclave whose new verification was rejected, [close] the client.
      *
      * A call made while a verification is running shares that one.
      * Cancellation and errors are those of [ensureVerified].
@@ -138,7 +146,16 @@ public class EnclaveHttpClient internal constructor(
      *
      * A redirect is not followed and an authentication challenge is not
      * answered: the response is returned as it is. No cookies are kept and
-     * nothing is cached. A response may go ten minutes without a byte
+     * nothing is cached.
+     *
+     * The HTTP client may send a request again by itself, always to the same
+     * URL and only over a connection that passes the same checks: when a
+     * connection fails, which can be after part or all of the request was
+     * written to it; on a `408` response; and on a `503` response with
+     * `Retry-After: 0`. The enclave can therefore receive a request twice,
+     * a `POST` included. A request whose body can be written only once
+     * ([okhttp3.RequestBody.isOneShot]) is never sent again once any of it
+     * has been written, nor after a `408` or a `503`. A response may go ten minutes without a byte
      * before the request fails; bound the whole exchange with a coroutine
      * timeout.
      *
@@ -166,7 +183,9 @@ public class EnclaveHttpClient internal constructor(
      * [Call.execute] blocks its thread while the enclave is verified, too.
      * [Call.cancel] works at any point, and [Call.timeout], which is unset
      * by default, spans the wait for a verification, the request and the
-     * reading of the response body.
+     * reading of the response body. As with [execute], the HTTP client may
+     * send a request again by itself over a connection that passes the same
+     * checks, unless its body can be written only once.
      */
     override fun newCall(request: Request): Call = AttestedCall(connection, request)
 
@@ -210,12 +229,15 @@ public class EnclaveHttpClient internal constructor(
          * @param verifier The trust policy. Null selects the defaults.
          * @param verificationCheck Called with each verification that passes
          *   [verifier], before the enclave's keys are used; it throws to
-         *   reject the enclave.
+         *   reject the enclave. It must not call back into the client.
          * @param onVerificationResult Called with the outcome of every
          *   verification that the client runs, here and later: the
          *   verification, or the [TinfoilException] that it failed with. It
-         *   only observes, so anything that it throws is ignored. Requests
-         *   wait while it runs, and it may be called from several threads.
+         *   only observes, so anything that it throws is ignored. It is
+         *   called once the verification is over, on a thread of the
+         *   client's: requests that waited for the verification, and this
+         *   function itself, may already have gone on by then. It may call
+         *   back into the client, and may be called from several threads.
          * @throws ConfigurationException if an argument is invalid.
          * @throws NetworkException if the attestation document cannot be
          *   fetched.
@@ -237,6 +259,7 @@ public class EnclaveHttpClient internal constructor(
         )
 
         /** [create] with the parts that tests replace. */
+        @JvmSynthetic
         internal suspend fun create(
             enclave: String,
             pin: Pin,
@@ -262,6 +285,7 @@ public class EnclaveHttpClient internal constructor(
         }
 
         /** A client that is checked but not yet verified. It performs no I/O. */
+        @JvmSynthetic
         internal fun unverified(
             enclave: String,
             pin: Pin,
@@ -289,7 +313,7 @@ public class EnclaveHttpClient internal constructor(
                     )
                 }
             }
-            val relay = attestationRelay.nullIfEmpty()
+            val relay = attestationRelay.nullIfEmpty()?.also(Urls::requireRelay)
             val backend = (verifier ?: Verifier()).backend
             val fetcher = lazy { AttestationFetcher(internals.http) }
             val attestor = Attestor(

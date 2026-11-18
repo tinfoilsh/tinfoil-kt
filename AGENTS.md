@@ -39,9 +39,12 @@ to what is verified belongs in tinfoil-go.
   errors are raised before any network I/O.
 - A request is written only to a connection whose leaf certificate carries
   the attested key, checked after the platform's own TLS validation. Nothing
-  that can weaken that check, such as trusted roots, a proxy or a base HTTP
-  client, is reachable from the public API; tests reach them through
-  `internal` parameters only.
+  that can weaken that check, such as trusted roots, a proxy or a stand-in
+  verifier, is part of the public API. Tests reach them through `internal`
+  members, and those on a public class are also `@JvmSynthetic`, because
+  Kotlin's `internal` is public to Java; a public class has no ordinary
+  member that takes one. Classes under `sh.tinfoil.internal` stay visible to
+  Java as such, and are not an API.
 - Never put an API key, a cache secret or key material in a log, an exception
   message or a `toString()`.
 - Comments and test names describe this code; they do not cite other SDKs.

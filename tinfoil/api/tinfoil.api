@@ -97,6 +97,7 @@ public final class sh/tinfoil/EmbeddedReferences {
 
 public final class sh/tinfoil/EnclaveHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
 	public static final field Companion Lsh/tinfoil/EnclaveHttpClient$Companion;
+	public synthetic fun <init> (Lsh/tinfoil/internal/EnclaveConnection;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -249,6 +250,7 @@ public final class sh/tinfoil/Verifier {
 	public static final field PUBLIC_REGISTRY_ID Ljava/lang/String;
 	public synthetic fun <init> (Lsh/tinfoil/Measurement;Lkotlin/time/Duration;Ljava/util/List;Ljava/util/List;Ljava/util/List;Lsh/tinfoil/EmbeddedReferences;Lsh/tinfoil/ConfigAuthorizer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lsh/tinfoil/Measurement;Lkotlin/time/Duration;Ljava/util/List;Ljava/util/List;Ljava/util/List;Lsh/tinfoil/EmbeddedReferences;Lsh/tinfoil/ConfigAuthorizer;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lsh/tinfoil/internal/verification/AttestationVerifier;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
 public final class sh/tinfoil/Verifier$Companion {

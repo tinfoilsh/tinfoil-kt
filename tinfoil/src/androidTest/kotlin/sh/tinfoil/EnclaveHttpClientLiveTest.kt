@@ -37,6 +37,15 @@ class EnclaveHttpClientLiveTest {
         assumeTrue("live tests run only with the instrumentation argument tinfoilIntegration=true", enabled == "true")
     }
 
+    /** The observer is told once a verification is over, which can be just after its caller is. */
+    private fun <T> awaitOne(results: List<T>): T {
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (results.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        return results.single()
+    }
+
     private fun live(block: suspend () -> Unit) = runBlocking { withTimeout(120.seconds) { block() } }
 
     @Test
@@ -52,7 +61,7 @@ class EnclaveHttpClientLiveTest {
         ).use { client ->
             val verified = assertNotNull(client.current, "a client is verified when it is returned")
             assertSame(verified, seen.single())
-            assertSame(verified, results.single().getOrThrow())
+            assertSame(verified, awaitOne(results).getOrThrow())
             assertSame(verified, client.ensureVerified(), "a valid verification is reused")
 
             assertEquals("tinfoilsh/confidential-model-router", verified.configRepo)
@@ -97,7 +106,7 @@ class EnclaveHttpClientLiveTest {
         }
 
         assertNotNull(error.layer, error.message)
-        assertSame(error, results.single().exceptionOrNull())
+        assertSame(error, awaitOne(results).exceptionOrNull())
     }
 
     @Test

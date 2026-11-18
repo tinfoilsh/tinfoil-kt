@@ -81,11 +81,13 @@ internal class Attestor(
         requireFresh(verification, host)
         try {
             check?.check(verification)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // A cancelled verification is not the check's rejection.
             if (e is CancellationException) {
                 coroutineContext.ensureActive()
             }
+            // Anything else that the check throws rejects the enclave, an
+            // Error included: a check that cannot finish has not accepted.
             throw Final(
                 AttestationException(
                     "verification check rejected $host: ${e.message ?: e.javaClass.simpleName}",
