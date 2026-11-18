@@ -514,15 +514,60 @@ class UserCacheSecretTest {
     }
 
     @Test
-    fun aStreamOrADuplexBodyIsNeverRead() {
-        val stream = CountingBody("{}", declared = null, oneShot = true)
-        val duplex = CountingBody("{}", duplex = true)
-        val duplexStream = CountingBody("{}", declared = null, duplex = true)
+    fun aStreamIsReadOnceAndSentFromMemory() {
+        val bounded = UserCacheSecret.of("s3cret", maxBodyBytes = 32)!!
+        val stream = CountingBody("""{"a":"${"x".repeat(24)}"}""", declared = null, oneShot = true, type = json)
 
-        for (body in listOf(stream, duplex, duplexStream)) {
-            val request = post("/v1/responses", body)
-            assertSame(request, provision(request))
-            assertEquals(0, body.writes.get())
+        val sent = provision(post("/v1/responses", stream), bounded)
+
+        assertEquals("""{"a":"${"x".repeat(24)}","user_cache_secret":"s3cret"}""", sent.text())
+        assertTrue(sent.body!!.isOneShot())
+        assertEquals(sent.text().length.toLong(), sent.body!!.contentLength())
+        assertEquals(json, sent.body!!.contentType())
+        assertEquals(1, stream.writes.get())
+
+        val plain = CountingBody("not json", declared = null, oneShot = true)
+        val forwarded = provision(post("/v1/responses", plain), bounded)
+        assertEquals("not json", forwarded.text())
+        assertTrue(forwarded.body!!.isOneShot())
+        assertEquals(1, plain.writes.get())
+    }
+
+    @Test
+    fun aStreamThatIsTooLongToExamineIsRefused() {
+        val bounded = UserCacheSecret.of("s3cret", maxBodyBytes = 32)!!
+        for (text in listOf("""{"a":"${"x".repeat(25)}"}""", """{"hunter2":"${"x".repeat(1 shl 20)}"}""")) {
+            val stream = CountingBody(text, declared = null, oneShot = true)
+
+            val error = assertFailsWith<ConfigurationException> { provision(post("/v1/responses", stream), bounded) }
+
+            assertTrue(error.detail.contains("larger than"), error.detail)
+            assertFalse(error.toString().contains("s3cret") || error.toString().contains("hunter2"), error.toString())
+            assertEquals(1, stream.writes.get())
+        }
+        // On a path that takes no secret, a stream is not read at all.
+        val elsewhere = CountingBody("x".repeat(100), declared = null, oneShot = true)
+        val request = post("/v1/embeddings", elsewhere)
+        assertSame(request, provision(request, bounded))
+        assertEquals(0, elsewhere.writes.get())
+    }
+
+    @Test
+    fun aDuplexBodyIsRefusedWhereTheSecretBelongsAndUntouchedElsewhere() {
+        for (declared in listOf<Long?>(2L, null)) {
+            val duplex = CountingBody("{}", declared = declared, duplex = true)
+
+            val error = assertFailsWith<ConfigurationException> { provision(post("/v1/chat/completions", duplex)) }
+
+            assertTrue(error.detail.contains("duplex"), error.detail)
+            assertFalse(error.toString().contains("s3cret"))
+            assertEquals(0, duplex.writes.get())
+
+            val elsewhere = post("/v1/realtime", duplex)
+            assertSame(elsewhere, provision(elsewhere))
+            val get = post("/v1/chat/completions", duplex, method = "PUT")
+            assertSame(get, provision(get))
+            assertEquals(0, duplex.writes.get())
         }
     }
 

@@ -150,11 +150,16 @@ public class EnclaveHttpClient private constructor(
      * `user_cache_secret` string in the body is the request's own scope and
      * is kept. Any other body is sent unchanged: one that is not a JSON
      * object in UTF-8, one that names the member more than once or with a
-     * value that is not a string, a duplex body, a body of more than 64 MiB,
-     * and a body that declares no length and can be written only once. To
-     * decide, the body is read into memory before the request is sent; a
-     * body that can be written only once is written then, and sent from
-     * memory.
+     * value that is not a string,
+     * and a body of more than 64 MiB that declares its length or can be
+     * written again, which a router refuses for its size. To decide, the
+     * body is read into memory before the request is sent; a body that can
+     * be written only once is written then, and sent from memory. A request
+     * to one of those paths whose body cannot be examined is refused with a
+     * [ConfigurationException] before anything is sent, so that it does not
+     * land in the cache that the API key's other clients share: a duplex
+     * body, and a body that declares no length, can be written only once
+     * and is longer than 64 MiB.
      *
      * The HTTP client may send a request again by itself, always to the same
      * URL and only over a connection that passes the same checks: when a
@@ -237,9 +242,11 @@ public class EnclaveHttpClient private constructor(
          * @param verifier The trust policy. Null selects the defaults.
          * @param userCacheSecret The prompt-cache scope of the client's
          *   requests, for an enclave that is one of Tinfoil's routers; other
-         *   enclaves do not read it. Null or empty sends none. See
-         *   [execute] for the requests that carry it. Use an opaque random
-         *   value, not a user ID or an API key.
+         *   enclaves do not read it. Null or empty sends none. It is added
+         *   to the JSON body of a `POST` to a chat, completions or responses
+         *   path, and such a request is refused if its body cannot be
+         *   examined; see [execute]. Use an opaque random value, not a user
+         *   ID or an API key.
          * @param verificationCheck Called with each verification that passes
          *   [verifier], before the enclave's keys are used; it throws to
          *   reject the enclave. It must not call back into the client.

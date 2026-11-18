@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -162,6 +163,83 @@ class UserCacheSecretRequestsTest {
         repeat(2) {
             assertEquals("""{"model":"m","user_cache_secret":"$secret"}""", enclave.server.takeRequest().body.readUtf8())
         }
+    }
+
+    @Test
+    fun aStreamOfUnknownLengthIsGivenTheSecretAndSentOnce() = test {
+        val client = enclave.client(userCacheSecret = secret)
+        val writes = AtomicInteger()
+        val stream = object : RequestBody() {
+            override fun contentType() = json
+
+            override fun isOneShot() = true
+
+            override fun writeTo(sink: BufferedSink) {
+                writes.incrementAndGet()
+                sink.writeUtf8("""{"model":"m","stream":true}""")
+            }
+        }
+        enclave.server.enqueue(MockResponse())
+
+        client.execute(chat(stream)).close()
+
+        val received = enclave.server.takeRequest()
+        assertEquals("""{"model":"m","stream":true,"user_cache_secret":"$secret"}""", received.body.readUtf8())
+        assertEquals(1, writes.get())
+        assertEquals(1, enclave.server.requestCount)
+    }
+
+    @Test
+    fun aBodyThatCannotBeExaminedIsRefusedBeforeAnythingIsSentOrVerified() = test {
+        val client = enclave.client(userCacheSecret = secret)
+        // An expired verification, so that a request that got as far as
+        // being sent would be seen to verify first.
+        enclave.clock.advance(enclave.lifetimeSeconds)
+        val tooLong = object : RequestBody() {
+            override fun contentType() = json
+
+            override fun isOneShot() = true
+
+            override fun writeTo(sink: BufferedSink) {
+                val chunk = "x".repeat(1 shl 20)
+                sink.writeUtf8("{\"a\":\"")
+                repeat(65) { sink.writeUtf8(chunk) }
+                sink.writeUtf8("\"}")
+            }
+        }
+        val duplex = object : RequestBody() {
+            override fun contentType() = json
+
+            override fun isDuplex() = true
+
+            override fun writeTo(sink: BufferedSink) {
+                sink.writeUtf8("{}")
+            }
+        }
+        for (body in listOf(tooLong, duplex)) {
+            val errors = mutableListOf<Throwable>()
+            errors += assertFailsWith<ConfigurationException> { client.execute(chat(body)) }
+            errors += assertFailsWith<ConfigurationException> { client.newCall(chat(body)).execute() }
+            val enqueued = java.util.concurrent.LinkedBlockingQueue<Any>()
+            client.newCall(chat(body)).enqueue(
+                object : okhttp3.Callback {
+                    override fun onFailure(call: okhttp3.Call, e: IOException) {
+                        enqueued += e
+                    }
+
+                    override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                        response.close()
+                        enqueued += response
+                    }
+                },
+            )
+            errors += assertIs<ConfigurationException>(enqueued.poll(30, java.util.concurrent.TimeUnit.SECONDS))
+            for (error in errors) {
+                assertFalse(error.toString().contains(secret), error.toString())
+            }
+        }
+        assertEquals(0, enclave.server.requestCount, "nothing reached the enclave")
+        assertEquals(1, enclave.fetches, "nothing was verified for a request that is refused")
     }
 
     @Test

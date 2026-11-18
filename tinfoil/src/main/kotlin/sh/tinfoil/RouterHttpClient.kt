@@ -107,9 +107,12 @@ public class RouterHttpClient private constructor(
      * which that member is absent or the empty string. The rest of the body
      * is sent byte for byte as it was given. A non-empty `user_cache_secret`
      * string in the body is the request's own scope and is kept, so a server
-     * can give each of its users a cache of their own. Any other body is
-     * sent unchanged, without the client's secret; see
-     * [EnclaveHttpClient.execute] for which.
+     * can give each of its users a cache of their own. Any other body that
+     * can be examined is sent unchanged, without the client's secret. A
+     * request to one of those paths whose body cannot be examined, because
+     * it is duplex or is a stream of more than 64 MiB that can be written
+     * only once, is refused with a [ConfigurationException] before anything
+     * is sent; see [EnclaveHttpClient.execute].
      *
      * @throws ConfigurationException for a request that is refused.
      * @throws NetworkException if the router has to be verified again and
@@ -178,8 +181,11 @@ public class RouterHttpClient private constructor(
          *   embedded config or a config authorizer, is refused: it needs an
          *   enclave that the caller names, so use [EnclaveHttpClient].
          * @param userCacheSecret The prompt-cache scope of the client's
-         *   requests; see [execute]. Requests with the same secret, under the
-         *   same API key, share cached prompt prefixes. Null or empty selects
+         *   requests. It is added to the JSON body of a `POST` to a chat,
+         *   completions or responses path, and such a request is refused if
+         *   its body cannot be examined; see [execute]. Requests with the
+         *   same secret, under the same API key, share cached prompt
+         *   prefixes. Null or empty selects
          *   a random secret that is generated once in each process, kept
          *   only in memory, and shared by every client in the process that
          *   is given none. Pass one to keep the scope across processes or

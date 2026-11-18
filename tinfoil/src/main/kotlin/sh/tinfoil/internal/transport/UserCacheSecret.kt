@@ -63,30 +63,50 @@ internal class UserCacheSecret private constructor(
      * is not a string.
      *
      * To decide, the body is read into memory here, before the request is
-     * sent, and at most once. No more than [maxBodyBytes] are held. A body
-     * that is not read is sent without the secret:
-     * - one that declares more than [maxBodyBytes], or that declares no
-     *   length and turns out to be longer;
-     * - one that declares no length and can be sent only once, which is a
-     *   stream that cannot be held and then sent whole; and
-     * - a duplex body, which is written while the response is read.
+     * sent and before anything is verified for it, and at most once. A body
+     * that can be written only once is sent from what was read. No more
+     * than [maxBodyBytes] are held, which is the largest body that the
+     * router accepts. So a body that declares more than that, or that can
+     * be written again and turns out to be longer, is sent as it is: the
+     * router refuses it for its size, and nothing of it is cached.
      *
+     * A request to one of those paths whose body cannot be examined is
+     * refused, because sending it would put it in the cache that every
+     * client of the API key shares, which is what the secret is there to
+     * prevent:
+     * - a duplex body, which is written while the response is read; and
+     * - a body that declares no length, can be written only once and turns
+     *   out to be longer than [maxBodyBytes]: it is spent by then, and
+     *   cannot be sent whole.
+     *
+     * @throws ConfigurationException for a body that cannot be examined.
      * @throws IOException if the body fails to write itself, or can be
      *   written only once and does not write the length that it declares.
      */
     @Throws(IOException::class)
     suspend fun provision(request: Request): Request {
         val body = request.body ?: return request
-        if (request.method != "POST" || !isEligible(request.url) || body.isDuplex()) {
+        if (request.method != "POST" || !isEligible(request.url)) {
             return request
+        }
+        if (body.isDuplex()) {
+            throw ConfigurationException(
+                "a duplex request body cannot be given the user cache secret, so it is not sent to this endpoint",
+            )
         }
         val declared = body.contentLength()
         val oneShot = body.isOneShot()
-        if (declared > maxBodyBytes || (declared < 0 && oneShot)) {
+        if (declared > maxBodyBytes) {
             return request
         }
         val text = runInterruptible(Dispatchers.IO) { read(body, declared) }
         if (text == null || (declared >= 0 && text.size.toLong() != declared)) {
+            if (oneShot && declared < 0) {
+                throw ConfigurationException(
+                    "the request body is larger than the $maxBodyBytes bytes that the client can give " +
+                        "the user cache secret, and it can be written only once, so it is not sent",
+                )
+            }
             if (oneShot) {
                 // It is spent, and what it wrote is not what it declared.
                 throw ProtocolException("the request body did not write the length that it declared")
