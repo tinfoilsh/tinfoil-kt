@@ -12,6 +12,7 @@ import sh.tinfoil.TransportMode
 import sh.tinfoil.testing.SealingDispatcher
 import sh.tinfoil.testing.SealingKey
 import sh.tinfoil.testing.TestAuthority
+import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.fingerprint
 import sh.tinfoil.testing.httpsServer
@@ -172,7 +173,8 @@ class EhbpSealingTest {
         transport.retire()
         assertEquals(0, transport.connectionCount)
         transport.newCall(post(url)).execute().close()
-        assertEquals(0, transport.connectionCount, "a retired transport closes a connection once its request is over")
+        // On a background thread, since the request can end on any thread.
+        awaitUntil { transport.connectionCount == 0 }
 
         protocol.close()
         assertFailsWith<ConfigurationException> { transport.newCall(post(url)) }

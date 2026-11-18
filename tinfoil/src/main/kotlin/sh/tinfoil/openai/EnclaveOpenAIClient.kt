@@ -14,6 +14,7 @@ import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.Verifier
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.OpenAIOptions
 import java.io.IOException
@@ -87,7 +88,11 @@ import java.io.IOException
 public class EnclaveOpenAIClient private constructor(
     /** The attested HTTP client that every request of [openAI] goes through. */
     public val httpClient: EnclaveHttpClient,
-    /** The OpenAI SDK's client, with blocking calls. Its calls block while the enclave is verified, too. */
+    /**
+     * The OpenAI SDK's client, with blocking calls. Its calls block while
+     * the enclave is verified, too, so they are never for the main thread;
+     * [openAIAsync] is.
+     */
     public val openAI: OpenAIClient,
 ) : AutoCloseable {
     /**
@@ -102,6 +107,7 @@ public class EnclaveOpenAIClient private constructor(
      * requests in flight are cancelled, and every connection is closed.
      * Closing again does nothing. Close this client rather than [openAI]
      * alone, which would leave the HTTP client open.
+     * It is safe to call from any thread, the main thread included.
      */
     override fun close() {
         try {
@@ -121,6 +127,11 @@ public class EnclaveOpenAIClient private constructor(
          *
          * Every argument is checked before any network I/O, the OpenAI
          * options included.
+         *
+         * It is safe to call from the main thread: the OpenAI options are
+         * prepared, the other options are checked, which loads the native
+         * verifier library the first time, and everything is fetched and
+         * verified on background threads.
          *
          * The parameters from [enclave] to [onVerificationResult] are those
          * of [EnclaveHttpClient.create], which describes them. Its
@@ -144,10 +155,10 @@ public class EnclaveOpenAIClient private constructor(
          * @param configure Sets any other option of the OpenAI client, such
          *   as `maxRetries`, `timeout` or default headers, on the OpenAI
          *   SDK's own options builder. It runs once, here, before any
-         *   network I/O. An HTTP client or a base URL that it sets is
-         *   replaced by this client's. Logging is off unless it is turned on
-         *   here; the builder's `fromEnv()`, if called here, reads the
-         *   environment as the OpenAI SDK documents.
+         *   network I/O, on a background thread. An HTTP client or a base
+         *   URL that it sets is replaced by this client's. Logging is off
+         *   unless it is turned on here; the builder's `fromEnv()`, if
+         *   called here, reads the environment as the OpenAI SDK documents.
          * @throws ConfigurationException if an argument is invalid, or the
          *   OpenAI options name no credential.
          * @throws NetworkException if the attestation document cannot be
@@ -189,7 +200,10 @@ public class EnclaveOpenAIClient private constructor(
             tinfoilEvents: Set<TinfoilEvent>,
             configure: (ClientOptions.Builder.() -> Unit)?,
             internals: Internals,
-        ): EnclaveOpenAIClient {
+        ): EnclaveOpenAIClient = Background.creating {
+            // Checking the options, which calls into the verifier library,
+            // and everything after it run on a background thread, so that
+            // any thread may call this.
             val options = OpenAIOptions.prepare(apiKey, tinfoilEvents, configure)
             val httpClient = try {
                 EnclaveHttpClient.create(
@@ -207,7 +221,7 @@ public class EnclaveOpenAIClient private constructor(
                 httpClient.close()
                 throw e
             }
-            return EnclaveOpenAIClient(httpClient, openAI)
+            return@creating EnclaveOpenAIClient(httpClient, openAI)
         }
     }
 }

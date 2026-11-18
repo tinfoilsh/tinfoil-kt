@@ -1,10 +1,12 @@
 package sh.tinfoil.internal.transport
 
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.Request
+import okhttp3.RequestBody
 import sh.tinfoil.ConfigurationException
+import sh.tinfoil.internal.Background
 import java.io.IOException
 import java.net.ProtocolException
 import java.security.SecureRandom
@@ -90,12 +92,19 @@ internal class UserCacheSecret private constructor(
                 "a duplex request body cannot be given the user cache secret, so it is not sent to this endpoint",
             )
         }
+        // The body may read a file to say how long it is and to write
+        // itself, and scanning a long text takes time: none of it is done
+        // on the caller's thread.
+        return withContext(Background.dispatcher) { examined(request, body) }
+    }
+
+    private suspend fun examined(request: Request, body: RequestBody): Request {
         val declared = body.contentLength()
         val oneShot = body.isOneShot()
         if (declared > maxBodyBytes) {
             return request
         }
-        val text = runInterruptible(Dispatchers.IO) { HeldBody.read(body, declared, maxBodyBytes) }
+        val text = runInterruptible { HeldBody.read(body, declared, maxBodyBytes) }
         if (text == null || (declared >= 0 && text.size.toLong() != declared)) {
             if (oneShot && declared < 0) {
                 throw ConfigurationException(

@@ -107,6 +107,14 @@ README.
   re-declare its calls.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
+- The suspending functions and `close()` of every client are safe to call
+  from Android's main thread, where the platform refuses network work, the
+  closing of a TLS socket included. Nothing that they do on the caller's
+  thread may reach a socket, read a request body, or call into the verifier
+  library, whose first use loads it: such work runs through
+  `sh.tinfoil.internal.Background`. `MainThreadSafetyTest` runs the clients
+  from the main thread of a device; `CallerThreadTest` checks the same on
+  the JVM.
 - The verifier library's test-only entry points, whose names contain
   `DangerousTestOnly`, replace the trust anchors and the clock. Only the
   conformance tests in `tinfoil/src/androidTestConformance` call them; code

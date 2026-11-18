@@ -6,6 +6,7 @@ import com.openai.core.ClientOptions
 import kotlinx.coroutines.CancellationException
 import okhttp3.Call
 import okhttp3.HttpUrl
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.OpenAIOptions
 import sh.tinfoil.openai.EnclaveOpenAIClient
@@ -44,7 +45,11 @@ public class Client private constructor(
      */
     public val baseUrl: HttpUrl,
 ) : AutoCloseable {
-    /** The OpenAI SDK's client, with blocking calls. Its calls block while the service is verified, too. */
+    /**
+     * The OpenAI SDK's client, with blocking calls. Its calls block while
+     * the service is verified, too, so they are never for the main thread;
+     * [openAIAsync] is.
+     */
     public val openAI: OpenAIClient get() = route.openAI
 
     /**
@@ -68,6 +73,7 @@ public class Client private constructor(
     /**
      * Closes the client: later requests fail, requests in flight are
      * cancelled, and every connection is closed. Closing again does nothing.
+     * It is safe to call from any thread, the main thread included.
      */
     override fun close() {
         route.close()
@@ -83,6 +89,11 @@ public class Client private constructor(
          *
          * Every argument is checked before any network I/O.
          *
+         * It is safe to call from the main thread: the OpenAI options are
+         * prepared, the other options are checked, which loads the native
+         * verifier library the first time, and everything is fetched and
+         * verified on background threads.
+         *
          * @param apiKey The API key, sent as a bearer token with every
          *   request, to the verified service only. It is required: null is
          *   for a credential that [configure] sets instead. It is never read
@@ -94,10 +105,10 @@ public class Client private constructor(
          * @param configure Sets any other option of the OpenAI client, such
          *   as `maxRetries`, `timeout` or default headers, on the OpenAI
          *   SDK's own options builder. It runs once, here, before any
-         *   network I/O. An HTTP client or a base URL that it sets is
-         *   replaced by this client's. Logging is off unless it is turned on
-         *   here; the builder's `fromEnv()`, if called here, reads the
-         *   environment as the OpenAI SDK documents.
+         *   network I/O, on a background thread. An HTTP client or a base
+         *   URL that it sets is replaced by this client's. Logging is off
+         *   unless it is turned on here; the builder's `fromEnv()`, if
+         *   called here, reads the environment as the OpenAI SDK documents.
          * @throws ConfigurationException if the OpenAI options name no
          *   credential.
          * @throws NetworkException if the service's attestation document
@@ -119,13 +130,16 @@ public class Client private constructor(
             configure: (ClientOptions.Builder.() -> Unit)?,
             verifier: Verifier?,
             internals: Internals,
-        ): Client {
+        ): Client = Background.creating {
+            // Checking the options, which calls into the verifier library,
+            // and everything after it run on a background thread, so that
+            // any thread may call this.
             // Today the recommended route is one of Tinfoil's routers, over
             // connections that are pinned to its attested key.
             val route = RouterOpenAIClient.create(
                 TransportMode.Tls, null, null, verifier, null, null, null, apiKey, tinfoilEvents, configure, internals,
             )
-            return Client(route, OpenAIOptions.apiUrl(route.httpClient.baseUrl, null))
+            return@creating Client(route, OpenAIOptions.apiUrl(route.httpClient.baseUrl, null))
         }
     }
 }

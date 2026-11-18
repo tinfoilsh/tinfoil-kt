@@ -17,6 +17,7 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
+import sh.tinfoil.internal.Background
 import java.io.IOException
 import java.net.ProtocolException
 import java.net.Proxy
@@ -117,6 +118,8 @@ internal class PinnedTls(private val settings: HttpSettings = HttpSettings()) : 
     override fun bind(verification: Verification): PinnedTlsTransport =
         PinnedTlsTransport(LeafKeyPin.of(verification.tlsPublicKeyFingerprint), dispatcher, calls, settings)
 
+    override fun refuse() = calls.refuse()
+
     override fun close() {
         calls.close()
         // Calls that are running end as cancelled; nothing new is accepted.
@@ -157,6 +160,12 @@ internal class ActiveCalls {
         synchronized(lock) { calls.remove(call) }
     }
 
+    /** Admits no call from now on. It touches no connection. */
+    fun refuse() {
+        synchronized(lock) { closed = true }
+    }
+
+    /** Admits no call from now on, and cancels those in flight, which closes their sockets. */
     fun close() {
         val cancelled = synchronized(lock) {
             closed = true
@@ -245,7 +254,9 @@ internal class PinnedTlsTransport(
         private fun finished(call: Call) {
             calls.remove(call)
             if (retired || calls.isClosed) {
-                pool.evictAll()
+                // A call ends on the thread that closes its response, which
+                // is the caller's, and sockets are not closed there.
+                Background.run { pool.evictAll() }
             }
         }
     }

@@ -25,6 +25,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.SessionRecoveryToken
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
+import sh.tinfoil.internal.Background
 import sh.tinfoil.ehbp.client.Transport
 import sh.tinfoil.ehbp.client.newTransportWithIdentity
 import sh.tinfoil.ehbp.identity.Identity
@@ -115,6 +116,8 @@ internal class EhbpSealing(
             if (pinned) LeafKeyPin.of(verification.tlsPublicKeyFingerprint) else null,
             enclaveUrl, cleartext, local, dispatcher, executor, calls, settings,
         )
+
+    override fun refuse() = calls.refuse()
 
     override fun close() {
         calls.close()
@@ -292,7 +295,9 @@ internal class EhbpTransport(
     private fun finished(call: Call) {
         calls.remove(call)
         if (retired || calls.isClosed) {
-            pool.evictAll()
+            // A call ends on the thread that closes its response, which is
+            // the caller's, and sockets are not closed there.
+            Background.run { pool.evictAll() }
         }
     }
 

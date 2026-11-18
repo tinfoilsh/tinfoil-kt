@@ -1,6 +1,5 @@
 package sh.tinfoil.internal
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
@@ -9,6 +8,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.internal.transport.Urls
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import kotlin.time.Duration
@@ -45,7 +45,7 @@ import kotlin.time.TimeSource
  */
 internal class RouterDiscovery(
     private val settings: Settings,
-    /** Fetches the list; any failure of it leaves no candidates. */
+    /** Fetches the list; a fetch that fails, with an [IOException], leaves no candidates. */
     private val fetchList: suspend (HttpUrl) -> ByteArray,
 ) {
     /** Where discovery looks, and for how long. */
@@ -122,9 +122,9 @@ internal class RouterDiscovery(
     private suspend fun routers(): List<String> {
         val body = try {
             fetchList(settings.listUrl)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
+        } catch (_: IOException) {
+            // What a fetch that failed throws. Anything else is a fault in
+            // this SDK, and must not pass for a list that proposes nothing.
             return emptyList()
         }
         return candidates(body)

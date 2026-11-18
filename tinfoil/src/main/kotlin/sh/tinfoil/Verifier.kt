@@ -14,9 +14,14 @@ import kotlin.time.Duration
  *
  * The constructor checks the options, including the conflicts between trust
  * sources, and throws a [ConfigurationException] for an invalid combination,
- * so that a client never starts with a policy that cannot verify. It performs
- * no I/O. A verifier is immutable and safe to share between clients and
- * threads.
+ * so that a client never starts with a policy that cannot verify. It reaches
+ * no network. It does call into the native verifier library, and the first
+ * verifier that is constructed in a process loads that library, of about
+ * 20 MB, from the app's files: construct a verifier off the main thread. A
+ * client that is given no verifier constructs the default one by itself, on
+ * a background thread.
+ *
+ * A verifier is immutable and safe to share between clients and threads.
  */
 public class Verifier private constructor(
     /** What appraises documents under this policy. */

@@ -7,6 +7,7 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.nullIfEmpty
@@ -70,7 +71,8 @@ public class RouterHttpClient private constructor(
      * Returns a verification of the router that is valid now, verifying
      * first only if the last one has reached its freshness deadline or the
      * router has rejected its key. It behaves as
-     * [EnclaveHttpClient.ensureVerified] does.
+     * [EnclaveHttpClient.ensureVerified] does, and is safe to call from the
+     * main thread.
      *
      * @throws ConfigurationException if the client is closed.
      * @throws NetworkException if the attestation document cannot be fetched.
@@ -84,7 +86,7 @@ public class RouterHttpClient private constructor(
      * valid, and returns the new verification. It behaves as
      * [EnclaveHttpClient.reverify] does: a failure does not withdraw a
      * verification that is still valid, and does not make the client choose
-     * another router.
+     * another router. It is safe to call from the main thread.
      */
     @Throws(IOException::class, CancellationException::class)
     public suspend fun reverify(): Verification = connection.reverify()
@@ -92,7 +94,8 @@ public class RouterHttpClient private constructor(
     /**
      * Sends [request] to the router and returns the response as soon as its
      * headers arrive. The body streams as it is read, and the caller closes
-     * the response.
+     * the response. It is safe to call from the main thread; reading the
+     * response's body, or closing it unread, is not.
      *
      * The rules are those of [EnclaveHttpClient.execute]: the request must be
      * on [baseUrl]'s origin, without credentials in its URL or a `Host`
@@ -150,7 +153,8 @@ public class RouterHttpClient private constructor(
      * Prepares [request] as a call that follows the rules of [execute], for
      * code that is written against OkHttp. Nothing is checked or sent until
      * the call is executed or enqueued. It behaves as
-     * [EnclaveHttpClient.newCall] does.
+     * [EnclaveHttpClient.newCall] does: a blocking [Call.execute] is never
+     * for the main thread.
      */
     override fun newCall(request: Request): Call = AttestedCall(connection, request)
 
@@ -159,6 +163,11 @@ public class RouterHttpClient private constructor(
      * [ConfigurationException], a verification in progress and the requests
      * in flight are cancelled, and every connection is closed. Closing again
      * does nothing.
+     *
+     * It is safe to call from any thread, the main thread included, and
+     * returns at once: the client refuses requests from then on, and the
+     * cancelling and the closing of connections follow on a background
+     * thread.
      */
     override fun close() {
         connection.close()
@@ -199,6 +208,12 @@ public class RouterHttpClient private constructor(
          *
          * Every argument is checked before any network I/O. Each call
          * chooses anew.
+         *
+         * It is safe to call from the main thread: the options are checked,
+         * which loads the native verifier library the first time, and
+         * everything is fetched and verified on background threads. A
+         * caller that is cancelled just as the client is made does not
+         * receive it, and the client is closed.
          *
          * @param transportMode How requests are protected.
          *   [TransportMode.Tls], the default, protects the whole exchange on
@@ -288,7 +303,10 @@ public class RouterHttpClient private constructor(
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
-        ): RouterHttpClient {
+        ): RouterHttpClient = Background.creating {
+            // Checking the options, which calls into the verifier library,
+            // and everything after it run on a background thread, so that
+            // any thread may call this.
             // Everything down to the fallback's connection is checked
             // before any I/O.
             val base = baseUrl.nullIfEmpty()
@@ -345,7 +363,7 @@ public class RouterHttpClient private constructor(
                 connection.close()
                 throw e
             }
-            return RouterHttpClient(connection)
+            return@creating RouterHttpClient(connection)
         }
 
         private suspend fun discover(open: (String) -> EnclaveConnection, internals: Internals): EnclaveConnection? {

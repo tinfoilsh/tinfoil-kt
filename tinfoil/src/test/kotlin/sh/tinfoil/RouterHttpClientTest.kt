@@ -561,8 +561,13 @@ class RouterHttpClientTest {
         assertNull(RouterDiscovery(settings.discovery) { "[\"${bad.host}\"]".toByteArray() }.discover(open))
         assertEquals(listOf(true), opened.map { it.isClosed })
         assertNull(RouterDiscovery(settings.discovery) { throw NetworkException("no list") }.discover(open))
-        assertNull(RouterDiscovery(settings.discovery) { throw IllegalStateException("broken") }.discover(open))
         assertEquals(1, opened.size, "a list that cannot be fetched proposes nothing")
+        // Only what a failed fetch throws is taken for that. Anything else
+        // is a fault, and is not passed over as a list that proposes nothing.
+        assertFailsWith<IllegalStateException> {
+            RouterDiscovery(settings.discovery) { throw IllegalStateException("broken") }.discover(open)
+        }
+        assertEquals(1, opened.size)
     }
 
     // After creation.

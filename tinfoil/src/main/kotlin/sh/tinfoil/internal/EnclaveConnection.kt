@@ -237,6 +237,11 @@ internal class EnclaveConnection(
     /**
      * Refuses later requests and verifications, cancels a verification in
      * progress and the requests in flight, and closes every connection.
+     *
+     * The refusals hold when this returns. Whatever reaches a socket, which
+     * is the cancelling and the closing, is done on a background thread
+     * right afterwards, so that any thread may call this: one that must not
+     * touch the network, as Android's main thread, included.
      */
     fun close() {
         val (transport, refreshing) = synchronized(lock) {
@@ -247,12 +252,16 @@ internal class EnclaveConnection(
             Pair(state?.transport, refresh.also { refresh = null })
         }
         refreshing?.failure?.complete(closedError())
-        refreshing?.job?.cancel()
-        // Requests in flight end here, under whichever verification they
-        // were sent; then the connections that are left idle are closed.
-        protocol.close()
-        transport?.retire()
-        onClose()
+        protocol.refuse()
+        Background.run {
+            refreshing?.job?.cancel()
+            // Requests in flight end here, under whichever verification
+            // they were sent; then the connections that are left idle are
+            // closed.
+            protocol.close()
+            transport?.retire()
+            onClose()
+        }
     }
 
     private fun checkOpen() {
