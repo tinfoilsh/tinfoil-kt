@@ -18,12 +18,16 @@ bash scripts/build-mobile-android.sh /path/to/TinfoilGo.aar
 
 # in this repository
 export TINFOIL_GO_AAR=/path/to/TinfoilGo.aar
-./gradlew :tinfoil:assembleRelease :tinfoil:lintRelease :tinfoil:testDebugUnitTest
+./gradlew :tinfoil:assembleRelease :tinfoil:lintRelease :tinfoil:testDebugUnitTest :tinfoil:apiCheck
 ./gradlew :tinfoil:connectedDebugAndroidTest   # needs a running emulator or a device
 ```
 
 The verifier library is native code for Android, so the tests that reach it
 are instrumented tests; the unit tests run on the JVM without it.
+
+The public API is pinned in `tinfoil/api/tinfoil.api`, and `apiCheck` fails
+when the code and that file disagree. After a deliberate change to the API,
+run `./gradlew :tinfoil:apiDump` and commit the result.
 
 ## Reporting Vulnerabilities
 

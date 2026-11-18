@@ -1,0 +1,225 @@
+public final class sh/tinfoil/ArtifactVerification {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getApprovalTime ()Ljava/time/Instant;
+	public final fun getCommit ()Ljava/lang/String;
+	public final fun getDigest ()Ljava/lang/String;
+	public final fun getName ()Ljava/lang/String;
+	public final fun getRepo ()Ljava/lang/String;
+	public final fun getSource-_jS_QyA ()Ljava/lang/String;
+	public final fun getTag ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/AttestationException : sh/tinfoil/TinfoilException {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getLayer-7qrYzj4 ()Ljava/lang/String;
+}
+
+public abstract interface class sh/tinfoil/ConfigAuthorizer {
+	public abstract fun authorize (Lsh/tinfoil/ConfigEndorsement;)V
+}
+
+public final class sh/tinfoil/ConfigEndorsement {
+	public fun <init> ([BLjava/lang/String;[B[B)V
+	public synthetic fun <init> ([BLjava/lang/String;[B[BILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConfig ()[B
+	public final fun getIssuerCertificate ()[B
+	public final fun getReference ()Ljava/lang/String;
+	public final fun getSigstoreBundle ()[B
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/ConfigVerification {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getApprovalTime ()Ljava/time/Instant;
+	public final fun getDigest ()Ljava/lang/String;
+	public final fun getName ()Ljava/lang/String;
+	public final fun getReference ()Ljava/lang/String;
+	public final fun getRegistryId ()Ljava/lang/String;
+	public final fun getSignatureTime ()Ljava/time/Instant;
+	public final fun getSigningKeyHint ()Ljava/lang/String;
+	public final fun getSource-_jS_QyA ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/ConfigurationException : sh/tinfoil/TinfoilException {
+}
+
+public final class sh/tinfoil/CryptoMaterial {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getData ()Ljava/lang/String;
+	public final fun getFormat ()Ljava/lang/String;
+	public final fun getId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class sh/tinfoil/EmbeddedConfig {
+	public abstract fun getName ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/EmbeddedConfig$Bytes : sh/tinfoil/EmbeddedConfig {
+	public fun <init> ([BLjava/lang/String;)V
+	public synthetic fun <init> ([BLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBytes ()[B
+	public fun getName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/EmbeddedConfig$Reference : sh/tinfoil/EmbeddedConfig {
+	public fun <init> (Ljava/lang/String;Lsh/tinfoil/RuntimeReference;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Lsh/tinfoil/RuntimeReference;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDigest ()Ljava/lang/String;
+	public fun getName ()Ljava/lang/String;
+	public final fun getRuntime ()Lsh/tinfoil/RuntimeReference;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/EmbeddedReferences {
+	public fun <init> ()V
+	public fun <init> (Lsh/tinfoil/EmbeddedConfig;[B[B)V
+	public synthetic fun <init> (Lsh/tinfoil/EmbeddedConfig;[B[BILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConfig ()Lsh/tinfoil/EmbeddedConfig;
+	public final fun getPlatform ()[B
+	public final fun getRuntime ()[B
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Measurement {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRegisters ()Ljava/util/List;
+	public final fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/NetworkException : sh/tinfoil/TinfoilException {
+	public final fun getStatus ()Ljava/lang/Integer;
+}
+
+public final class sh/tinfoil/Pin {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getProject ()Ljava/lang/String;
+	public final fun getRepo ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/ReferenceSource {
+	public static final field Companion Lsh/tinfoil/ReferenceSource$Companion;
+	public static final synthetic fun box-impl (Ljava/lang/String;)Lsh/tinfoil/ReferenceSource;
+	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
+	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static fun hashCode-impl (Ljava/lang/String;)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (Ljava/lang/String;)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/ReferenceSource$Companion {
+	public final fun getEMBEDDED-_jS_QyA ()Ljava/lang/String;
+	public final fun getENDORSEMENT-_jS_QyA ()Ljava/lang/String;
+	public final fun getPOLICY-_jS_QyA ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/RuntimeReference {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDigest ()Ljava/lang/String;
+	public final fun getRepo ()Ljava/lang/String;
+	public final fun getTag ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/SoftwareIdentity {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getName ()Ljava/lang/String;
+	public final fun getVersion ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract class sh/tinfoil/TinfoilException : java/io/IOException {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getCategory ()Ljava/lang/String;
+	public final fun getDetail ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Verification {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCodeDigest ()Ljava/lang/String;
+	public final fun getCodeMeasurement ()Lsh/tinfoil/Measurement;
+	public final fun getCodeTag ()Ljava/lang/String;
+	public final fun getConfig ()Lsh/tinfoil/ConfigVerification;
+	public final fun getConfigRepo ()Ljava/lang/String;
+	public final fun getCryptoMaterial ()Ljava/util/List;
+	public final fun getEnclaveMeasurement ()Lsh/tinfoil/Measurement;
+	public final fun getFreshnessExpiresAt ()Ljava/time/Instant;
+	public final fun getHpkePublicKey ()Ljava/lang/String;
+	public final fun getMetadata ()Lsh/tinfoil/VerificationMetadata;
+	public final fun getPlatform ()Lsh/tinfoil/ArtifactVerification;
+	public final fun getRuntime ()Lsh/tinfoil/ArtifactVerification;
+	public final fun getTlsPublicKeyFingerprint ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/VerificationLayer {
+	public static final field Companion Lsh/tinfoil/VerificationLayer$Companion;
+	public static final synthetic fun box-impl (Ljava/lang/String;)Lsh/tinfoil/VerificationLayer;
+	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
+	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static fun hashCode-impl (Ljava/lang/String;)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (Ljava/lang/String;)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/VerificationLayer$Companion {
+	public final fun getENVELOPE-yUSo6bc ()Ljava/lang/String;
+	public final fun getPOLICY-yUSo6bc ()Ljava/lang/String;
+	public final fun getPROVENANCE-yUSo6bc ()Ljava/lang/String;
+	public final fun getQUOTE-yUSo6bc ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/VerificationMetadata {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getVerifiedAt ()Ljava/time/Instant;
+	public final fun getVerifier ()Lsh/tinfoil/SoftwareIdentity;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Verifier {
+	public static final field Companion Lsh/tinfoil/Verifier$Companion;
+	public static final field PUBLIC_REGISTRY_ID Ljava/lang/String;
+	public synthetic fun <init> (Lsh/tinfoil/Measurement;Lkotlin/time/Duration;Ljava/util/List;Ljava/util/List;Ljava/util/List;Lsh/tinfoil/EmbeddedReferences;Lsh/tinfoil/ConfigAuthorizer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lsh/tinfoil/Measurement;Lkotlin/time/Duration;Ljava/util/List;Ljava/util/List;Ljava/util/List;Lsh/tinfoil/EmbeddedReferences;Lsh/tinfoil/ConfigAuthorizer;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class sh/tinfoil/Verifier$Companion {
+}
+
