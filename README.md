@@ -236,8 +236,8 @@ What this mode does not protect:
   not from the enclave. A response that the enclave did not seal is
   authenticated by nothing.
 - Protocol upgrades, such as WebSockets, and `CONNECT` are refused. So is a
-  response to a sealed request that reports success with an empty body:
-  nothing in it shows that the enclave sent it.
+  response that is marked as sealed and has an empty body, whatever its
+  status: nothing in it shows that the enclave sent it.
 
 Requests to a proxy carry `X-Tinfoil-Enclave-Url: https://<enclave>`, which
 tells the proxy where to forward them. See `EnclaveHttpClient.execute` for

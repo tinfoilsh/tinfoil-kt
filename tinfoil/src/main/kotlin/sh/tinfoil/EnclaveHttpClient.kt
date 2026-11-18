@@ -213,14 +213,17 @@ public class EnclaveHttpClient private constructor(
      *   of zero is sent as no bytes, whatever it writes.
      * - A response to a sealed request that reports success without being
      *   sealed fails with an [IOException], and so does a redirect. That a
-     *   success is sealed has to show: the read of its body fails if the
-     *   body ends before it has yielded a byte, so a success with an empty
-     *   body, or with a status of 204 or 205, is not accepted in this mode.
-     *   A response with an error status of 400 or above that is not sealed
-     *   is returned as it is: a proxy or a load balancer answers so when
-     *   the request never reached the enclave. Nothing authenticates such a
-     *   response, so treat it as a hint of what went wrong, and never as
-     *   the enclave's answer. [executeRecoverable] returns no token for it.
+     *   response is sealed has to show, whatever its status: the header
+     *   that marks it as sealed is not sealed itself, so the read of the
+     *   body fails if the body ends before it has yielded a byte. A sealed
+     *   response with an empty body, an error included, is therefore not
+     *   accepted in this mode, and neither is a status of 204 or 205.
+     *   A response with an error status of 400 or above that is not marked
+     *   as sealed is returned as it is: a proxy or a load balancer answers
+     *   so when the request never reached the enclave. Nothing
+     *   authenticates such a response, so treat it as a hint of what went
+     *   wrong, and never as the enclave's answer. [executeRecoverable]
+     *   returns no token for it.
      * - If the enclave answers that it cannot open the body, which it does
      *   before it reads any of it, it no longer holds the attested key: the
      *   client verifies the enclave again and sends the request once more,

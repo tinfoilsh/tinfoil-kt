@@ -15,11 +15,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Response
-import okhttp3.ResponseBody
 import okio.Buffer
 import okio.BufferedSink
-import okio.BufferedSource
-import okio.ForwardingSource
 import okio.Sink
 import okio.Timeout
 import okio.buffer
@@ -425,9 +422,10 @@ internal class EhbpTransport(
                 response = returned
                 if (sealed) {
                     refuseUnusable(returned)
-                    val body = returned.body
-                    if (returned.code < REDIRECTS.first && body != null) {
-                        returned = returned.newBuilder().body(ProvenBody(body)).build()
+                    // The sealing client has opened this response if and
+                    // only if it carries the header, whatever its status.
+                    if (returned.header(ResponseNonceHeader) != null) {
+                        returned = returned.proven()
                         response = returned
                     }
                 }
@@ -498,36 +496,6 @@ internal class EhbpTransport(
 
             override fun callFailed(call: Call, ioe: IOException) = finished(this@EhbpCall)
         }
-    }
-
-    /**
-     * The body of a sealed response that reports success. The header that
-     * marks a response as sealed proves nothing by itself: any value passes
-     * for one, and a body without a sealed piece leaves nothing to check it
-     * against. So the body has to yield at least one byte, which the sealing
-     * client releases only once the piece that carries it has authenticated;
-     * a body that ends before that fails the read.
-     */
-    private class ProvenBody(private val sealed: ResponseBody) : ResponseBody() {
-        private val source: BufferedSource = object : ForwardingSource(sealed.source()) {
-            private var proven = false
-
-            override fun read(sink: Buffer, byteCount: Long): Long {
-                val read = super.read(sink, byteCount)
-                if (read > 0) {
-                    proven = true
-                } else if (read == -1L && !proven) {
-                    throw ProtocolException("FRAMING_TRUNCATED: the response ended before any of it authenticated")
-                }
-                return read
-            }
-        }.buffer()
-
-        override fun contentType(): MediaType? = sealed.contentType()
-
-        override fun contentLength(): Long = -1L
-
-        override fun source(): BufferedSource = source
     }
 
     /**

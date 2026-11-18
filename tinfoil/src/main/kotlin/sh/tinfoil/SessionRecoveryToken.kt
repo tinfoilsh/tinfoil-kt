@@ -2,6 +2,7 @@ package sh.tinfoil
 
 import okhttp3.Response
 import sh.tinfoil.ehbp.identity.decryptResponseWithToken
+import sh.tinfoil.internal.transport.proven
 import java.io.IOException
 import sh.tinfoil.ehbp.identity.SessionRecoveryToken as SealedSessionToken
 
@@ -46,11 +47,15 @@ public class SessionRecoveryToken private constructor(private val token: SealedS
      * headers are not sealed, and so are not authenticated. Closing the
      * returned response closes [response].
      *
+     * A response whose body yields nothing fails the read as well, whatever
+     * its status: the header is not sealed, so a response with nothing
+     * sealed behind it shows nothing of where it came from.
+     *
      * @throws IOException if [response] has no usable `Ehbp-Response-Nonce`
      *   header or no body.
      */
     @Throws(IOException::class)
-    public fun decryptResponse(response: Response): Response = decryptResponseWithToken(response, token)
+    public fun decryptResponse(response: Response): Response = decryptResponseWithToken(response, token).proven()
 
     /** Says only that this is a token. The key material is never part of it. */
     override fun toString(): String = "SessionRecoveryToken(redacted)"

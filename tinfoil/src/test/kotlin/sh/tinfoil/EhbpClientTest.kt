@@ -513,13 +513,45 @@ class EhbpClientTest {
             val error = assertFailsWith<IOException>("$code") { client.execute(client.post("""{"q":"$MARKER"}""")) }
             assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
         }
-        // An error says nothing that needs proof, and one without a body is returned.
-        atProxy.answer = { MockResponse().setResponseCode(500).setHeader(RESPONSE_NONCE_HEADER, forgedNonce) }
-        client.execute(client.post("""{"q":"$MARKER"}""")).use { response ->
-            assertEquals(500, response.code)
-            assertEquals("", response.body!!.string())
-        }
         assertEquals(1, enclave.fetches)
+    }
+
+    @Test
+    fun anErrorWhoseSealedBodyProvesNothingFailsClosedToo() = test {
+        val client = proxied()
+        val forgedNonce = "5c".repeat(32)
+        // The header that marks a response as sealed is not itself sealed,
+        // so with nothing behind it an error is no more the enclave's than
+        // a success is.
+        for (code in listOf(400, 401, 404, 422, 500, 503)) {
+            atProxy.answer = { MockResponse().setResponseCode(code).setHeader(RESPONSE_NONCE_HEADER, forgedNonce) }
+            val recoverable = client.executeRecoverable(client.post("""{"q":"$MARKER"}"""))
+            assertEquals(code, recoverable.response.code)
+            val error = assertFailsWith<IOException>("$code") { recoverable.response.text() }
+            assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+        }
+        // An error that the enclave sealed is read as before.
+        atProxy.answer = { it.reply("""{"error":"$ANSWER"}""", code = 500) }
+        assertEquals("""{"error":"$ANSWER"}""", client.execute(client.post("""{"q":"$MARKER"}""")).text())
+    }
+
+    @Test
+    fun aStoredResponseWhoseSealedBodyProvesNothingFailsTheRead() = test {
+        val client = proxied()
+        val recoverable = client.executeRecoverable(client.post("""{"q":"$MARKER"}"""))
+        val token = assertNotNull(recoverable.recoveryToken)
+        recoverable.response.close()
+        val forgedNonce = "5c".repeat(32)
+
+        for (code in listOf(200, 201, 404, 500)) {
+            for (frames in listOf(ByteArray(0), Buffer().writeInt(0).writeInt(0).readByteArray())) {
+                val stored = storedResponse(forgedNonce, frames).newBuilder().code(code).build()
+                val opened = token.decryptResponse(stored)
+                assertEquals(code, opened.code)
+                val error = assertFailsWith<IOException>("$code") { opened.text() }
+                assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+            }
+        }
     }
 
     @Test
