@@ -81,8 +81,8 @@ jobs:
           # Pull requests read the cache and never write it.
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      - name: Build, lint and run the unit tests
-        run: ./gradlew --console=plain :tinfoil:assembleRelease :tinfoil:lintRelease :tinfoil:testDebugUnitTest
+      - name: Build, lint, run the unit tests and check the public API
+        run: ./gradlew --console=plain :tinfoil:assembleRelease :tinfoil:lintRelease :tinfoil:testDebugUnitTest :tinfoil:apiCheck
 
       # The tests that reach the verifier library are instrumented tests, which
       # need an emulator; they are run locally for now
