@@ -82,38 +82,7 @@ internal class EhbpSealing(
     ) { task -> Thread(task, "tinfoil-ehbp-${threads.incrementAndGet()}").apply { isDaemon = true } }
         .apply { allowCoreThreadTimeOut(true) }
 
-    override fun checkRequest(request: Request) {
-        if (request.method.equals("CONNECT", ignoreCase = true) || request.header("Upgrade") != null ||
-            request.headers("Connection").any { value -> value.split(',').any { it.trim().equals("upgrade", ignoreCase = true) } }
-        ) {
-            throw ConfigurationException(
-                "TransportMode.Ehbp seals only request and response bodies, so it cannot protect a protocol " +
-                    "upgrade, such as a WebSocket, or a CONNECT tunnel; use TransportMode.Tls on a direct connection",
-            )
-        }
-        for (name in request.headers.names()) {
-            if (name.startsWith(PROTOCOL_HEADER_PREFIX, ignoreCase = true)) {
-                throw ConfigurationException("requests must not set an Ehbp- header: the sealing protocol owns them")
-            }
-            if (name.equals(ENCLAVE_URL_HEADER, ignoreCase = true)) {
-                throw ConfigurationException(
-                    "requests must not set the $ENCLAVE_URL_HEADER header, which names the verified enclave",
-                )
-            }
-        }
-        if (request.body?.isDuplex() == true) {
-            throw ConfigurationException("TransportMode.Ehbp cannot seal a duplex request body")
-        }
-        if (request.isHttps == cleartext) {
-            throw ConfigurationException(
-                if (cleartext) {
-                    "the client's base URL is HTTP, and so must its requests be"
-                } else {
-                    "TransportMode.Ehbp requires an HTTPS request, unless the client's base URL is HTTP on this machine"
-                },
-            )
-        }
-    }
+    override fun checkRequest(request: Request) = checkRequest(request, cleartext)
 
     override fun bind(verification: Verification): EhbpTransport =
         EhbpTransport(identityOf(verification.hpkePublicKey), enclaveUrl, cleartext, dispatcher, executor, calls, settings)
@@ -127,6 +96,44 @@ internal class EhbpSealing(
     internal companion object {
         /** The header that tells a proxy which enclave a sealed request is for. */
         const val ENCLAVE_URL_HEADER = "X-Tinfoil-Enclave-Url"
+
+        /**
+         * Throws for a request that sealing cannot protect, for a transport
+         * that sends over cleartext HTTP or does not, as [cleartext] says.
+         */
+        @Throws(ConfigurationException::class)
+        fun checkRequest(request: Request, cleartext: Boolean) {
+            if (request.method.equals("CONNECT", ignoreCase = true) || request.header("Upgrade") != null ||
+                request.headers("Connection").any { value -> value.split(',').any { it.trim().equals("upgrade", ignoreCase = true) } }
+            ) {
+                throw ConfigurationException(
+                    "TransportMode.Ehbp seals only request and response bodies, so it cannot protect a protocol " +
+                        "upgrade, such as a WebSocket, or a CONNECT tunnel; use TransportMode.Tls on a direct connection",
+                )
+            }
+            for (name in request.headers.names()) {
+                if (name.startsWith(PROTOCOL_HEADER_PREFIX, ignoreCase = true)) {
+                    throw ConfigurationException("requests must not set an Ehbp- header: the sealing protocol owns them")
+                }
+                if (name.equals(ENCLAVE_URL_HEADER, ignoreCase = true)) {
+                    throw ConfigurationException(
+                        "requests must not set the $ENCLAVE_URL_HEADER header, which names the verified enclave",
+                    )
+                }
+            }
+            if (request.body?.isDuplex() == true) {
+                throw ConfigurationException("TransportMode.Ehbp cannot seal a duplex request body")
+            }
+            if (request.isHttps == cleartext) {
+                throw ConfigurationException(
+                    if (cleartext) {
+                        "the client's base URL is HTTP, and so must its requests be"
+                    } else {
+                        "TransportMode.Ehbp requires an HTTPS request, unless the client's base URL is HTTP on this machine"
+                    },
+                )
+            }
+        }
 
         private const val PROTOCOL_HEADER_PREFIX = "Ehbp-"
         private const val MAX_CONCURRENT_REQUESTS = 64

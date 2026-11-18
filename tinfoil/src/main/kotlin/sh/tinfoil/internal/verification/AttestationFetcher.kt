@@ -35,6 +35,8 @@ internal class AttestationFetcher(
     settings: HttpSettings = HttpSettings(),
     private val timeout: Duration = TIMEOUT,
     private val maxBodyBytes: Long = MAX_BODY_BYTES,
+    /** The statuses whose bodies are returned; any other fails the fetch. */
+    private val accepted: IntRange = SUCCESS,
 ) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))
@@ -49,7 +51,7 @@ internal class AttestationFetcher(
     /**
      * The body of a GET of [url], which must be HTTPS. A failure to get it
      * is a [NetworkException] that keeps its cause, with the status when a
-     * server answered with one outside 2xx. Cancelling the coroutine cancels
+     * server answered with one that is not accepted. Cancelling the coroutine cancels
      * the fetch.
      */
     @Throws(TinfoilException::class)
@@ -112,7 +114,7 @@ internal class AttestationFetcher(
             }
             return Step.Redirect(target)
         }
-        if (response.code !in 200..299) {
+        if (response.code !in accepted) {
             throw NetworkException("GET ${describe(url)}: HTTP ${response.code}", status = response.code)
         }
         val source = response.body?.source()
@@ -143,6 +145,7 @@ internal class AttestationFetcher(
         const val MAX_REDIRECTS: Int = 10
         const val MAX_BODY_BYTES: Long = 32L shl 20
         val TIMEOUT: Duration = 30.seconds
+        val SUCCESS: IntRange = 200..299
 
         private const val READ_SIZE = 64L * 1024
         private val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)

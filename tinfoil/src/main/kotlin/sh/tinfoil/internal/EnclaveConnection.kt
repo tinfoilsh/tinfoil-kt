@@ -22,6 +22,7 @@ import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.Verifier
 import sh.tinfoil.RecoverableResponse
+import sh.tinfoil.internal.transport.AttestedSender
 import sh.tinfoil.internal.transport.BoundTransport
 import sh.tinfoil.internal.transport.EhbpSealing
 import sh.tinfoil.internal.transport.HttpSettings
@@ -38,6 +39,7 @@ import java.io.IOException
 import java.time.Instant
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
+import kotlin.time.TimeSource
 
 /**
  * One enclave's verification state and the requests that depend on it.
@@ -63,7 +65,7 @@ internal class EnclaveConnection(
     private val clock: () -> Instant = Instant::now,
     /** Called once, when the connection closes, to release what its owner made for it. */
     private val onClose: () -> Unit = {},
-) {
+) : AttestedSender {
     val transportMode: TransportMode get() = protocol.mode
 
     /**
@@ -71,7 +73,7 @@ internal class EnclaveConnection(
      * for blocking work, through a view of its own, so that it is not held
      * to that pool's limit.
      */
-    val scope: CoroutineScope =
+    override val scope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(CALL_PARALLELISM) + CoroutineName("tinfoil-calls"))
 
     /**
@@ -146,7 +148,7 @@ internal class EnclaveConnection(
      * fails with an [AttestationException].
      */
     @Throws(IOException::class)
-    suspend fun send(request: Request, onCall: (Call) -> Unit = {}): Response {
+    override suspend fun send(request: Request, onCall: (Call) -> Unit): Response {
         checkOpen()
         checkRequest(request)
         val outgoing = cacheSecret?.provision(request) ?: request
@@ -230,19 +232,7 @@ internal class EnclaveConnection(
 
     /** The rules that keep a request, and the credentials in its headers, on the enclave. */
     private fun checkRequest(request: Request) {
-        val url = request.url
-        if (url.username.isNotEmpty() || url.password.isNotEmpty()) {
-            throw ConfigurationException("request URLs must not carry credentials")
-        }
-        val target = Origin.of(url)
-        if (target != origin) {
-            throw ConfigurationException(
-                "refusing to send a request to $target: the client is bound to $origin for the enclave $enclave",
-            )
-        }
-        if (request.header("Host") != null) {
-            throw ConfigurationException("requests must not set the Host header, which names the verified enclave")
-        }
+        origin.requireDestinationOf(request, "the enclave $enclave")
         protocol.checkRequest(request)
     }
 
@@ -462,6 +452,8 @@ internal class Internals(
     val clock: () -> Instant = Instant::now,
     val retryDelay: Duration = Attestor.RETRY_DELAY,
     val discovery: RouterDiscovery.Settings = RouterDiscovery.Settings(),
+    /** What measures the time between fetches of a gateway's catalog. */
+    val timeSource: TimeSource = TimeSource.Monotonic,
 )
 
 private fun <T : Throwable> T.alsoSuppressing(earlier: Throwable?): T = apply {
