@@ -24,6 +24,10 @@ to what is verified belongs in tinfoil-go.
   verifier library cannot load there, so these tests use fakes for it.
 - `./gradlew :tinfoil:connectedDebugAndroidTest` runs the tests that reach the
   verifier library, on a running emulator or a device.
+- Instrumented tests that reach production enclaves are skipped unless the
+  instrumentation argument `tinfoilIntegration` is `true`:
+  `-Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true`.
+  Run them after a change to verification, the TLS pin or the transports.
 - `./gradlew :tinfoil:lintRelease` must pass; warnings are errors.
 - `./gradlew :tinfoil:apiCheck` compares the public API with
   `tinfoil/api/tinfoil.api`. Change that file only with
@@ -33,6 +37,14 @@ to what is verified belongs in tinfoil-go.
 
 - Fail closed: no request leaves before its enclave is verified, and option
   errors are raised before any network I/O.
+- A request is written only to a connection whose leaf certificate carries
+  the attested key, checked after the platform's own TLS validation. Nothing
+  that can weaken that check, such as trusted roots, a proxy or a stand-in
+  verifier, is part of the public API. Tests reach them through `internal`
+  members, and those on a public class are also `@JvmSynthetic`, because
+  Kotlin's `internal` is public to Java; a public class has no ordinary
+  member that takes one. Classes under `sh.tinfoil.internal` stay visible to
+  Java as such, and are not an API.
 - Never put an API key, a cache secret or key material in a log, an exception
   message or a `toString()`.
 - Comments and test names describe this code; they do not cite other SDKs.

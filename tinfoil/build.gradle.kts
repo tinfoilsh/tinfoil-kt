@@ -79,11 +79,21 @@ kotlin {
 dependencies {
     implementation(files(tinfoilGoDir.resolve("classes.jar")).builtBy(unpackTinfoilGo))
     implementation(libs.kotlinx.serialization.json)
+    // OkHttp's types are part of the public API: requests, responses and
+    // Call.Factory.
+    api(libs.okhttp)
+    // Suspend functions are part of the public API.
+    api(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.tls)
+    testImplementation(libs.okhttp.mockwebserver)
 
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.kotlin.test.junit)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
 }
