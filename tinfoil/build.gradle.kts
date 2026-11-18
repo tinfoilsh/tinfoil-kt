@@ -88,6 +88,14 @@ dependencies {
     // The EHBP client and, through it, Bouncy Castle. No EHBP type is part of
     // the public API.
     implementation(libs.ehbp)
+    // The OpenAI SDK's client and model types are part of the public API.
+    // Only its core is used: the SDK's own HTTP client, the artifact
+    // openai-java-client-okhttp, must stay off the classpath, so that
+    // nothing but this SDK's attested clients can carry its requests. A
+    // test checks that.
+    api(libs.openai.java.core)
+    // The OpenAI SDK reflects on its models with kotlin-reflect at run time.
+    implementation(libs.kotlin.reflect)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
