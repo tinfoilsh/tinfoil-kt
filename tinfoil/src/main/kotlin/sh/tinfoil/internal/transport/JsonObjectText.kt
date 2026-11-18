@@ -27,6 +27,22 @@ internal class JsonObjectText private constructor(
     /** The index after that value, or -1. */
     val valueEnd: Int,
 ) {
+    /** Told of each member of an object, in order, by where its name and its value are in the text. */
+    internal fun interface MemberVisitor {
+        /**
+         * [nameStart] is the index of the quote that opens the member's
+         * name and [nameEnd] the index after the quote that closes it;
+         * the value is the text from [valueStart] to [valueEnd], without
+         * whitespace around it.
+         */
+        fun member(nameStart: Int, nameEnd: Int, valueStart: Int, valueEnd: Int)
+    }
+
+    /** Told of each element of an array, in order: the text from [start] to [end]. */
+    internal fun interface ElementVisitor {
+        fun element(start: Int, end: Int)
+    }
+
     internal companion object {
         /**
          * The deepest nesting that is read, the object itself included.
@@ -38,25 +54,72 @@ internal class JsonObjectText private constructor(
          * The layout of [text] if it is one JSON object with nothing but
          * whitespace around it, counting the top-level members named
          * [name]; otherwise null. Names are compared after their escapes
-         * are decoded, so that `"a"` names the member `a`. Members of
+         * are decoded, so that `"\u0061"` names the member `a`. Members of
          * nested objects are not counted.
          */
-        fun scan(text: ByteArray, name: String): JsonObjectText? = Scanner(text, name).scanObject()
-    }
-
-    private class Scanner(private val text: ByteArray, private val name: String) {
-        private val size = text.size
-        private var index = 0
-
-        fun scanObject(): JsonObjectText? {
-            skipWhitespace()
-            if (!take('{')) {
-                return null
-            }
+        fun scan(text: ByteArray, name: String): JsonObjectText? {
             var members = 0
             var occurrences = 0
-            var valueStart = -1
-            var valueEnd = -1
+            var start = -1
+            var end = -1
+            val closingBrace = members(text) { nameStart, nameEnd, valueStart, valueEnd ->
+                members++
+                if (isName(text, nameStart, nameEnd, name)) {
+                    occurrences++
+                    start = valueStart
+                    end = valueEnd
+                }
+            }
+            return if (closingBrace < 0) null else JsonObjectText(members, closingBrace, occurrences, start, end)
+        }
+
+        /**
+         * Tells [visitor] of each top-level member of the text between
+         * [from] and [to] if that is one JSON object with nothing but
+         * whitespace around it, and returns the index of the brace that
+         * closes it; otherwise returns -1, in which case what [visitor] was
+         * told means nothing. Members of nested objects are not visited.
+         */
+        fun members(text: ByteArray, from: Int = 0, to: Int = text.size, visitor: MemberVisitor): Int =
+            Scanner(text, from, to).scanObject(visitor)
+
+        /**
+         * Tells [visitor] of each element of the text between [from] and
+         * [to] if that is one JSON array with nothing but whitespace around
+         * it, and returns true; otherwise returns false, in which case what
+         * [visitor] was told means nothing. Elements of nested arrays are
+         * not visited.
+         */
+        fun elements(text: ByteArray, from: Int, to: Int, visitor: ElementVisitor): Boolean =
+            Scanner(text, from, to).scanArray(visitor)
+
+        /**
+         * Whether the name between [nameStart] and [nameEnd], as a
+         * [MemberVisitor] is given them, spells [name] once its escapes are
+         * decoded. [name] is ASCII.
+         */
+        fun isName(text: ByteArray, nameStart: Int, nameEnd: Int, name: String): Boolean =
+            Scanner(text, 0, text.size).isName(nameStart + 1, nameEnd - 1, name)
+
+        /**
+         * The string that the text between [from] and [to] spells, if that
+         * is exactly one JSON string; otherwise null. An escape for half of
+         * a surrogate pair that has no other half decodes to U+FFFD, the
+         * replacement character.
+         */
+        fun string(text: ByteArray, from: Int, to: Int): String? = Scanner(text, from, to).decodeString()
+    }
+
+    /** Reads the text from [from] up to [size], and nothing outside it. */
+    private class Scanner(private val text: ByteArray, from: Int, private val size: Int) {
+        private var index = from
+
+        /** The index of the closing brace, or -1. */
+        fun scanObject(visitor: MemberVisitor): Int {
+            skipWhitespace()
+            if (!take('{')) {
+                return -1
+            }
             skipWhitespace()
             val closingBrace: Int
             if (peek() == '}'.code) {
@@ -67,40 +130,118 @@ internal class JsonObjectText private constructor(
                     skipWhitespace()
                     val nameStart = index
                     if (!skipString()) {
-                        return null
+                        return -1
                     }
-                    val named = isName(nameStart + 1, index - 1)
+                    val nameEnd = index
                     skipWhitespace()
                     if (!take(':')) {
-                        return null
+                        return -1
                     }
                     skipWhitespace()
                     val start = index
                     if (!skipValue()) {
-                        return null
+                        return -1
                     }
-                    members++
-                    if (named) {
-                        occurrences++
-                        valueStart = start
-                        valueEnd = index
-                    }
+                    visitor.member(nameStart, nameEnd, start, index)
                     skipWhitespace()
                     if (take(',')) {
                         continue
                     }
                     closingBrace = index
                     if (!take('}')) {
-                        return null
+                        return -1
                     }
                     break
                 }
             }
             skipWhitespace()
-            if (index != size) {
+            return if (index == size) closingBrace else -1
+        }
+
+        fun scanArray(visitor: ElementVisitor): Boolean {
+            skipWhitespace()
+            if (!take('[')) {
+                return false
+            }
+            skipWhitespace()
+            if (!take(']')) {
+                while (true) {
+                    skipWhitespace()
+                    val start = index
+                    if (!skipValue()) {
+                        return false
+                    }
+                    visitor.element(start, index)
+                    skipWhitespace()
+                    if (take(',')) {
+                        continue
+                    }
+                    if (!take(']')) {
+                        return false
+                    }
+                    break
+                }
+            }
+            skipWhitespace()
+            return index == size
+        }
+
+        /** The string that the whole text spells, or null if it is not one string. */
+        fun decodeString(): String? {
+            val start = index
+            if (!skipString() || index != size) {
                 return null
             }
-            return JsonObjectText(members, closingBrace, occurrences, valueStart, valueEnd)
+            val decoded = StringBuilder(size - start)
+            var at = start + 1
+            val end = size - 1
+            while (at < end) {
+                val b = text[at].toInt() and 0xff
+                if (b != '\\'.code) {
+                    // The text is well-formed UTF-8, so its characters can
+                    // be copied a run at a time.
+                    var runEnd = at
+                    while (runEnd < end && text[runEnd].toInt() != '\\'.code) {
+                        runEnd++
+                    }
+                    decoded.append(String(text, at, runEnd - at, Charsets.UTF_8))
+                    at = runEnd
+                    continue
+                }
+                val escape = text[at + 1].toInt().toChar()
+                at += 2
+                when (escape) {
+                    'b' -> decoded.append('\b')
+                    'f' -> decoded.append('\u000c')
+                    'n' -> decoded.append('\n')
+                    'r' -> decoded.append('\r')
+                    't' -> decoded.append('\t')
+                    'u' -> {
+                        val unit = hex4(at).toChar()
+                        at += 4
+                        when {
+                            !unit.isSurrogate() -> decoded.append(unit)
+                            unit.isHighSurrogate() && at + 6 <= end && text[at].toInt() == '\\'.code &&
+                                text[at + 1].toInt() == 'u'.code && hex4(at + 2).toChar().isLowSurrogate() -> {
+                                decoded.append(unit).append(hex4(at + 2).toChar())
+                                at += 6
+                            }
+                            else -> decoded.append(REPLACEMENT)
+                        }
+                    }
+                    // A quote, a backslash or a slash, as itself.
+                    else -> decoded.append(escape)
+                }
+            }
+            return decoded.toString()
+        }
+
+        private fun hex4(at: Int): Int {
+            var value = 0
+            for (i in 0 until 4) {
+                value = value * 16 + hexValue(text[at + i].toInt())
+            }
+            return value
         }
 
         private fun peek(): Int = if (index < size) text[index].toInt() and 0xff else -1
@@ -123,9 +264,10 @@ internal class JsonObjectText private constructor(
         }
 
         /**
-         * Moves past the value at the index, which is a member of the
-         * top-level object. Nesting is followed with a stack of its own
-         * rather than the thread's, so that no text can exhaust it.
+         * Moves past the value at the index, which is a member or an
+         * element of the container that is being read. Nesting is followed
+         * with a stack of its own rather than the thread's, so that no text
+         * can exhaust it.
          */
         private fun skipValue(): Boolean {
             // One bit for each open container: set for an object.
@@ -138,7 +280,7 @@ internal class JsonObjectText private constructor(
                 when (peek()) {
                     '{'.code, '['.code -> {
                         val isObject = peek() == '{'.code
-                        // The top-level object is the first level.
+                        // The container that is being read is the first level.
                         if (depth + 2 > MAX_DEPTH) {
                             return false
                         }
@@ -334,7 +476,7 @@ internal class JsonObjectText private constructor(
          * [end], already checked, spells [name] once its escapes are
          * decoded. [name] is ASCII, so any other character settles it.
          */
-        private fun isName(start: Int, end: Int): Boolean {
+        fun isName(start: Int, end: Int, name: String): Boolean {
             var at = start
             var matched = 0
             while (at < end) {
@@ -370,3 +512,6 @@ internal class JsonObjectText private constructor(
         }
     }
 }
+
+/** What an escape for an unpaired surrogate decodes to. */
+private const val REPLACEMENT = '\ufffd'

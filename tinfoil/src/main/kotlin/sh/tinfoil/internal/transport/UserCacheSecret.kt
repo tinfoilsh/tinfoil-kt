@@ -3,14 +3,7 @@ package sh.tinfoil.internal.transport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import okhttp3.HttpUrl
-import okhttp3.MediaType
 import okhttp3.Request
-import okhttp3.RequestBody
-import okio.Buffer
-import okio.BufferedSink
-import okio.Sink
-import okio.Timeout
-import okio.buffer
 import sh.tinfoil.ConfigurationException
 import java.io.IOException
 import java.net.ProtocolException
@@ -31,12 +24,13 @@ import java.security.SecureRandom
  * holds the attested key. It is never part of a message or of [toString].
  */
 internal class UserCacheSecret private constructor(
-    secret: String,
+    /** The secret itself, for a client that derives from it what it sends. */
+    val value: String,
     /** The largest body that [provision] reads. */
     private val maxBodyBytes: Long,
 ) {
     /** The secret as a JSON string, quotes included. */
-    private val json: ByteArray = quote(secret)
+    private val json: ByteArray = quote(value)
 
     /** The member to add to an object that has none. */
     private val member: ByteArray = "\"$FIELD\":".toByteArray(Charsets.US_ASCII) + json
@@ -99,7 +93,7 @@ internal class UserCacheSecret private constructor(
         if (declared > maxBodyBytes) {
             return request
         }
-        val text = runInterruptible(Dispatchers.IO) { read(body, declared) }
+        val text = runInterruptible(Dispatchers.IO) { HeldBody.read(body, declared, maxBodyBytes) }
         if (text == null || (declared >= 0 && text.size.toLong() != declared)) {
             if (oneShot && declared < 0) {
                 throw ConfigurationException(
@@ -119,7 +113,7 @@ internal class UserCacheSecret private constructor(
             return request
         }
         // A body that could be read only once is sent from what was read.
-        val held = HeldBody(text, splice ?: Splice(0, 0, EMPTY), body.contentType(), oneShot)
+        val held = HeldBody(text, listOfNotNull(splice), body.contentType(), oneShot)
         return request.newBuilder().method(request.method, held).build()
     }
 
@@ -148,89 +142,6 @@ internal class UserCacheSecret private constructor(
         }
     }
 
-    /** What [body] writes, or null if it is more than it declared or than may be held. */
-    private fun read(body: RequestBody, declared: Long): ByteArray? {
-        // A body that says how long it is gets exactly that much room, so
-        // that it is held once and not copied.
-        val held = if (declared >= 0) Held(declared.toInt(), declared.toInt()) else Held(INITIAL_ROOM, maxBodyBytes.toInt())
-        val sink = held.buffer()
-        try {
-            body.writeTo(sink)
-            sink.flush()
-        } catch (e: IOException) {
-            if (e.isOverLimit()) {
-                return null
-            }
-            throw e
-        }
-        return held.bytes()
-    }
-
-    private fun IOException.isOverLimit(): Boolean =
-        generateSequence<Throwable>(this) { it.cause }.take(MAX_CAUSE_DEPTH).any { it is OverLimit }
-
-    /** Bytes to put in place of the range from [start] to [end] of a text. */
-    internal class Splice(val start: Int, val end: Int, val replacement: ByteArray) {
-        fun applyTo(text: ByteArray): ByteArray =
-            text.copyOfRange(0, start) + replacement + text.copyOfRange(end, text.size)
-    }
-
-    /** A body that was read into memory, written with [splice] applied. */
-    private class HeldBody(
-        private val text: ByteArray,
-        private val splice: Splice,
-        private val type: MediaType?,
-        private val oneShot: Boolean,
-    ) : RequestBody() {
-        override fun contentType(): MediaType? = type
-
-        override fun contentLength(): Long =
-            text.size.toLong() - (splice.end - splice.start) + splice.replacement.size
-
-        override fun isOneShot(): Boolean = oneShot
-
-        override fun writeTo(sink: BufferedSink) {
-            sink.write(text, 0, splice.start)
-            sink.write(splice.replacement)
-            sink.write(text, splice.end, text.size - splice.end)
-        }
-    }
-
-    /** Keeps what is written to it, up to [limit] bytes, and fails the write that would pass that. */
-    private class Held(room: Int, private val limit: Int) : Sink {
-        private var bytes = ByteArray(minOf(room, limit))
-        private var size = 0
-
-        override fun write(source: Buffer, byteCount: Long) {
-            if (byteCount > limit - size) {
-                throw OverLimit()
-            }
-            val count = byteCount.toInt()
-            if (count > bytes.size - size) {
-                bytes = bytes.copyOf(minOf(limit.toLong(), maxOf(2L * bytes.size, size.toLong() + count)).toInt())
-            }
-            var copied = 0
-            while (copied < count) {
-                val read = source.read(bytes, size + copied, count - copied)
-                if (read == -1) {
-                    throw java.io.EOFException()
-                }
-                copied += read
-            }
-            size += count
-        }
-
-        fun bytes(): ByteArray = if (size == bytes.size) bytes else bytes.copyOf(size)
-
-        override fun flush() = Unit
-
-        override fun timeout(): Timeout = Timeout.NONE
-
-        override fun close() = Unit
-    }
-
-    private class OverLimit : IOException("the request body is larger than is read")
-
     internal companion object {
         /** The member of a request's body that scopes the prompt cache. */
         const val FIELD: String = "user_cache_secret"
@@ -249,11 +160,8 @@ internal class UserCacheSecret private constructor(
         const val MAX_BODY_BYTES: Long = 64L shl 20
 
         private const val SECRET_BYTES = 32
-        private const val INITIAL_ROOM = 8 * 1024
-        private const val MAX_CAUSE_DEPTH = 8
         private const val QUOTE = '"'.code.toByte()
         private val COMMA = byteArrayOf(','.code.toByte())
-        private val EMPTY = ByteArray(0)
 
         /**
          * A secret that is generated once in each process and shared by
@@ -288,7 +196,8 @@ internal class UserCacheSecret private constructor(
         @Throws(ConfigurationException::class)
         fun orProcessDefault(explicit: String?): UserCacheSecret = of(explicit) ?: processSecret
 
-        private fun isEligible(url: HttpUrl): Boolean {
+        /** Whether [url]'s path is one whose bodies take the member. */
+        fun isEligible(url: HttpUrl): Boolean {
             // The path as the server reads it, with its escapes decoded.
             val path = url.pathSegments.joinToString("/", prefix = "/")
             return ELIGIBLE_PATHS.any(path::endsWith)
