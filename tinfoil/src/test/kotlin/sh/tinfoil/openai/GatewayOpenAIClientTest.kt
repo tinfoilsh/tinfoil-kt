@@ -6,6 +6,7 @@ import com.openai.core.ClientOptions
 import com.openai.core.JsonValue
 import com.openai.errors.OpenAIException
 import com.openai.models.chat.completions.ChatCompletionChunk
+import com.openai.models.audio.transcriptions.TranscriptionCreateParams
 import com.openai.models.chat.completions.ChatCompletionCreateParams
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.toList
@@ -110,6 +111,24 @@ class GatewayOpenAIClientTest {
         assertEquals(3, gateway.received.count { it.sealed })
         // One conversation, one replica.
         assertEquals(1, gateway.received.map { it.request.getHeader("X-Tinfoil-Seal") }.toSet().size)
+    }
+
+    @Test
+    fun anUploadIsRoutedByItsModelFieldAndSealed() = test {
+        gateway.serve("whisper" to ("tinfoilsh/whisper" to listOf("a.example")))
+        gateway.answer = { it.reply("""{"text":"transcribed"}""") }
+        val client = client()
+        val audio = "audio-bytes-that-must-not-be-seen-on-the-wire"
+        val params = TranscriptionCreateParams.builder().model("whisper").file(audio.toByteArray()).build()
+
+        val answer = client.openAI.audio().transcriptions().create(params)
+
+        assertEquals("transcribed", answer.asTranscription().text())
+        val received = gateway.received.single()
+        assertEquals("whisper", received.request.getHeader("X-Tinfoil-Model"))
+        assertTrue(received.sealed)
+        assertFalse(received.wire.containsText(audio))
+        assertTrue(received.text!!.contains(audio))
     }
 
     @Test

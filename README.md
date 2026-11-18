@@ -145,10 +145,12 @@ model. `pinnedModelsOnly` serves no model without a pin.
 A request has to name its model, so the calls of the OpenAI SDK that name
 none, such as listing models, are refused; `httpClient.models()` lists what
 the client serves. A JSON body that names `model`, `user_cache_secret` or
-`cache_salt` twice is refused too, since a server could read another of the
-two than the client did. `userCacheSecret` scopes the prompt cache as it
-does for the other clients, but the secret never leaves the device: the
-client replaces it in each body with a salt that it derives from it.
+`cache_salt` twice, or in another case, such as `Model`, is refused too,
+since a server could read another member than the client did.
+`userCacheSecret` scopes the prompt cache as it does for the other clients,
+but on the chat, completions and responses requests the secret never leaves
+the device: the client replaces it in the body with a salt that it derives
+from it.
 `GatewayHttpClient` is the HTTP client itself, and describes all of this.
 
 ### Errors

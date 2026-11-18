@@ -66,8 +66,9 @@ README.
 - A request body is changed only to add the user cache secret or, on the
   gateway route, to replace it with the cache salt, by rewriting those
   members in the text of a body that a strict JSON scanner accepts as one
-  object; every other byte is the caller's. A body that the scanner does not
-  accept is sent unchanged.
+  object; every other byte is the caller's. On the router and enclave
+  routes, a body that the scanner does not accept is sent unchanged; on the
+  gateway route, a JSON body that is not strictly one JSON value is refused.
 - The gateway and its catalog are untrusted: they only propose replicas.
   Each replica is verified against its model's pin, or for a model without
   one against the catalog's repository, which must be a bare `tinfoilsh/`
@@ -76,8 +77,10 @@ README.
   choose a tag or a digest, and none of it is parsed with code that recurses
   on its input. The client routes on the same model that the server will
   read: a body or an upload in which two parsers could find different
-  models is refused, not interpreted. The cache secret never leaves the
-  device on this route; only the salt that is derived from it does.
+  models is refused, not interpreted, and a request that names no model is
+  refused before the catalog is read. The client's cache secret never
+  leaves the device on this route; only the salt that is derived from it
+  does.
 - Every export of the gateway route carries `@ExperimentalTinfoilApi`, its
   KDoc says that it may change or be removed, and `ExperimentalApiTest`
   lists it. Experimental classes stay in `tinfoil/api/tinfoil.api`.

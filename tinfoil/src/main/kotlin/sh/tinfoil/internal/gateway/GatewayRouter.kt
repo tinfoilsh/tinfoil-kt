@@ -12,7 +12,13 @@ import kotlinx.coroutines.ensureActive
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.Request
+import okhttp3.MediaType
 import okhttp3.Response
+import okhttp3.ResponseBody
+import okio.Buffer
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.buffer
 import sh.tinfoil.AttestationException
 import sh.tinfoil.Catalog
 import sh.tinfoil.ConfigurationException
@@ -41,6 +47,7 @@ import sh.tinfoil.internal.verification.AttestationFetcher
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -114,6 +121,7 @@ internal class GatewayPolicy(
      */
     @Throws(TinfoilException::class)
     fun resolve(model: String, catalog: Catalog): Route {
+        requireNamed(model)
         val pin = pins[model]
         if (pinnedOnly && pin == null) {
             throw ConfigurationException("model ${quote(model)} is not pinned")
@@ -142,6 +150,22 @@ internal class GatewayPolicy(
 
     internal companion object {
         private const val CALLER_AUTHORIZED_CONFIG = "caller-authorized config requires a direct enclave client"
+
+        /**
+         * Throws for a request that names no model. Nothing is looked up
+         * for one: a catalog, which is not trusted, must not get to say
+         * which replicas serve the requests whose model the client could
+         * not read.
+         */
+        @Throws(ConfigurationException::class)
+        fun requireNamed(model: String) {
+            if (model.isBlank()) {
+                throw ConfigurationException(
+                    "the request names no model: name one in the \"model\" member of a JSON object body, " +
+                        "in the model field of an upload, or in the ${GatewayRequest.MODEL_HEADER} header",
+                )
+            }
+        }
 
         /**
          * What a replica is verified against, for a [reference] to one of
@@ -209,8 +233,15 @@ internal class GatewayRouter private constructor(
 
     /** One replica's verification state and sealed transport. */
     private class Replica(val connection: EnclaveConnection) {
-        /** The models that requests sent to it named. */
+        /** The models that requests sent to it named. It is safe to change from several threads. */
         val models: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+        /**
+         * How many callers are using the replica now: verifying it, or
+         * exchanging a request whose response is not yet closed. Guarded by
+         * the router's lock.
+         */
+        var users = 0
     }
 
     /**
@@ -239,8 +270,12 @@ internal class GatewayRouter private constructor(
      */
     @Throws(TinfoilException::class, CancellationException::class)
     suspend fun ensureVerified(model: String): Verification {
+        checkOpen()
+        GatewayPolicy.requireNamed(model)
         val route = policy.resolve(model, catalogNow())
-        return firstVerified(route, rank(route.hosts, model, first = null), model).second
+        val (leased, verification) = firstVerified(route, rank(route.hosts, model, first = null), model)
+        release(leased.second)
+        return verification
     }
 
     /** The last successful verification of each replica that is kept, unchecked. */
@@ -287,40 +322,102 @@ internal class GatewayRouter private constructor(
         val prepared = GatewayRequest.prepare(request, secret.value)
         checkOpen()
         val model = prepared.model
+        // Before the catalog is read, which could otherwise serve it.
+        GatewayPolicy.requireNamed(model)
         val route = policy.resolve(model, catalogNow())
         val prefix = prepared.cachePrefix
         val before = synchronized(lock) { rerouted[prefix] }
-        var (key, replica) = firstVerified(route, rank(route.hosts, prefix, before), model).first
+        val first = firstVerified(route, rank(route.hosts, prefix, before), model).first
+        var key = first.first
+        var replica: Replica? = first.second
 
         val body = prepared.request.body
         val replayable = body == null || (!body.isOneShot() && !body.isDuplex())
         var reroutes = 0
-        while (true) {
-            // A caller that cancelled while a replica was verified must not
-            // have its request, credentials included, sent.
-            coroutineContext.ensureActive()
-            val sealed = prepared.request.newBuilder().header(GatewayRequest.SEAL_HEADER, key.host).build()
-            replica.models += model
-            val response = replica.connection.send(sealed, onCall)
-            val routed = response.header(GatewayRequest.SEAL_HEADER)
-            if (response.code != PRECONDITION_FAILED || routed.isNullOrEmpty() || routed == key.host || !replayable) {
-                return response
+        // The replica is held from here until the response is closed, so
+        // that it is not let go while the request is in flight.
+        try {
+            while (true) {
+                // A caller that cancelled while a replica was verified must
+                // not have its request, credentials included, sent.
+                coroutineContext.ensureActive()
+                val sealed = prepared.request.newBuilder().header(GatewayRequest.SEAL_HEADER, key.host).build()
+                val sending = checkNotNull(replica)
+                sending.models += model
+                val response = sending.connection.send(sealed, onCall)
+                val routed = response.header(GatewayRequest.SEAL_HEADER)
+                if (response.code != PRECONDITION_FAILED || routed.isNullOrEmpty() || routed == key.host || !replayable) {
+                    replica = null
+                    return holding(response) { release(sending) }
+                }
+                response.closeQuietly()
+                if (reroutes == MAX_REROUTES) {
+                    throw NetworkException(
+                        "gateway kept routing away from the enclave the request was sealed to (last: ${printable(routed)})",
+                    )
+                }
+                reroutes++
+                key = route.on(routed)
+                replica?.let(::release)
+                replica = null
+                replica = try {
+                    verified(key).first
+                } catch (e: TinfoilException) {
+                    throw e.prefixed("following gateway route to enclave ${printable(routed)}")
+                }
+                remember(prefix, routed)
             }
-            response.closeQuietly()
-            if (reroutes == MAX_REROUTES) {
-                throw NetworkException(
-                    "gateway kept routing away from the enclave the request was sealed to (last: ${printable(routed)})",
-                )
-            }
-            reroutes++
-            key = route.on(routed)
-            replica = try {
-                verified(key).first
-            } catch (e: TinfoilException) {
-                throw e.prefixed("following gateway route to enclave ${printable(routed)}")
-            }
-            remember(prefix, routed)
+        } finally {
+            replica?.let(::release)
         }
+    }
+
+    /**
+     * [response], with a body that calls [released] once, when it is closed
+     * or read to its end. A response without a body is released now.
+     */
+    private fun holding(response: Response, released: () -> Unit): Response {
+        val body = response.body
+        if (body == null) {
+            released()
+            return response
+        }
+        val once = AtomicBoolean()
+        val release = {
+            if (once.compareAndSet(false, true)) {
+                released()
+            }
+        }
+        val source = object : ForwardingSource(body.source()) {
+            override fun read(sink: Buffer, byteCount: Long): Long {
+                val read = try {
+                    super.read(sink, byteCount)
+                } catch (e: IOException) {
+                    release()
+                    throw e
+                }
+                if (read == -1L) {
+                    release()
+                }
+                return read
+            }
+
+            override fun close() {
+                try {
+                    super.close()
+                } finally {
+                    release()
+                }
+            }
+        }.buffer()
+        val held = object : ResponseBody() {
+            override fun contentType(): MediaType? = body.contentType()
+
+            override fun contentLength(): Long = body.contentLength()
+
+            override fun source(): BufferedSource = source
+        }
+        return response.newBuilder().body(held).build()
     }
 
     /** Sends [request] as [send] does, and returns the response with the recovery token of the request that it answers. */
@@ -400,7 +497,8 @@ internal class GatewayRouter private constructor(
     /**
      * The replica [key] with a verification that is valid now, verifying
      * it first if there is none. A replica that has never verified is not
-     * kept: the next request starts again with it.
+     * kept: the next request starts again with it. The caller holds the
+     * replica that is returned, and has to [release] it.
      */
     private suspend fun verified(key: ReplicaKey): Pair<Replica, Verification> {
         var attempts = 0
@@ -410,11 +508,14 @@ internal class GatewayRouter private constructor(
                 val verification = replica.connection.ensureVerified()
                 checkOpen()
                 return Pair(replica, verification)
-            } catch (e: TinfoilException) {
+            } catch (e: Throwable) {
+                release(replica)
+                if (e !is TinfoilException) {
+                    throw e
+                }
                 checkOpen()
-                // Another request's failure, or the limit on how many
-                // replicas are kept, may have closed this one before it was
-                // asked; that says nothing about the replica.
+                // Another request's failure may have closed this one
+                // before it was asked; that says nothing about the replica.
                 val closedElsewhere = e is ConfigurationException && replica.connection.isClosed
                 if (replica.connection.current == null) {
                     drop(key, replica)
@@ -426,24 +527,39 @@ internal class GatewayRouter private constructor(
         }
     }
 
-    /** The replica that is kept for [key], or a new one, which has verified nothing yet. */
+    /**
+     * The replica that is kept for [key], or a new one, which has verified
+     * nothing yet, held for the caller.
+     *
+     * No more than [MAX_REPLICAS] are kept: when there are more, those that
+     * no one is using are let go, the least recently used first. One that
+     * is in use is never let go, so the client can keep more for as long as
+     * that many are in use at once, which its callers bound.
+     */
     private fun replica(key: ReplicaKey): Replica {
-        var evicted: Replica? = null
+        val evicted = ArrayList<Replica>()
         val replica = synchronized(lock) {
             if (closed) {
                 throw closedError()
             }
-            replicas[key] ?: Replica(open(key)).also { created ->
-                replicas[key] = created
-                if (replicas.size > MAX_REPLICAS) {
-                    val eldest = replicas.entries.iterator().next()
-                    replicas.remove(eldest.key)
-                    evicted = eldest.value
+            val held = replicas[key] ?: Replica(open(key)).also { replicas[key] = it }
+            held.users++
+            val eldest = replicas.entries.iterator()
+            while (replicas.size > MAX_REPLICAS && eldest.hasNext()) {
+                val candidate = eldest.next().value
+                if (candidate.users == 0) {
+                    eldest.remove()
+                    evicted += candidate
                 }
             }
+            held
         }
-        evicted?.connection?.close()
+        evicted.forEach { it.connection.close() }
         return replica
+    }
+
+    private fun release(replica: Replica) {
+        synchronized(lock) { replica.users-- }
     }
 
     private fun drop(key: ReplicaKey, replica: Replica) {
@@ -479,7 +595,11 @@ internal class GatewayRouter private constructor(
         /** How many of a model's replicas are tried for one request, or one verification, before it fails. */
         const val MAX_REPLICAS_TRIED: Int = 16
 
-        /** How many replicas a client keeps connections and verifications for; the least recently used goes first. */
+        /**
+         * How many replicas a client keeps connections and verifications
+         * for, beyond those that are in use; the least recently used goes
+         * first.
+         */
         const val MAX_REPLICAS: Int = 256
 
         private const val MAX_REROUTED = 1024

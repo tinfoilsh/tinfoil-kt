@@ -327,37 +327,81 @@ class GatewayRequestTest {
     }
 
     @Test
-    fun otherRepeatsAndBodiesThatAreNotOneObjectAreSentAsTheyAre() {
+    fun otherRepeatsAndJsonThatIsNotAnObjectAreSentAsTheyAre() {
         val forwarded = listOf(
             """{"model":"test-model","temperature":0,"temperature":1}""",
-            """{"model":"test-model","n":{"model":"a","model":"b"}}""",
-            """{"model":"test-model","n":[{"cache_salt":1,"cache_salt":2}],"Model":"x","MODEL":"y","model ":"z"}""",
+            """{"model":"test-model","n":{"model":"a","model":"b","Model":"c"}}""",
+            """{"model":"test-model","n":[{"cache_salt":1,"cache_salt":2}],"model ":"z","models":1,"xmodel":2}""",
             """[{"model":"a"},{"model":"b"}]""",
             "\"model\"",
-            """{"model":"a","model":"b"""",
-            """{"model":"a","model":"b"} {}""",
-            """{"model":"a","model":"b",}""",
             "null",
-            "not json at all",
+            " 7 ",
         )
         for (body in forwarded) {
             val prepared = prepare(body, path = "/v1/embeddings", headers = listOf(GatewayRequest.MODEL_HEADER to "test-model"))
             assertEquals(body, prepared.text())
             assertEquals("test-model", prepared.model)
         }
-        // Without the header, a body that is not one object names no model.
+        // Without the header, a body that is not an object names no model.
         assertEquals("", prepare("""[{"model":"a"}]""").model)
-        assertNull(prepare("""{"model":"a","model":"b"} {}""").request.header(GatewayRequest.MODEL_HEADER))
     }
 
     @Test
-    fun aJsonBodyThatIsNotUtf8IsRefused() {
-        val bytes = "{\"model\":\"a\",\"x\":\"".toByteArray() + byteArrayOf(0xff.toByte()) + "\",\"model\":\"b\"}".toByteArray()
-        for (headers in listOf(emptyList(), listOf(GatewayRequest.MODEL_HEADER to "a"))) {
-            assertRefused("the JSON request body is not UTF-8") {
-                prepare(request(bytes.toRequestBody(JSON), headers = headers))
+    fun aJsonBodyThatIsNotOneJsonValueIsRefused() {
+        val refused = listOf(
+            """{"model":"a","model":"b"""",
+            """{"model":"a","model":"b"} {}""",
+            """{"model":"a","model":"b",}""",
+            "not json at all",
+            """{"model":"a","x":NaN,"model":"b"}""",
+            """{"model":"a","x":Infinity}""",
+            """{'model':'a'}""",
+            "\ufeff{\"model\":\"a\",\"model\":\"b\"}",
+            "[1,]",
+        ).map { it.toByteArray() } + listOf(
+            // Not UTF-8, and other encodings that hold only ASCII.
+            "{\"model\":\"a\",\"x\":\"".toByteArray() + byteArrayOf(0xff.toByte()) + "\",\"model\":\"b\"}".toByteArray(),
+            """{"model":"a","user_cache_secret":"s","model":"b"}""".toByteArray(Charsets.UTF_16LE),
+            """{"model":"a","model":"b"}""".toByteArray(Charsets.UTF_16BE),
+            """{"model":"a","model":"b"}""".toByteArray(Charsets.UTF_32LE),
+        )
+        for (bytes in refused) {
+            for (headers in listOf(emptyList(), listOf(GatewayRequest.MODEL_HEADER to "a"))) {
+                for (path in listOf("/v1/chat/completions", "/v1/embeddings")) {
+                    assertRefused("the JSON request body is not valid JSON") {
+                        prepare(request(bytes.toRequestBody(JSON), path = path, headers = headers))
+                    }
+                }
             }
         }
+    }
+
+    @Test
+    fun aMemberThatAServerCouldTakeForOneThatTheClientReadsIsRefused() {
+        val refused = mapOf(
+            """{"model":"A","Model":"B"}""" to "model",
+            """{"Model":"m"}""" to "model",
+            """{"MODEL":"m","messages":[]}""" to "model",
+            """{"m\u004fdel":"m"}""" to "model",
+            """{"model":"m","USER_CACHE_SECRET":"x"}""" to "user_cache_secret",
+            """{"model":"m","User_Cache_Secret":"x","user_cache_secret":"y"}""" to "user_cache_secret",
+            "{\"model\":\"m\",\"user_cache_\u017fecret\":\"x\"}" to "user_cache_secret",
+            """{"model":"m","u\u017fer_cache_secret":"x"}""" to "user_cache_secret",
+            """{"model":"m","Cache_Salt":"x"}""" to "cache_salt",
+            "{\"model\":\"m\",\"cache_\u017falt\":1}" to "cache_salt",
+        )
+        for ((body, name) in refused) {
+            for (path in listOf("/v1/chat/completions", "/v1/embeddings")) {
+                for (headers in listOf(emptyList(), listOf(GatewayRequest.MODEL_HEADER to "m"))) {
+                    assertRefused("request body has a member whose name differs from \"$name\" only by case") {
+                        prepare(body, path = path, headers = headers)
+                    }
+                }
+            }
+        }
+        // Names that no folding makes the same, and members that are not at the top.
+        val body = """{"model":"m","models":1,"mode":2,"model_":3,"n":{"Model":"x","CACHE_SALT":1},"Instructions":"kept"}"""
+        assertEquals(body, prepare(body, path = "/v1/embeddings").text())
     }
 
     // The model.
@@ -410,6 +454,12 @@ class GatewayRequestTest {
         assertRefused("""request body repeats the "model" member""") { prepare(both) }
         val plain = request(Fixed("""{"model":"m","model":"n"}""".toByteArray(), type = "text/plain".toMediaType()), headers = listOf("Content-Type" to "application/json"))
         assertSame(plain, prepare(plain).request)
+        // A body without a content type of its own is named by one header, not by two.
+        val twice = request(
+            Fixed("""{"model":"m","model":"n"}""".toByteArray(), type = null),
+            headers = listOf("Content-Type" to "text/plain", "Content-Type" to "application/json"),
+        )
+        assertRefused("requests must not set the Content-Type header more than once") { prepare(twice) }
     }
 
     /** A body with a fixed content that says what a test wants of itself. */
@@ -504,8 +554,6 @@ class GatewayRequestTest {
             upload(file(), field("model", "a"), field("model", "a")),
             upload(file(), field("model", "")),
             upload(file(), field("model", "  \t ")),
-            upload(file(), file(name = "model", content = "a")),
-            upload(field("model", "a"), file(name = "model", content = "b")),
             upload(file(), field("Model", "a")),
         )
         for (body in refused) {
@@ -513,7 +561,15 @@ class GatewayRequestTest {
                 prepare(request(body, path = "/v1/audio/transcriptions"))
             }
         }
-        assertRefused("multipart upload is missing its boundary") {
+        // A file is not a model, with a name or without one.
+        val named = MultipartBody.Part.createFormData("model", "a.wav", "a".toRequestBody())
+        assertRefused("multipart upload must contain exactly one non-empty model field") {
+            prepare(request(upload(file(), named), path = "/v1/audio/transcriptions"))
+        }
+        for (body in listOf(upload(file(), file(name = "model", content = "a")), upload(field("model", "a"), file(name = "model", content = "b")))) {
+            assertRefused("invalid multipart upload") { prepare(request(body, path = "/v1/audio/transcriptions")) }
+        }
+        assertRefused("multipart upload is missing its boundary, or names it ambiguously") {
             prepare(request(Fixed("x".toByteArray(), type = "multipart/form-data".toMediaType()), path = "/v1/audio/transcriptions"))
         }
         assertRefused("the request names a model whose name cannot be sent in a header") {
@@ -583,7 +639,95 @@ class GatewayRequestTest {
             val error = assertFailsWith<ConfigurationException> {
                 prepare(request(Fixed("--b\r\n$model\r\n--b--".toByteArray(), type = "multipart/form-data; boundary=\"$boundary\"".toMediaType()), path = "/v1/audio/transcriptions"))
             }
-            assertEquals("invalid multipart upload", error.detail)
+            assertEquals("multipart upload is missing its boundary, or names it ambiguously", error.detail)
+        }
+    }
+
+    @Test
+    fun theBoundaryIsReadStrictlyFromTheContentType() {
+        val form = "--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper\r\n--b--\r\n"
+        fun typed(contentType: String) =
+            request(Fixed(form.toByteArray(), type = null), path = "/v1/audio/transcriptions", headers = listOf("Content-Type" to contentType))
+        for (contentType in listOf("multipart/form-data; boundary=b", "multipart/form-data;boundary=\"b\"", "Multipart/Form-Data ; charset=utf-8; Boundary=b")) {
+            assertEquals("whisper", prepare(typed(contentType)).model, contentType)
+        }
+        val refused = listOf(
+            "multipart/form-data; boundary='b'",
+            "multipart/form-data; boundary=b; boundary=x",
+            "multipart/form-data; boundary=x; boundary=b",
+            "multipart/form-data; boundary=b; BOUNDARY=x",
+            "multipart/form-data; boundary*=utf-8''b",
+            "multipart/form-data; boundary=\"b\\\"\"",
+            "multipart/form-data; boundary=b x",
+            "multipart/form-data; boundary=b;",
+            "multipart/form-data; boundary=\"b \"",
+            "multipart/form-data; boundary=\"b<\"",
+            "multipart/form-data; boundary=",
+            "multipart/form-data; boundary",
+            "multipart/form-data",
+        )
+        for (contentType in refused) {
+            val error = assertFailsWith<ConfigurationException>(contentType) { prepare(typed(contentType)) }
+            assertTrue(error.detail.startsWith("multipart upload") || error.detail.startsWith("invalid multipart upload"), error.detail)
+        }
+        // The same through a body's own content type, as the HTTP client parsed it.
+        val quoted = Fixed(form.toByteArray(), type = "multipart/form-data; boundary='b'".toMediaType())
+        assertFailsWith<ConfigurationException> { prepare(request(quoted, path = "/v1/audio/transcriptions")) }
+    }
+
+    @Test
+    fun aModelFieldCarriesNoHeaderThatCouldChangeHowItIsRead() {
+        fun form(headers: String, value: String = "whisper") =
+            raw("--b\r\nContent-Disposition: form-data; name=\"model\"\r\n$headers\r\n$value\r\n--b--\r\n")
+        for (headers in listOf("", "Content-Type: text/plain\r\n", "content-type: Text/Plain; charset=UTF-8\r\n", "Content-Type: text/plain;charset=us-ascii\r\n", "Content-Length: 7\r\n")) {
+            assertEquals("whisper", prepare(form(headers)).model, headers)
+        }
+        val refused = listOf(
+            "Content-Transfer-Encoding: quoted-printable\r\n",
+            "Content-Transfer-Encoding: base64\r\n",
+            "Content-Transfer-Encoding: 8bit\r\n",
+            "Content-Type: text/plain; charset=utf-16\r\n",
+            "Content-Type: application/json\r\n",
+            "Content-Type: text/plain; charset=utf-8; x=y\r\n",
+            "Content-Type: text/plain\r\nContent-Type: text/plain\r\n",
+            "Content-Length: 3\r\n",
+            "Content-Length: 07\r\n",
+            "Content-Encoding: gzip\r\n",
+            "X-Anything: 1\r\n",
+        )
+        for (headers in refused) {
+            val error = assertFailsWith<ConfigurationException>(headers) { prepare(form(headers, value = if (headers.contains("quoted")) "=41" else "whisper")) }
+            assertEquals("invalid multipart upload", error.detail, headers)
+        }
+        // The fields that scope the cache are held to the same rule; any other field is not.
+        assertFailsWith<ConfigurationException> {
+            prepare(raw("--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper\r\n--b\r\nContent-Disposition: form-data; name=\"cache_salt\"\r\nContent-Transfer-Encoding: base64\r\n\r\nx\r\n--b--\r\n"))
+        }
+        assertEquals(
+            "whisper",
+            prepare(raw("--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper\r\n--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a\"\r\nContent-Transfer-Encoding: binary\r\nX-Other: 1\r\n\r\nx\r\n--b--\r\n")).model,
+        )
+    }
+
+    @Test
+    fun aNameWithAControlCharacterAndAnEndThatIsNotAnEndAreRefused() {
+        val model = "Content-Disposition: form-data; name=\"model\"\r\n\r\nwhisper"
+        val refused = listOf(
+            "--b\r\n$model\r\n--b\r\nContent-Disposition: form-data; name=\"model\u0000\"\r\n\r\nother\r\n--b--\r\n",
+            "--b\r\n$model\r\n--b\r\nContent-Disposition: form-data; name=\"mo\tdel\"\r\n\r\nother\r\n--b--\r\n",
+            "--b\r\n$model\r\n--b\r\nContent-Disposition: form-data; name=\"x\"; filename=\"a\u007f\"\r\n\r\nother\r\n--b--\r\n",
+            "--b\r\n$model\r\n--b--junk",
+            "--b\r\n$model\r\n--b--junk\r\n",
+            "--b\r\n$model\r\n--b---\r\n",
+            "--b\r\n$model\r\n--b-- x\r\n",
+            "--b\r\n$model\r\n--b--\n",
+        )
+        for (text in refused) {
+            val error = assertFailsWith<ConfigurationException>(text) { prepare(raw(text)) }
+            assertEquals("invalid multipart upload", error.detail, text)
+        }
+        for (end in listOf("--b--", "--b--\r\n", "--b-- \t\r\n", "--b--\r\nan epilogue\r\n")) {
+            assertEquals("whisper", prepare(raw("--b\r\n$model\r\n$end")).model, end)
         }
     }
 

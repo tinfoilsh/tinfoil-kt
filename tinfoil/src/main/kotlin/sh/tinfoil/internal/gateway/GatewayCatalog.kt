@@ -111,7 +111,8 @@ internal object GatewayCatalog {
      * [body] is one JSON object in UTF-8 whose members are the models. A
      * model's value is an object with a string `repo` and an array of
      * strings `hosts`, and any other members, which are ignored; or null,
-     * which lists nothing for the model. Anything else is refused whole,
+     * which lists nothing for the model. An entry for a model whose name is
+     * empty or blank is left out. Anything else is refused whole,
      * rather than read in part: a text that is not such an object, a model
      * or one of those two members that is named twice, a value of another
      * type, and more models or replicas than [MAX_MODELS] and [MAX_HOSTS].
@@ -143,7 +144,8 @@ internal object GatewayCatalog {
         }
         val trusted = LinkedHashMap<String, CatalogEntry>()
         for ((model, entry) in entries) {
-            if (entry != null && isTrusted(entry)) {
+            // A request always names its model, so no model is without a name.
+            if (entry != null && model.isNotBlank() && isTrusted(entry)) {
                 trusted[model] = entry
             }
         }

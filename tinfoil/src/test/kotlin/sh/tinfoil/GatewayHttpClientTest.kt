@@ -444,23 +444,72 @@ class GatewayHttpClientTest {
 
     @Test
     fun aRequestThatNamesNoModelIsRefused() = test {
-        gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
-        val client = gateway.client()
-        val unnamed = listOf(
-            Request.Builder().url(client.baseUrl.resolve("models")!!).build(),
-            client.post("{}"),
-            client.post("""{"model":""}"""),
-            client.post("""{"model":7}"""),
-            client.post("""[{"model":"m"}]"""),
-            Request.Builder().url(client.baseUrl.resolve("chat/completions")!!).post(chat().toRequestBody("text/plain".toMediaType())).build(),
-            Request.Builder().url(client.baseUrl.resolve("files/f1")!!).delete().build(),
+        // Both a catalog of the gateway's and one of the caller's list a
+        // model without a name, with replicas of a repository of their choice.
+        val nameless = "tinfoilsh/any" to listOf("evil.example")
+        gateway.catalog = {
+            MockResponse().setBody(
+                """{"":{"repo":"tinfoilsh/any","hosts":["evil.example"]},"m":{"repo":"tinfoilsh/m","hosts":["a.example"]}}""",
+            )
+        }
+        val reads = AtomicInteger()
+        val supplied = gateway.client(
+            modelPins = mapOf("m" to ModelPin("tinfoilsh/m")),
+            catalog = {
+                reads.incrementAndGet()
+                entries("" to nameless, " " to nameless, "m" to ("tinfoilsh/m" to listOf("a.example")))
+            },
         )
-        for (request in unnamed) {
-            val error = assertFailsWith<ConfigurationException>(request.toString()) { client.execute(request) }
-            assertTrue(error.detail.startsWith("model \"\" has no valid bare tinfoilsh/ repository"), error.detail)
+        for (client in listOf(gateway.client(), supplied)) {
+            assertEquals(listOf("m"), client.models())
+            val before = reads.get()
+            val unnamed = listOf(
+                Request.Builder().url(client.baseUrl.resolve("models")!!).build(),
+                client.post("{}"),
+                client.post("""{"model":""}"""),
+                client.post("""{"model":7}"""),
+                client.post("""{"messages":[{"model":"m"}]}"""),
+                client.post("""[{"model":"m"}]"""),
+                client.post("\"m\""),
+                client.post(chat()).newBuilder().header("X-Tinfoil-Model", "").build().newBuilder().post("{}".toRequestBody(JSON)).build(),
+                Request.Builder().url(client.baseUrl.resolve("chat/completions")!!).post(chat().toRequestBody("text/plain".toMediaType())).build(),
+                Request.Builder().url(client.baseUrl.resolve("files/f1")!!).delete().build(),
+            )
+            for (request in unnamed) {
+                val error = assertFailsWith<ConfigurationException>(request.toString()) { client.execute(request) }
+                assertTrue(error.detail.startsWith("the request names no model"), error.detail)
+            }
+            for (model in listOf("", " ", "\t")) {
+                val error = assertFailsWith<ConfigurationException> { client.ensureVerified(model) }
+                assertTrue(error.detail.startsWith("the request names no model"), error.detail)
+            }
+            assertEquals(before, reads.get(), "the catalog was not even read")
         }
         assertEquals(0, gateway.received.size)
         assertEquals(emptyList(), gateway.attestationFetches)
+        assertEquals(0, gateway.verifier.verifications.get())
+    }
+
+    @Test
+    fun aJsonBodyThatCannotBeReadIsRefusedBeforeAnythingIsSent() = test {
+        val reads = AtomicInteger()
+        val client = gateway.unverified(catalog = {
+            reads.incrementAndGet()
+            entries("m" to ("tinfoilsh/m" to listOf("a.example")))
+        })
+        val bodies = listOf(
+            "\ufeff{\"model\":\"m\",\"user_cache_secret\":\"the-end-users-own-secret\"}".toByteArray(),
+            """{"model":"m","user_cache_secret":"the-end-users-own-secret"}""".toByteArray(Charsets.UTF_16LE),
+            """{"model":"m","x":NaN,"user_cache_secret":"the-end-users-own-secret"}""".toByteArray(),
+            """{"model":"m","Model":"n"}""".toByteArray(),
+        )
+        for (body in bodies) {
+            val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
+                .header("X-Tinfoil-Model", "m").post(body.toRequestBody(JSON)).build()
+            assertFailsWith<ConfigurationException> { client.execute(request) }
+        }
+        assertEquals(0, reads.get())
+        assertNoIo()
     }
 
     @Test
@@ -594,7 +643,9 @@ class GatewayHttpClientTest {
         val error = assertFailsWith<ConfigurationException> { client.execute(client.post(chat(model = "plain"))) }
         assertEquals("model \"plain\" is not pinned", error.detail)
         assertFailsWith<ConfigurationException> { client.ensureVerified("plain") }
-        assertFailsWith<ConfigurationException> { client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build()) }
+        assertFailsWith<ConfigurationException> {
+            client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "plain").build())
+        }
         assertNoIo()
         client.execute(client.post(chat(model = "pinned"))).close()
         assertEquals(1, gateway.received.size)
@@ -775,6 +826,33 @@ class GatewayHttpClientTest {
         val before = gateway.attestationFetches.size
         client.ensureVerified("m2")
         assertEquals(before + 1, gateway.attestationFetches.size)
+    }
+
+    @Test
+    fun aReplicaWithARequestInFlightIsNotLetGo() = test {
+        val count = GatewayRouter.MAX_REPLICAS + 3
+        val client = gateway.client(catalog = {
+            Catalog((1..count).associate { "m$it" to CatalogEntry("tinfoilsh/m", listOf("h$it.example")) })
+        })
+        gateway.answer = { it.reply("a-long-answer-".repeat(64), pieces = 8) }
+        // Two replicas' responses are held open, unread, while more
+        // replicas are used than the client keeps.
+        val open = client.execute(client.post(chat(model = "m1")))
+        val streamed = client.newCall(client.post(chat(model = "m2"))).execute()
+        for (i in 3..count) {
+            client.ensureVerified("m$i")
+        }
+        assertEquals("a-long-answer-".repeat(64), open.text())
+        assertEquals("a-long-answer-".repeat(64), streamed.text())
+        val kept = client.current.map { it.host }.toSet()
+        assertTrue("h1.example" in kept && "h2.example" in kept, "the replicas in use were kept")
+        assertEquals(GatewayRouter.MAX_REPLICAS, kept.size)
+        // Once their responses are closed, they can go like any other.
+        for (i in 3..count) {
+            client.ensureVerified("m$i")
+        }
+        assertFalse("h1.example" in client.current.map { it.host })
+        assertEquals(GatewayRouter.MAX_REPLICAS, client.current.size)
     }
 
     // A gateway that routes elsewhere.

@@ -123,6 +123,15 @@ class GatewayCatalogTest {
     }
 
     @Test
+    fun anEntryForAModelWithoutANameIsLeftOut() {
+        val entry = """{"repo":"tinfoilsh/any","hosts":["evil.example"]}"""
+        val catalog = parse("""{"":$entry," ":$entry,"\t\n":$entry,"ok":{"repo":"tinfoilsh/ok","hosts":["a.example"]}}""")
+        assertEquals(setOf("ok"), catalog.entries.keys)
+        // It is still a model that is named twice.
+        assertRefused("""{"":$entry,"":$entry}""", "twice")
+    }
+
+    @Test
     fun aCatalogThatIsNotWhatItShouldBeIsRefusedWhole() {
         val ok = """"ok":{"repo":"tinfoilsh/ok","hosts":["a.example"]}"""
         val refused = listOf(

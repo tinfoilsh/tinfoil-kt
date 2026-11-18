@@ -2,7 +2,6 @@ package sh.tinfoil.internal.gateway
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.RequestBody
 import sh.tinfoil.ConfigurationException
@@ -73,11 +72,14 @@ internal object GatewayRequest {
     /**
      * [request], ready to route. [secret] is the client's cache secret.
      *
-     * A `POST` whose body is JSON is read into memory, and if that body is
-     * one JSON object:
+     * A `POST` whose body is JSON is read into memory. A body that is not
+     * exactly one JSON value, by the strict grammar and in UTF-8, is
+     * refused: a more lenient parser could read an object in it whose
+     * members were not examined here. If the body is one JSON object:
      * - it is refused if it names `model`, `user_cache_secret` or
-     *   `cache_salt` more than once at its top level, in any spelling: a
-     *   server may read another of the repeats than the client did, and so
+     *   `cache_salt` more than once at its top level, in any spelling, or
+     *   has a top-level member whose name differs from one of them only by
+     *   case: a server may read another member than the client did, and so
      *   serve another model than the one whose replica was verified, or
      *   scope the cache by another value;
      * - its `model`, if that is a non-empty string, names the model, unless
@@ -87,16 +89,19 @@ internal object GatewayRequest {
      *   that secret, or from [secret] when the body has none, and from the
      *   request's bearer token; and [CACHE_PREFIX_HEADER] is set from the
      *   start of the prompt, under a key that is derived the same way. So
-     *   the secret itself is never sent, to anyone.
+     *   on such a request the secret itself is not sent, to anyone.
      *
-     * A JSON body that is not one object is sent as it is. A multipart
-     * upload without [MODEL_HEADER] is read to find its one `model` field.
-     * Every other request is returned as it is.
+     * A JSON value that is not an object is sent as it is, and names no
+     * model. A multipart upload without [MODEL_HEADER] is read to find its
+     * one `model` field. Every other request is returned as it is: [secret]
+     * is never added to one, and a `user_cache_secret` member that its
+     * caller wrote stays in its body.
      *
      * @throws ConfigurationException for a request that is refused: one
-     *   with repeated members, with a JSON body that cannot be read here or
-     *   is not UTF-8, with an upload that does not name exactly one model,
-     *   or with more than one [MODEL_HEADER] or [CACHE_PREFIX_HEADER].
+     *   with a JSON body that cannot be read here or is not valid JSON,
+     *   with repeated or look-alike members, with an upload that does not
+     *   name exactly one model, or with more than one [MODEL_HEADER],
+     *   [CACHE_PREFIX_HEADER] or content type.
      * @throws IOException if the body fails to write itself.
      */
     @Throws(IOException::class)
@@ -110,7 +115,7 @@ internal object GatewayRequest {
         }
         // The body's own content type is the one that is sent; a header
         // names it only for a body that has none.
-        val contentType = body.contentType()?.toString() ?: request.header("Content-Type") ?: return unchanged
+        val contentType = body.contentType()?.toString() ?: single(request, "Content-Type").ifEmpty { return unchanged }
         return when (contentType.substringBefore(';').trim().lowercase()) {
             "multipart/form-data" -> if (named.isEmpty()) upload(request, body, contentType, prefix) else unchanged
             "application/json" -> json(request, body, secret, named, prefix)
@@ -132,10 +137,11 @@ internal object GatewayRequest {
         val scan = Scan(text)
         val builder = request.newBuilder()
         if (!scan.isObject) {
-            if (!isUtf8(text)) {
-                // A parser that is lenient about encoding could still read
+            if (!JsonObjectText.isValue(text)) {
+                // A parser that is more lenient than this one, about a byte
+                // order mark, the encoding or the grammar, could still read
                 // an object here, with members that were not examined.
-                throw ConfigurationException("the JSON request body is not UTF-8")
+                throw ConfigurationException("the JSON request body is not valid JSON")
             }
             return PreparedRequest(builder.post(HeldBody(text, emptyList(), body.contentType(), false)).build(), named, prefix)
         }
@@ -168,10 +174,9 @@ internal object GatewayRequest {
     }
 
     private suspend fun upload(request: Request, body: RequestBody, contentType: String, prefix: String): PreparedRequest {
-        val boundary = contentType.toMediaTypeOrNull()?.parameter("boundary")
-        if (boundary.isNullOrEmpty()) {
-            throw ConfigurationException("multipart upload is missing its boundary")
-        }
+        // Read here, strictly, and not by the HTTP client's parser, which
+        // accepts what a server's may read differently.
+        val boundary = Multipart.boundary(contentType)
         val bytes = read(body, "a multipart upload without the $MODEL_HEADER header")
         val model = Multipart.model(bytes, boundary)
         val prepared = request.newBuilder()
@@ -202,6 +207,12 @@ internal object GatewayRequest {
     }
 
     private fun refuseRepeatedMembers(scan: Scan) {
+        // A server that matches member names without regard to case reads
+        // such a member as the one that the client reads, or does not: the
+        // client cannot know which, so it does not guess.
+        scan.lookalike?.let { name ->
+            throw ConfigurationException("request body has a member whose name differs from \"${NAMES[name]}\" only by case")
+        }
         val repeated = (MODEL..SALT).filter { scan.count[it] > 1 }.map { "\"${NAMES[it]}\"" }
         if (repeated.isNotEmpty()) {
             throw ConfigurationException(
@@ -218,16 +229,23 @@ internal object GatewayRequest {
         return model
     }
 
-    private fun isUtf8(text: ByteArray): Boolean =
-        try {
-            Charsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(text))
-            true
-        } catch (_: CharacterCodingException) {
-            false
+    /**
+     * [name] as a parser that ignores case reads it: ASCII letters in lower
+     * case, and the two other characters that fold to one, the long s and
+     * the Kelvin sign.
+     */
+    private fun folded(name: String): String = buildString(name.length) {
+        for (c in name) {
+            append(
+                when (c) {
+                    in 'A'..'Z' -> c + ('a' - 'A')
+                    LONG_S -> 's'
+                    KELVIN -> 'k'
+                    else -> c
+                },
+            )
         }
+    }
 
     /** Where the members that the client reads are in the text of a JSON object. */
     private class Scan(private val text: ByteArray) {
@@ -239,8 +257,17 @@ internal object GatewayRequest {
         private val valueStart = IntArray(NAMES.size)
         private val valueEnd = IntArray(NAMES.size)
         private var members = 0
+
+        /** The first of the names that a member has in another case, or null. */
+        var lookalike: Int? = null
+            private set
         private val closingBrace: Int = JsonObjectText.members(text) { name, nameEnd, value, end ->
             members++
+            if (lookalike == null && nameEnd - name > 2 && mayFold(text[name + 1])) {
+                val spelled = JsonObjectText.string(text, name, nameEnd).orEmpty()
+                val read = folded(spelled)
+                lookalike = (MODEL..SALT).firstOrNull { NAMES[it] == read && NAMES[it] != spelled }
+            }
             for (i in NAMES.indices) {
                 if (JsonObjectText.isName(text, name, nameEnd, NAMES[i])) {
                     count[i]++
@@ -253,6 +280,16 @@ internal object GatewayRequest {
         }
 
         val isObject: Boolean get() = closingBrace >= 0
+
+        /**
+         * Whether a name that starts with [first] could be one of the three
+         * in another case: each starts with `m`, `u` or `c`, however that
+         * letter is written.
+         */
+        private fun mayFold(first: Byte): Boolean = when (first.toInt().toChar()) {
+            'm', 'M', 'u', 'U', 'c', 'C', '\\' -> true
+            else -> false
+        }
 
         /** The value of the member [name], if there is one and it is a string. */
         fun string(name: Int): String? =
@@ -390,6 +427,8 @@ internal object GatewayRequest {
         }
     }
 
+    private const val LONG_S = '\u017f'
+    private const val KELVIN = '\u212a'
     private val NULL = "null".toByteArray(Charsets.US_ASCII)
     private val EMPTY = ByteArray(0)
     private const val COMMA = ','.code.toByte()
@@ -408,7 +447,8 @@ internal object GatewayRequest {
  * strictly, and anything that two parsers could read differently is refused
  * rather than interpreted: text that looks like a boundary where none
  * belongs, a line that does not end in CRLF, a part's header that is folded
- * or repeated, and a field name that is escaped or encoded.
+ * or repeated, a field name that is escaped or encoded, and a header on the
+ * model's field that says how its value is encoded.
  */
 internal object Multipart {
     /**
@@ -430,11 +470,33 @@ internal object Multipart {
         return model
     }
 
+    /**
+     * The boundary that [contentType], a `multipart/form-data` content type
+     * as it is written, names: its one `boundary` parameter, a token or a
+     * quoted string without escapes, of 1 to 70 of the characters that a
+     * boundary may have.
+     *
+     * @throws ConfigurationException if there is no such parameter, or the
+     *   content type is written in a way that parsers read differently.
+     */
+    @Throws(ConfigurationException::class)
+    fun boundary(contentType: String): String {
+        val boundary = parameters(contentType)?.second?.get("boundary")
+        if (boundary == null || !isBoundary(boundary)) {
+            throw ConfigurationException("multipart upload is missing its boundary, or names it ambiguously")
+        }
+        return boundary
+    }
+
+    private fun isBoundary(boundary: String): Boolean =
+        boundary.length in 1..MAX_BOUNDARY && !boundary.endsWith(' ') &&
+            boundary.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in BOUNDARY_PUNCTUATION }
+
     /** A part with a `form-data` disposition: its name, and where its content is. */
     private class Part(val name: String?, val isFile: Boolean, val start: Int, val end: Int)
 
     private fun parts(body: ByteArray, boundary: String): List<Part>? {
-        if (boundary.length > MAX_BOUNDARY || boundary.any { it !in '!'..'~' && it != ' ' } || boundary.endsWith(' ')) {
+        if (!isBoundary(boundary)) {
             return null
         }
         val delimiter = "--$boundary".toByteArray(Charsets.US_ASCII)
@@ -452,8 +514,14 @@ internal object Multipart {
             }
             var next = at + delimiter.size
             if (startsWith(body, next, CLOSE)) {
-                // The last delimiter. What follows it is not part of the form.
-                return if (indexOf(body, delimiter, next) < 0) parts else null
+                // The last delimiter ends its line, and what follows that
+                // line is not part of the form.
+                next += CLOSE.size
+                while (next < body.size && (body[next] == SP || body[next] == HT)) {
+                    next++
+                }
+                val endsLine = next == body.size || startsWith(body, next, CRLF)
+                return if (endsLine && indexOf(body, delimiter, next) < 0) parts else null
             }
             while (next < body.size && (body[next] == SP || body[next] == HT)) {
                 next++
@@ -487,6 +555,7 @@ internal object Multipart {
             }
         }
         var disposition: String? = null
+        val others = ArrayList<Pair<String, String>>()
         var lineStart = start
         while (lineStart < headersEnd) {
             val lineEnd = indexOf(body, CRLF, lineStart).takeIf { it in lineStart..headersEnd } ?: headersEnd
@@ -500,23 +569,54 @@ internal object Multipart {
                     return null
                 }
                 disposition = line.substring(colon + 1)
+            } else {
+                others += line.substring(0, colon).lowercase() to line.substring(colon + 1)
             }
             lineStart = lineEnd + 2
         }
-        val parameters = parameters(disposition ?: return Part(null, false, contentStart, end)) ?: return null
-        return Part(parameters["name"], parameters.containsKey("filename"), contentStart, end)
+        val (type, parameters) = parameters(disposition ?: return Part(null, false, contentStart, end)) ?: return null
+        if (type != "form-data") {
+            return null
+        }
+        val name = parameters["name"]
+        // A field that the client or the server acts on is its bytes, as
+        // they are: no header may say that they are encoded.
+        val plain = others.all { (header, value) -> isPlain(header, value, end - contentStart) } &&
+            others.map { it.first }.toSet().size == others.size
+        if (name in WATCHED && !plain) {
+            return null
+        }
+        return Part(name, parameters.containsKey("filename"), contentStart, end)
     }
 
     /**
-     * The parameters of a `form-data` disposition, or null for any other
-     * disposition and for one that is not written plainly: each parameter
-     * once, as a token or as a quoted string without escapes, and none in
-     * the extended notation that encodes its value.
+     * Whether a part's header leaves its content to be read as the bytes
+     * that it is: a length that is the content's, or a content type of
+     * plain text in UTF-8 or ASCII. Each may be given once.
      */
-    private fun parameters(disposition: String): Map<String, String>? {
-        val text = disposition.trim { it == ' ' || it == '\t' }
+    private fun isPlain(header: String, value: String, length: Int): Boolean = when (header) {
+        "content-length" -> value.trim(' ', '\t') == length.toString()
+        "content-type" -> parameters(value)?.let { (type, parameters) ->
+            type == "text/plain" && parameters.all { (name, charset) ->
+                name == "charset" && (charset.equals("utf-8", ignoreCase = true) || charset.equals("us-ascii", ignoreCase = true))
+            }
+        } ?: false
+        else -> false
+    }
+
+    /**
+     * The value of a header that has parameters, such as a disposition or a
+     * content type: what leads it, in lower case, and its parameters by
+     * their names in lower case. Null for one that is not written plainly:
+     * each parameter once, as a token or as a quoted string without escapes
+     * or control characters, and none in the extended notation that encodes
+     * its value.
+     */
+    private fun parameters(header: String): Pair<String, Map<String, String>>? {
+        val text = header.trim { it == ' ' || it == '\t' }
         var at = text.indexOf(';').let { if (it < 0) text.length else it }
-        if (!text.substring(0, at).trimEnd(' ', '\t').equals("form-data", ignoreCase = true)) {
+        val type = text.substring(0, at).trimEnd(' ', '\t').lowercase()
+        if (type.isEmpty() || !type.all { isTokenCharacter(it) || it == '/' }) {
             return null
         }
         val parameters = HashMap<String, String>()
@@ -542,7 +642,7 @@ internal object Multipart {
                     return null
                 }
                 value = text.substring(at + 1, close)
-                if (value.contains('\\')) {
+                if (value.any { it == '\\' || it.isISOControl() }) {
                     return null
                 }
                 at = close + 1
@@ -563,7 +663,7 @@ internal object Multipart {
                 return null
             }
         }
-        return parameters
+        return Pair(type, parameters)
     }
 
     private fun isTokenCharacter(c: Char): Boolean = c in '!'..'~' && c !in "()<>@,;:\\\"/[]?={}"
@@ -597,6 +697,10 @@ internal object Multipart {
     }
 
     private const val MAX_BOUNDARY = 70
+    private const val BOUNDARY_PUNCTUATION = "'()+_,-./:=? "
+
+    /** The fields that the client or the model acts on. */
+    private val WATCHED = setOf("model", UserCacheSecret.FIELD, GatewayRequest.CACHE_SALT_FIELD)
     private const val CR = '\r'.code.toByte()
     private const val LF = '\n'.code.toByte()
     private const val SP = ' '.code.toByte()

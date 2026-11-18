@@ -102,6 +102,12 @@ internal class JsonObjectText private constructor(
             Scanner(text, 0, text.size).isName(nameStart + 1, nameEnd - 1, name)
 
         /**
+         * Whether [text] is exactly one JSON value, of any kind, with
+         * nothing but whitespace around it.
+         */
+        fun isValue(text: ByteArray): Boolean = Scanner(text, 0, text.size).scanValue()
+
+        /**
          * The string that the text between [from] and [to] spells, if that
          * is exactly one JSON string; otherwise null. An escape for half of
          * a surrogate pair that has no other half decodes to U+FFFD, the
@@ -156,6 +162,15 @@ internal class JsonObjectText private constructor(
             }
             skipWhitespace()
             return if (index == size) closingBrace else -1
+        }
+
+        fun scanValue(): Boolean {
+            skipWhitespace()
+            if (!skipValue()) {
+                return false
+            }
+            skipWhitespace()
+            return index == size
         }
 
         fun scanArray(visitor: ElementVisitor): Boolean {

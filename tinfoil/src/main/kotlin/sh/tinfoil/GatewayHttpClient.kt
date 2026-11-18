@@ -118,35 +118,54 @@ public class GatewayHttpClient private constructor(
      * `multipart/form-data` upload; or the header `X-Tinfoil-Model`, which
      * wins over both and which every other request needs. The client copies
      * the name into that header for the gateway. A request that names no
-     * model, such as `GET /v1/models`, is refused: use [models].
+     * model, such as `GET /v1/models`, is refused before anything is looked
+     * up for it: use [models].
      *
      * To find the model, a JSON body is read into memory here, before
      * anything is sent, and so is an upload that has no `X-Tinfoil-Model`
      * header; at most 64 MiB are read, and a larger body is refused. An
      * upload with the header is streamed as it is.
      *
-     * **Repeated members.** A JSON object body that names `model`,
-     * `user_cache_secret` or `cache_salt` more than once at its top level,
-     * in any spelling, is refused before anything is sent: a server could
-     * read another of the repeats than the client did, and so serve another
-     * model than the one whose replica was verified. An upload with more
-     * than one `model` field, or one that cannot be read strictly, is
-     * refused for the same reason. With the `X-Tinfoil-Model` header, the
-     * client verifies a replica of the model that the header names, and
-     * does not compare it with the body.
+     * **Bodies that could be read in two ways.** The client routes a
+     * request by the model that it reads, and the server reads the body
+     * for itself, so a body in which the two could find different things
+     * is refused before anything is sent, with or without the header:
+     * - a JSON body that is not exactly one JSON value in UTF-8, by the
+     *   strict grammar: no byte order mark, no other encoding, no `NaN`,
+     *   comments or trailing commas;
+     * - a JSON object that names `model`, `user_cache_secret` or
+     *   `cache_salt` more than once at its top level, in any spelling;
+     * - a JSON object with a top-level member whose name differs from one
+     *   of those three only by case, such as `Model`, which a server that
+     *   ignores case would take for it; and
+     * - an upload that does not have exactly one `model` field, that is
+     *   not written strictly, or whose `model` field carries a header that
+     *   says how it is encoded.
      *
-     * **The prompt cache.** On a `POST` whose path ends in
-     * `/chat/completions`, `/completions` or `/responses`, with a JSON
-     * object body, the member `user_cache_secret` is removed from the body,
-     * and `cache_salt` is set to a salt that is derived on this device from
-     * that secret, or from the client's when the body has none or an empty
-     * one, and from the request's bearer token. The secret itself is sent
-     * to no one. The header `X-Tinfoil-Cache-Prefix`, which the gateway
-     * reads to keep a conversation on one replica, is set to a keyed hash
-     * of the start of the prompt. These edits rewrite only those members in
-     * the body's text: every other byte is sent as it was given, so a
-     * number keeps all its digits. Any other body is sealed and sent
-     * unchanged, without a cache scope.
+     * A JSON body that is valid and is not an object, such as an array,
+     * names no model; with the header, it is sealed and sent as it is. With
+     * the header, the client verifies a replica of the model that the
+     * header names, and does not compare it with the body.
+     *
+     * **The prompt cache.** On a `POST` with the content type
+     * `application/json` whose path ends in `/chat/completions`,
+     * `/completions` or `/responses` and whose body is a JSON object, the
+     * member `user_cache_secret` is removed from the body, and `cache_salt`
+     * is set to a salt that is derived on this device from that secret, or
+     * from the client's when the body has none or an empty one, and from
+     * the request's bearer token. On those requests no secret leaves the
+     * device. The header `X-Tinfoil-Cache-Prefix`, which the gateway reads
+     * to keep a conversation on one replica, is set to a keyed hash of the
+     * start of the prompt. These edits rewrite only those members in the
+     * body's text: every other byte is sent as it was given, so a number
+     * keeps all its digits.
+     *
+     * Every other request is sealed and sent as it was given, without a
+     * cache scope: any other path, method or content type, and a JSON body
+     * that is not an object. The client's own secret is never added to
+     * such a request. A `user_cache_secret` member that the caller put in
+     * such a body is not removed: it is sent as written, inside the sealed
+     * body, to the verified replica and to no one else.
      *
      * **Replicas.** The model's replicas are tried in an order that the
      * cache prefix fixes, or in a random order for a request without one,
@@ -163,8 +182,9 @@ public class GatewayHttpClient private constructor(
      * stop that.
      *
      * The client keeps the verifications and the connections of the 256
-     * replicas that it used last. When it lets one go, a request that is
-     * still in flight to that replica is cancelled.
+     * replicas that it used last, and of any other that is in use: a
+     * replica is in use until the response of every request to it is
+     * closed, so close each response.
      *
      * A response without a body of its own to seal is not authenticated:
      * an error status that the gateway answers by itself is returned as it
