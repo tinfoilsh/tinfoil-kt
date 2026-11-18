@@ -33,6 +33,38 @@ class UrlsTest {
     }
 
     @Test
+    fun aHostThatIsDialledDifferentlyFromHowItIsWrittenIsRefused() {
+        val refused = listOf(
+            // Characters that fold into ASCII when a name is lowercased or normalized.
+            "\u212Aexample.com", "ex\u0131mple.com", "\uFF45xample.com", "example\u3002com", "exa\u00ADmple.com",
+            "example.com\u0000", "example.com\u007f",
+            // Names that a resolver may read as an address.
+            "127.1", "0x7f.1", "0x7f000001", "2130706433", "127.0.0.1.", "1.2.3.04", "010.0.0.1", "example.com.1",
+            "1.2.3.4.5", "256.1.1.1",
+        )
+        for (host in refused) {
+            assertFailsWith<ConfigurationException>("enclave \"$host\"") { Urls.enclaveUrl(host) }
+            assertFailsWith<ConfigurationException>("enclave \"$host:8443\"") { Urls.enclaveUrl("$host:8443") }
+            assertFailsWith<ConfigurationException>("relay \"$host\"") { Urls.requireRelay(host) }
+            assertFailsWith<ConfigurationException>("base URL \"$host\"") { Urls.baseUrl("https://$host/v1") }
+        }
+    }
+
+    @Test
+    fun aFullyQualifiedNameIsDialledAsWrittenAndIsAnOriginOfItsOwn() {
+        val qualified = Urls.enclaveUrl("example.com.")
+
+        assertEquals("example.com.", qualified.host)
+        assertNotEquals(Origin.of(qualified), Origin.of(Urls.enclaveUrl("example.com")))
+        assertEquals("example.com.", Urls.baseUrl("https://example.com./v1").host)
+        // A label that only contains digits is still a name.
+        assertEquals("host123.example", Urls.enclaveUrl("host123.example").host)
+        assertEquals("123.example", Urls.enclaveUrl("123.example").host)
+        Urls.requireRelay("relay.example:8443")
+        assertFailsWith<ConfigurationException> { Urls.requireRelay("https://relay.example/") }
+    }
+
+    @Test
     fun aBaseUrlKeepsItsPath() {
         assertEquals("https://host.example/v1/", Urls.baseUrl("https://host.example/v1/").toString())
         assertEquals("https://host.example/", Urls.baseUrl("HTTPS://HOST.example").toString())

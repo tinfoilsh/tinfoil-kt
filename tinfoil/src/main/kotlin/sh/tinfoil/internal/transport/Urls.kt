@@ -87,20 +87,62 @@ internal object Urls {
     }
 
     /**
+     * A relay: a host with an optional port, held to the rules for an
+     * enclave.
+     */
+    @Throws(ConfigurationException::class)
+    fun requireRelay(relay: String) {
+        try {
+            enclaveUrl(relay)
+        } catch (_: ConfigurationException) {
+            throw ConfigurationException("invalid attestation relay: want a host with an optional port, not a URL")
+        }
+    }
+
+    /**
      * Whether [url] is exactly what [authority] spelled: its host in the
      * form that the URL holds it, and its port or none. The URL parser is
-     * lenient, and the verifier reads the enclave's host for itself, so a
-     * text that could be read in more than one way is refused. An
-     * internationalized name is therefore written in its ASCII form.
+     * lenient, the verifier reads the enclave's host for itself, and the
+     * resolver reads it a third time, so a text that any of them could read
+     * differently from how it is written is refused:
+     * - anything but printable ASCII, so an internationalized name is
+     *   written in its ASCII form, and no character can fold into another;
+     * - a name that ends in a number without being a plain dotted IPv4
+     *   address, such as `127.1` or `0x7f.1`, which a resolver may read as
+     *   an address that the text does not show.
+     *
+     * A name that ends in a dot is the same name, fully qualified, and is
+     * dialled as written; it is a different origin from the name without
+     * the dot.
      */
     private fun namesAuthority(authority: String, url: HttpUrl): Boolean {
+        if (!authority.all { it.code in PRINTABLE_ASCII }) {
+            return false
+        }
         val host = if (url.host.contains(':')) "[${url.host}]" else url.host
         val written = authority.lowercase()
-        return written == host || written == "$host:${url.port}"
+        if (written != host && written != "$host:${url.port}") {
+            return false
+        }
+        return host.startsWith("[") || !endsInNumber(host) || isDottedIpv4(host)
+    }
+
+    private fun endsInNumber(host: String): Boolean {
+        val last = host.removeSuffix(".").substringAfterLast('.')
+        return last.isNotEmpty() && (last.all(Char::isDigit) || last.startsWith("0x"))
+    }
+
+    /** Four decimal octets without leading zeros, and nothing else. */
+    private fun isDottedIpv4(host: String): Boolean {
+        val parts = host.split('.')
+        return parts.size == 4 && parts.all { part ->
+            part.length in 1..3 && part.all(Char::isDigit) && (part.length == 1 || part[0] != '0') && part.toInt() <= 255
+        }
     }
 
     private fun isUnsafe(c: Char): Boolean = c.isWhitespace() || c.isISOControl() || c == '\\'
 
     private const val AUTHORITY_DELIMITERS = "/@?#"
+    private val PRINTABLE_ASCII = 0x21..0x7e
     private val SCHEMES = listOf("https://", "http://")
 }
