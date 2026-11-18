@@ -210,12 +210,13 @@ internal class TestEnclave(
         transportMode: TransportMode = TransportMode.Tls,
         baseUrl: String? = null,
         attestationRelay: String? = relayHost,
+        userCacheSecret: String? = null,
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         internals: Internals = internals(),
     ): EnclaveHttpClient = EnclaveHttpClient.create(
-        enclave, pin, transportMode, baseUrl, attestationRelay, Verifier.appraisingWith(verifier), verificationCheck,
-        onVerificationResult, internals,
+        enclave, pin, transportMode, baseUrl, attestationRelay, Verifier.appraisingWith(verifier), userCacheSecret,
+        verificationCheck, onVerificationResult, internals,
     ).also { clients += it }
 
     override fun close() {

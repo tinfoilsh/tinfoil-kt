@@ -8,6 +8,7 @@ import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.transport.AttestedCall
+import sh.tinfoil.internal.transport.UserCacheSecret
 import java.io.IOException
 
 /**
@@ -140,6 +141,21 @@ public class EnclaveHttpClient private constructor(
      * answered: the response is returned as it is. No cookies are kept and
      * nothing is cached.
      *
+     * When the client has a user cache secret, it is added to the body of a
+     * `POST` whose path ends in `/chat/completions`, `/completions` or
+     * `/responses`, as the member `user_cache_secret`, if the body is one
+     * JSON object in which that member is absent or the empty string. The
+     * rest of the body is sent byte for byte as it was given, and the
+     * request's `Content-Length` is that of the new body. A non-empty
+     * `user_cache_secret` string in the body is the request's own scope and
+     * is kept. Any other body is sent unchanged: one that is not a JSON
+     * object in UTF-8, one that names the member more than once or with a
+     * value that is not a string, a duplex body, a body of more than 64 MiB,
+     * and a body that declares no length and can be written only once. To
+     * decide, the body is read into memory before the request is sent; a
+     * body that can be written only once is written then, and sent from
+     * memory.
+     *
      * The HTTP client may send a request again by itself, always to the same
      * URL and only over a connection that passes the same checks: when a
      * connection fails, which can be after part or all of the request was
@@ -219,6 +235,11 @@ public class EnclaveHttpClient private constructor(
          *   the enclave's attestation document on the client's behalf. It is
          *   not trusted: the document is verified whoever delivers it.
          * @param verifier The trust policy. Null selects the defaults.
+         * @param userCacheSecret The prompt-cache scope of the client's
+         *   requests, for an enclave that is one of Tinfoil's routers; other
+         *   enclaves do not read it. Null or empty sends none. See
+         *   [execute] for the requests that carry it. Use an opaque random
+         *   value, not a user ID or an API key.
          * @param verificationCheck Called with each verification that passes
          *   [verifier], before the enclave's keys are used; it throws to
          *   reject the enclave. It must not call back into the client.
@@ -243,10 +264,11 @@ public class EnclaveHttpClient private constructor(
             baseUrl: String? = null,
             attestationRelay: String? = null,
             verifier: Verifier? = null,
+            userCacheSecret: String? = null,
             verificationCheck: VerificationCheck? = null,
             onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         ): EnclaveHttpClient = create(
-            enclave, pin, transportMode, baseUrl, attestationRelay, verifier, verificationCheck,
+            enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
             onVerificationResult, Internals(),
         )
 
@@ -259,12 +281,13 @@ public class EnclaveHttpClient private constructor(
             baseUrl: String?,
             attestationRelay: String?,
             verifier: Verifier?,
+            userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
         ): EnclaveHttpClient {
             val client = unverified(
-                enclave, pin, transportMode, baseUrl, attestationRelay, verifier, verificationCheck,
+                enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
                 onVerificationResult, internals,
             )
             try {
@@ -285,13 +308,14 @@ public class EnclaveHttpClient private constructor(
             baseUrl: String?,
             attestationRelay: String?,
             verifier: Verifier?,
+            userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
         ): EnclaveHttpClient = EnclaveHttpClient(
             EnclaveConnection.create(
-                enclave, pin, transportMode, baseUrl, attestationRelay, verifier ?: Verifier(), verificationCheck,
-                onVerificationResult, internals,
+                enclave, pin, transportMode, baseUrl, attestationRelay, verifier ?: Verifier(),
+                UserCacheSecret.of(userCacheSecret), verificationCheck, onVerificationResult, internals,
             ),
         )
     }

@@ -27,6 +27,7 @@ import sh.tinfoil.internal.transport.Origin
 import sh.tinfoil.internal.transport.PinnedTls
 import sh.tinfoil.internal.transport.TransportProtocol
 import sh.tinfoil.internal.transport.Urls
+import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.transport.await
 import sh.tinfoil.internal.verification.AttestationFetcher
 import sh.tinfoil.internal.verification.Attestor
@@ -54,6 +55,8 @@ internal class EnclaveConnection(
     private val attestor: Attestor,
     private val protocol: TransportProtocol,
     private val onVerificationResult: ((Result<Verification>) -> Unit)?,
+    /** The prompt-cache secret that requests are given, if any. */
+    private val cacheSecret: UserCacheSecret? = null,
     private val clock: () -> Instant = Instant::now,
     /** Called once, when the connection closes, to release what its owner made for it. */
     private val onClose: () -> Unit = {},
@@ -112,6 +115,15 @@ internal class EnclaveConnection(
     @Throws(TinfoilException::class)
     suspend fun ensureVerified(): Verification = verified(force = false).verification
 
+    /**
+     * A verification that is valid now, from a single attempt if the enclave
+     * has to be verified: a failure is not tried again, and is not reported
+     * to the observer. It is for an enclave that is one of several
+     * candidates, which the caller closes if it fails.
+     */
+    @Throws(TinfoilException::class)
+    suspend fun verifyOnce(): Verification = verified(force = false, once = true).verification
+
     /** Verifies again, even when the current verification is still valid. */
     @Throws(TinfoilException::class)
     suspend fun reverify(): Verification = verified(force = true).verification
@@ -122,6 +134,8 @@ internal class EnclaveConnection(
      * [onCall] is handed each call that goes out for it, at most two.
      *
      * A request that the client cannot protect is refused before any I/O.
+     * One that takes the client's prompt-cache secret is given it once, so
+     * that a request that is sent again carries the same body.
      * If the enclave turns out not to hold the verified keys, which shows
      * before any of the request is handed to it, the enclave is verified
      * again and the request is sent once more, when its body can be sent
@@ -132,13 +146,14 @@ internal class EnclaveConnection(
     suspend fun send(request: Request, onCall: (Call) -> Unit = {}): Response {
         checkOpen()
         checkRequest(request)
+        val outgoing = cacheSecret?.provision(request) ?: request
         var rejection: AttestationException? = null
         while (true) {
             val state = verified(force = false)
             // A caller that cancelled while the enclave was verified again
             // must not have its request, credentials included, sent.
             coroutineContext.ensureActive()
-            val call = state.transport.newCall(request)
+            val call = state.transport.newCall(outgoing)
             onCall(call)
             try {
                 return call.await()
@@ -151,7 +166,7 @@ internal class EnclaveConnection(
                     throw AttestationException("$reason, after the enclave was verified again", cause = e)
                         .alsoSuppressing(rejection)
                 }
-                if (!isReplayable(request)) {
+                if (!isReplayable(outgoing)) {
                     throw AttestationException(
                         "$reason; the request was not sent again, because its body can be sent only once",
                         cause = e,
@@ -219,7 +234,7 @@ internal class EnclaveConnection(
      * runs share it, its failure included. Cancelling a caller ends only its
      * own wait.
      */
-    private suspend fun verified(force: Boolean): State {
+    private suspend fun verified(force: Boolean, once: Boolean = false): State {
         var forced = force
         while (true) {
             coroutineContext.ensureActive()
@@ -231,7 +246,7 @@ internal class EnclaveConnection(
                 if (valid != null) {
                     return valid
                 }
-                refresh ?: startRefresh()
+                refresh ?: startRefresh(once)
             }
             running.failure.await()?.let { throw it }
             // The new state can be rejected or replaced before this caller
@@ -241,7 +256,7 @@ internal class EnclaveConnection(
     }
 
     /** Called with the lock held. */
-    private fun startRefresh(): Refresh {
+    private fun startRefresh(once: Boolean): Refresh {
         val starting = Refresh()
         refresh = starting
         // A refresh serves every waiting caller, so it runs under no single
@@ -249,7 +264,7 @@ internal class EnclaveConnection(
         starting.job = refreshScope.launch {
             var outcome = Outcome(AttestationException("the verification did not complete"), report = null)
             try {
-                outcome = runRefresh()
+                outcome = runRefresh(once)
             } finally {
                 synchronized(lock) {
                     if (refresh === starting) {
@@ -270,27 +285,30 @@ internal class EnclaveConnection(
     /** How a verification ended, and what its observer is to be told, if anything. */
     private class Outcome(val failure: TinfoilException?, val report: Result<Verification>?)
 
-    private fun failed(failure: TinfoilException): Outcome =
+    private fun failed(failure: TinfoilException, once: Boolean = false): Outcome =
         // A verification that the client's close ended is not a failed one,
-        // so it is not reported as one.
-        Outcome(failure, if (isClosed) null else Result.failure(failure))
+        // so it is not reported as one; neither is a candidate's.
+        Outcome(failure, if (isClosed || once) null else Result.failure(failure))
 
     /** Verifies the enclave and publishes the result. */
-    private suspend fun runRefresh(): Outcome {
+    private suspend fun runRefresh(once: Boolean): Outcome {
         val verification = try {
-            attestor.attest(enclave, relay, pin)
+            if (once) attestor.attestOnce(enclave, relay, pin) else attestor.attest(enclave, relay, pin)
         } catch (e: CancellationException) {
             throw e
         } catch (e: TinfoilException) {
-            return failed(e)
+            return failed(e, once)
         } catch (e: Exception) {
             // Whatever went wrong, the enclave is not verified.
-            return failed(AttestationException("verification failed: ${e.message ?: e.javaClass.simpleName}", cause = e))
+            return failed(
+                AttestationException("verification failed: ${e.message ?: e.javaClass.simpleName}", cause = e),
+                once,
+            )
         }
         val transport = try {
             protocol.bind(verification)
         } catch (e: TinfoilException) {
-            return failed(e)
+            return failed(e, once)
         }
         var replaced: BoundTransport? = null
         val failure = synchronized(lock) {
@@ -310,7 +328,7 @@ internal class EnclaveConnection(
         }
         if (failure != null) {
             transport.retire()
-            return if (failure is AttestationException) failed(failure) else Outcome(failure, report = null)
+            return if (failure is AttestationException) failed(failure, once) else Outcome(failure, report = null)
         }
         // Idle connections of the replaced transport are tied to its keys.
         replaced?.retire()
@@ -345,6 +363,7 @@ internal class EnclaveConnection(
             baseUrl: String?,
             attestationRelay: String?,
             verifier: Verifier,
+            cacheSecret: UserCacheSecret?,
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
@@ -384,6 +403,7 @@ internal class EnclaveConnection(
                 attestor = attestor,
                 protocol = PinnedTls(internals.http),
                 onVerificationResult = onVerificationResult,
+                cacheSecret = cacheSecret,
                 clock = internals.clock,
                 onClose = {
                     if (fetcher.isInitialized()) {
@@ -400,6 +420,7 @@ internal class Internals(
     val http: HttpSettings = HttpSettings(),
     val clock: () -> Instant = Instant::now,
     val retryDelay: Duration = Attestor.RETRY_DELAY,
+    val discovery: RouterDiscovery.Settings = RouterDiscovery.Settings(),
 )
 
 private fun <T : Throwable> T.alsoSuppressing(earlier: Throwable?): T = apply {
