@@ -41,14 +41,22 @@ README.
 
 - Fail closed: no request leaves before its enclave is verified, and option
   errors are raised before any network I/O.
-- A request is written only to a connection whose leaf certificate carries
-  the attested key, checked after the platform's own TLS validation. Nothing
+- With `TransportMode.Tls`, a request is written only to a connection whose
+  leaf certificate carries the attested key, checked after the platform's
+  own TLS validation. Nothing
   that can weaken that check, such as trusted roots, a proxy or a stand-in
   verifier, is part of the public API. Tests reach them through `internal`
   members, and those on a public class are also `@JvmSynthetic`, because
   Kotlin's `internal` is public to Java; a public class has no ordinary
   member that takes one. Classes under `sh.tinfoil.internal` stay visible to
   Java as such, and are not an API.
+- With `TransportMode.Ehbp`, a request body is sealed to the HPKE key of the
+  verification that the request was sent under, and to no other key: the key
+  comes only from the verification, never from the network. The sealing
+  itself belongs to the EHBP client library; write no EHBP cryptography or
+  framing here. A request with a body leaves sealed or not at all, cleartext
+  HTTP is for a loopback base URL only, and a response that was not sealed
+  is never presented as the enclave's.
 - The router list is untrusted: it only proposes hosts, and each is verified
   against the router's pin like any enclave. Nothing read from it may relax
   a check, choose a pin, or be parsed with code that recurses on its input.
@@ -56,8 +64,8 @@ README.
   it into the text of a body that a strict JSON scanner accepts as one
   object; every other byte is the caller's. A body that the scanner does not
   accept is sent unchanged.
-- Never put an API key, a cache secret or key material in a log, an exception
-  message or a `toString()`.
+- Never put an API key, a cache secret, a session recovery token or key
+  material in a log, an exception message or a `toString()`.
 - Comments and test names describe this code; they do not cite other SDKs.
 - Live tests take credentials from the environment and skip without them.
   Never write a credential into a file.

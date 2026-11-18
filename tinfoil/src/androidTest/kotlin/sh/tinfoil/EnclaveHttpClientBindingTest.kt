@@ -44,7 +44,9 @@ class EnclaveHttpClientBindingTest {
             "a pin for a verifier that authorizes configs itself" to {
                 EnclaveHttpClient.create(nowhere, pin, verifier = Verifier(configAuthorizer = { }))
             },
-            "EHBP" to { EnclaveHttpClient.create(nowhere, pin, transportMode = TransportMode.Ehbp) },
+            "a proxy over HTTP that is not on this machine" to {
+                EnclaveHttpClient.create(nowhere, pin, transportMode = TransportMode.Ehbp, baseUrl = "http://proxy.invalid/")
+            },
             "a proxy" to { EnclaveHttpClient.create(nowhere, pin, baseUrl = "https://proxy.invalid/") },
         )
         for ((name, create) in refused) {

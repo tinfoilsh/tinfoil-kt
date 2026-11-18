@@ -21,6 +21,11 @@ import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.verification.AttestationFetcher
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.testing.FakeVerifier
+import sh.tinfoil.testing.ENCAPSULATED_KEY_HEADER
+import sh.tinfoil.testing.ENCLAVE_URL_HEADER
+import sh.tinfoil.testing.SealingDispatcher
+import sh.tinfoil.testing.SealingKey
+import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.RawTlsServer
 import sh.tinfoil.testing.TestAuthority
 import sh.tinfoil.testing.TestClock
@@ -63,8 +68,11 @@ class RouterHttpClientTest {
         if (!Regex("[0-9a-f]{64}|malformed").matches(fingerprint)) {
             throw AttestationException("the document does not verify", layer = VerificationLayer.QUOTE)
         }
-        verification(fingerprint, clock().plusSeconds(3600))
+        verification(fingerprint, clock().plusSeconds(3600), hpkePublicKey = hpkeKeys[fingerprint]?.publicKey)
     }
+
+    /** The HPKE key that each router holds, by the TLS key that its attestation names. */
+    private val hpkeKeys = java.util.concurrent.ConcurrentHashMap<String, SealingKey>()
 
     /** A router: one HTTPS server that serves its attestation document and takes requests. */
     private inner class Router {
@@ -74,17 +82,25 @@ class RouterHttpClientTest {
         val fetches = AtomicInteger()
         val requests = CopyOnWriteArrayList<RecordedRequest>()
 
+        /** The HPKE key that the router holds, and what it does with sealed requests. */
+        val key = SealingKey()
+        val sealing = SealingDispatcher({ key }) { it.reply("sealed by $host") }
+
         /** What the router answers a fetch of its attestation document with. */
         @Volatile
         var attestation: () -> MockResponse = { MockResponse().setBody(certificate.fingerprint) }
 
         init {
             closeables += AutoCloseable { server.shutdown() }
+            hpkeKeys[certificate.fingerprint] = key
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse =
                     if (request.path!!.startsWith("/.well-known/tinfoil-attestation?nonce=")) {
                         fetches.incrementAndGet()
                         attestation()
+                    } else if (request.getHeader(ENCAPSULATED_KEY_HEADER) != null) {
+                        requests += request
+                        sealing.dispatch(request)
                     } else {
                         requests += request
                         MockResponse().setBody("from $host")
@@ -583,6 +599,82 @@ class RouterHttpClientTest {
         assertEquals(0, second.requests.size + fallback.requests.size)
     }
 
+    // Sealed bodies and proxies.
+
+    @Test
+    fun aRouterClientSealsBodiesToTheRouterThatItChose() = test {
+        val first = Router().unverifiable()
+        val second = Router()
+        serveList(first.host, second.host)
+
+        val client = client(transportMode = TransportMode.Ehbp, userCacheSecret = "cache-secret-91ab3e")
+
+        assertEquals(second.host, client.enclave)
+        assertEquals(TransportMode.Ehbp, client.transportMode)
+        assertEquals("https://${second.host}/", client.baseUrl.toString())
+        assertEquals(second.key.publicKey, client.current?.hpkePublicKey)
+        val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
+            .post("""{"prompt":"plaintext-marker-0c77d1"}""".toRequestBody()).build()
+        val recoverable = client.executeRecoverable(request)
+        assertEquals("sealed by ${second.host}", recoverable.response.use { it.body!!.string() })
+        assertNotNull(recoverable.recoveryToken)
+        val received = second.sealing.received.single()
+        assertEquals("""{"prompt":"plaintext-marker-0c77d1","user_cache_secret":"cache-secret-91ab3e"}""", received.text)
+        assertFalse(received.wire.containsText("plaintext-marker-0c77d1"))
+        assertFalse(received.wire.containsText("cache-secret-91ab3e"))
+        assertNull(received.request.getHeader(ENCLAVE_URL_HEADER))
+        assertEquals(0, first.requests.size + fallback.requests.size)
+    }
+
+    @Test
+    fun aRouterClientSendsThroughAProxyThatIsToldWhichRouterWasChosen() = test {
+        val router = Router()
+        serveList(router.host)
+        val atProxy = SealingDispatcher({ router.key }) { it.reply("through the proxy") }
+        val proxy = MockWebServer().apply {
+            dispatcher = atProxy
+            start()
+        }
+        closeables += AutoCloseable { proxy.shutdown() }
+
+        val client = client(transportMode = TransportMode.Ehbp, baseUrl = "http://localhost:${proxy.port}/v1/")
+
+        assertEquals(router.host, client.enclave, "the router is verified directly, and not through the proxy")
+        assertEquals("http://localhost:${proxy.port}/v1/", client.baseUrl.toString())
+        assertEquals(1, router.fetches.get())
+        assertEquals(0, proxy.requestCount, "creating the client sends the proxy nothing")
+        val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
+            .post("""{"prompt":"plaintext-marker-0c77d1"}""".toRequestBody()).build()
+        client.execute(request).use { assertEquals("through the proxy", it.body!!.string()) }
+        client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build()).close()
+
+        val (sealed, bodyless) = atProxy.received
+        assertTrue(sealed.sealed)
+        assertFalse(sealed.wire.containsText("plaintext-marker-0c77d1"))
+        assertEquals("/v1/chat/completions", sealed.request.path)
+        assertFalse(bodyless.sealed)
+        for (received in atProxy.received) {
+            assertEquals("https://${router.host}", received.request.getHeader(ENCLAVE_URL_HEADER))
+        }
+        assertEquals(0, router.requests.size, "requests go to the proxy only")
+        assertFailsWith<ConfigurationException> {
+            client.execute(Request.Builder().url("https://${router.host}/v1/models").build())
+        }
+    }
+
+    @Test
+    fun aRouterThatEndorsesNoHpkeKeyIsPassedOverWhenBodiesAreSealed() = test {
+        val keyless = Router().also { hpkeKeys.remove(it.certificate.fingerprint) }
+        val good = Router()
+        serveList(keyless.host, good.host)
+
+        val client = client(transportMode = TransportMode.Ehbp)
+
+        assertEquals(good.host, client.enclave)
+        assertEquals(1, keyless.fetches.get())
+        assertEquals(0, keyless.requests.size)
+    }
+
     // Options.
 
     @Test
@@ -593,10 +685,14 @@ class RouterHttpClientTest {
             override val callerAuthorizesConfig: Boolean = true
         }
         val refused: Map<String, suspend () -> Unit> = mapOf(
-            "EHBP" to { client(transportMode = TransportMode.Ehbp) },
             "a base URL over TLS" to { client(baseUrl = "https://proxy.example/") },
             "a base URL on the fallback's origin" to { client(baseUrl = "https://${fallback.host}/") },
-            "a base URL under EHBP" to { client(transportMode = TransportMode.Ehbp, baseUrl = "https://proxy.example/") },
+            "a proxy over HTTP that is not on this machine" to {
+                client(transportMode = TransportMode.Ehbp, baseUrl = "http://proxy.example/")
+            },
+            "a proxy with credentials under EHBP" to {
+                client(transportMode = TransportMode.Ehbp, baseUrl = "https://user:hunter2@proxy.example/")
+            },
             "a base URL with credentials" to { client(baseUrl = "https://user:hunter2@proxy.example/") },
             "a base URL with a query" to { client(baseUrl = "https://proxy.example/?key=hunter2") },
             "a base URL that is not a URL" to { client(baseUrl = "hunter2") },

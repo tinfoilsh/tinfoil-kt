@@ -13,8 +13,14 @@ public enum class TransportMode {
      * Seals request and response bodies to the HPKE key that the enclave's
      * attestation endorses, so that they stay private through a proxy.
      *
-     * This version of the SDK does not implement it yet: a client created
-     * with it fails with a [ConfigurationException] before any network I/O.
+     * Only bodies are sealed. The method, the URL and the headers of every
+     * request, an API key among them, are not, and neither is a request
+     * without a body or the response to it: a proxy, or anything else on the
+     * way that ends the TLS connection, reads them and can change them.
+     * Connections are validated as the platform validates any HTTPS
+     * connection, and are not pinned to the enclave's key. Protocol
+     * upgrades, such as WebSockets, and `CONNECT` tunnels are refused,
+     * because nothing after the handshake would be sealed.
      */
     Ehbp,
 }
