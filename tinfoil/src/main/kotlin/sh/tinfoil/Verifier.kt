@@ -18,8 +18,9 @@ import kotlin.time.Duration
  * no I/O. A verifier is immutable and safe to share between clients and
  * threads.
  */
-public class Verifier internal constructor(
+public class Verifier private constructor(
     /** What appraises documents under this policy. */
+    @get:JvmSynthetic
     internal val backend: AttestationVerifier,
 ) {
     /**
@@ -68,6 +69,14 @@ public class Verifier internal constructor(
     )
 
     public companion object {
+        /**
+         * A verifier that appraises with [backend], for tests that run where
+         * the native library cannot load. Whatever [backend] accepts is
+         * trusted, so this is not part of the public API.
+         */
+        @JvmSynthetic
+        internal fun appraisingWith(backend: AttestationVerifier): Verifier = Verifier(backend)
+
         /**
          * Tinfoil's public config registry. To accept configs from a private
          * registry as well as public ones, list both in `configRegistryIds`.

@@ -25,6 +25,14 @@ export TINFOIL_GO_AAR=/path/to/TinfoilGo.aar
 The verifier library is native code for Android, so the tests that reach it
 are instrumented tests; the unit tests run on the JVM without it.
 
+The instrumented tests that verify Tinfoil's production enclaves reach the
+network, so they are skipped unless they are asked for:
+
+```bash
+./gradlew :tinfoil:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true
+```
+
 The public API is pinned in `tinfoil/api/tinfoil.api`, and `apiCheck` fails
 when the code and that file disagree. After a deliberate change to the API,
 run `./gradlew :tinfoil:apiDump` and commit the result.
