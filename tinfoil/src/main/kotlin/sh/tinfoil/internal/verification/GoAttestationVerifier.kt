@@ -42,11 +42,7 @@ internal class GoAttestationVerifier private constructor(
     }
 
     override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification {
-        val payload = calling { verifier.verify(document, nonce, pin.repo.orEmpty(), pin.project.orEmpty()) }
-        if (payload.isNullOrEmpty()) {
-            throw AttestationException("the verifier returned no result")
-        }
-        return VerificationPayload.decode(payload)
+        return verification { verifier.verify(document, nonce, pin.repo.orEmpty(), pin.project.orEmpty()) }
     }
 
     internal companion object {
@@ -80,6 +76,21 @@ internal class GoAttestationVerifier private constructor(
                 throw AttestationException("the verifier returned no usable nonce")
             }
             return nonce
+        }
+
+        /**
+         * The verification that the library reports from [verify], a call
+         * into it that returns a verification payload: its error classified,
+         * or its payload decoded.
+         */
+        @JvmSynthetic
+        @Throws(TinfoilException::class)
+        fun verification(verify: () -> String?): Verification {
+            val payload = calling(verify)
+            if (payload.isNullOrEmpty()) {
+                throw AttestationException("the verifier returned no result")
+            }
+            return VerificationPayload.decode(payload)
         }
 
         /**

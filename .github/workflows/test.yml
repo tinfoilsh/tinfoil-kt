@@ -108,3 +108,10 @@ jobs:
       # The tests that reach the verifier library are instrumented tests, which
       # need an emulator; they are run locally for now
       # (./gradlew :tinfoil:connectedDebugAndroidTest).
+      #
+      # So are the conformance tests, which also need a verifier library built
+      # with MOBILE_BUILD_TAGS=tinfoil_conformance and the vectors of
+      # tinfoilsh/tinfoil-conformance at the commit in
+      # tinfoil-conformance.properties. With an emulator, they belong in a job
+      # of their own, with TINFOIL_CONFORMANCE=1: that build refuses to
+      # package the library, so it cannot share this job.
