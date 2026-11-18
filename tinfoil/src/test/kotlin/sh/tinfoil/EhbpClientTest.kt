@@ -1041,7 +1041,12 @@ class EhbpClientTest {
         assertEquals("$ANSWER, in two frames", restored.decryptResponse(storedResponse(nonce, frames)).text())
         assertEquals(json, restored.toJson())
 
-        // A copy that was cut off yields what authenticates, and then fails.
+        // A copy that ends after a whole frame is read to that end without
+        // a failure: nothing in the framing says that more was to come.
+        val firstFrame = 4 + Buffer().write(frames, 0, 4).readInt()
+        assertEquals("$ANSWER, ", restored.decryptResponse(storedResponse(nonce, frames.copyOf(firstFrame))).text())
+
+        // A copy that was cut off inside a frame yields what authenticates, and then fails.
         val cut = restored.decryptResponse(storedResponse(nonce, frames.copyOf(frames.size - 3)))
         val delivered = Buffer()
         assertFailsWith<IOException> {

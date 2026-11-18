@@ -235,6 +235,12 @@ What this mode does not protect:
 - A response with an error status of 400 or above may come from the proxy and
   not from the enclave. A response that the enclave did not seal is
   authenticated by nothing.
+- **A sealed response can be cut short without an error.** Every piece of a
+  sealed body is authenticated, and a body that ends inside a piece fails the
+  read. A body that ends between two pieces does not: the protocol does not
+  mark the last piece, so a proxy can end a response early. What you read is
+  the enclave's, but only its content shows that it is complete, such as the
+  `[DONE]` event at the end of a stream, or JSON that parses.
 - Protocol upgrades, such as WebSockets, and `CONNECT` are refused. So is a
   response that is marked as sealed and has an empty body, whatever its
   status: nothing in it shows that the enclave sent it.

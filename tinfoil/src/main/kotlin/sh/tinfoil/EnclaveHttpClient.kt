@@ -201,11 +201,19 @@ public class EnclaveHttpClient private constructor(
      *   response.
      * - A request with a body is sent with the body sealed, as it is
      *   written, and its response's body is opened as it is read, one piece
-     *   at a time. A piece that does not authenticate, or a body that is
-     *   cut short, fails the read with an [IOException], and nothing is
-     *   delivered after that; what was delivered before is a true beginning
-     *   of the enclave's response. Read a body to its end before acting on
-     *   it if acting on a beginning would be wrong.
+     *   at a time. A piece that does not authenticate, or a body that ends
+     *   inside a piece, fails the read with an [IOException], and nothing
+     *   is delivered after that; what was delivered before is a true
+     *   beginning of the enclave's response.
+     * - **A body that ends between two pieces ends without an error.** The
+     *   protocol does not mark the last piece, so whatever ends the TLS
+     *   connection can end a sealed body early, after any piece, and the
+     *   read cannot tell that from the enclave's own end. Reading a body to
+     *   its end therefore shows that all of it is the enclave's, and not
+     *   that it is all that the enclave sent. Only the content can show
+     *   that: the `[DONE]` event that ends a stream of events, or text that
+     *   parses as the one JSON value that it should be. Look for that end
+     *   before acting on a response whose beginning alone could mislead.
      * - A request without a body, or with one that declares a length of
      *   zero, is not sealed, and neither is its response: the protocol
      *   cannot protect them. Nothing but the TLS connection to [baseUrl]'s

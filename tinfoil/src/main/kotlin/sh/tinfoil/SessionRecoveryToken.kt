@@ -13,9 +13,10 @@ import sh.tinfoil.ehbp.identity.SessionRecoveryToken as SealedSessionToken
  * A request that is sent with [TransportMode.Ehbp] and has a body gets a
  * response that only the sending client can open. The token lets the response
  * be opened elsewhere or later: store it, with [toJson], before reading the
- * body, and if the read is cut off, fetch the sealed response again from
- * where it is kept and open it with [decryptResponse]. A sealed response can
- * be opened only from its first byte.
+ * body, and if the read fails, or the response ends before its content is
+ * complete, fetch the sealed response again from where it is kept and open
+ * it with [decryptResponse]. A sealed response can be opened only from its
+ * first byte.
  *
  * **A token is secret key material.** Whoever holds it can read the response
  * that it belongs to. Keep it in protected storage, for no longer than the
@@ -41,11 +42,21 @@ public class SessionRecoveryToken private constructor(private val token: SealedS
      *
      * The returned response has the same status and headers, and a body
      * that yields the plaintext as it is read. Every piece is authenticated
-     * before it is yielded; a body that was altered or cut short fails the
-     * read with an [IOException], and yields nothing after that. What was
-     * yielded before is a true beginning of the response. The status and the
-     * headers are not sealed, and so are not authenticated. Closing the
-     * returned response closes [response].
+     * before it is yielded; a body that was altered, or that ends inside a
+     * piece, fails the read with an [IOException], and yields nothing after
+     * that. What was yielded before is a true beginning of the response.
+     *
+     * A body that ends between two pieces is read to that end without an
+     * error: the sealing marks no last piece, so a stored copy that lost
+     * its last pieces opens like a whole one. Whether the response is whole
+     * shows only in its content, such as the `[DONE]` event that ends a
+     * stream of events, or JSON that parses.
+     *
+     * The status and the headers are not sealed, and so are not
+     * authenticated. Closing the returned response closes [response].
+     *
+     * This call reads nothing and does not block. Reading the returned
+     * body reads [response]'s body, and blocks as that does.
      *
      * A response whose body yields nothing fails the read as well, whatever
      * its status: the header is not sealed, so a response with nothing

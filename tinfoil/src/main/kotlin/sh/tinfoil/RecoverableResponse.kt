@@ -9,8 +9,11 @@ import java.io.Closeable
  *
  * It is for a response that the server keeps, so that it can be fetched
  * again after an interruption: store [recoveryToken] before reading the
- * body, and if the read is cut off, fetch the sealed response again and open
- * it with [SessionRecoveryToken.decryptResponse].
+ * body, and if the read fails, or the body ends before its content is
+ * complete, fetch the sealed response again and open it with
+ * [SessionRecoveryToken.decryptResponse]. A sealed body that is cut off
+ * between two of its pieces ends without an error; see
+ * [EnclaveHttpClient.execute].
  *
  * Close it, or its [response], when done.
  */
@@ -27,7 +30,8 @@ public class RecoverableResponse internal constructor(
      * enclave. A response without a token is authenticated by nothing. A
      * token does not show by itself that the enclave answered: the body
      * does, by being read without a failure, because every piece of it is
-     * authenticated as it is read.
+     * authenticated as it is read. That shows where the body came from,
+     * and not that it is complete.
      *
      * It is secret key material for this one response; see
      * [SessionRecoveryToken].
