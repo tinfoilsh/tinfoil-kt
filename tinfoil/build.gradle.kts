@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // The Go verifier library, TinfoilGo.aar, is built from tinfoil-go with its
@@ -77,6 +78,7 @@ kotlin {
 
 dependencies {
     implementation(files(tinfoilGoDir.resolve("classes.jar")).builtBy(unpackTinfoilGo))
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)

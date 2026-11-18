@@ -25,6 +25,9 @@ to what is verified belongs in tinfoil-go.
 - `./gradlew :tinfoil:connectedDebugAndroidTest` runs the tests that reach the
   verifier library, on a running emulator or a device.
 - `./gradlew :tinfoil:lintRelease` must pass; warnings are errors.
+- `./gradlew :tinfoil:apiCheck` compares the public API with
+  `tinfoil/api/tinfoil.api`. Change that file only with
+  `./gradlew :tinfoil:apiDump`, and only for a deliberate API change.
 
 ## Rules
 
