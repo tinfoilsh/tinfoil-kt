@@ -19,14 +19,21 @@ import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
+import sh.tinfoil.VerificationCheck
+import sh.tinfoil.Verifier
 import sh.tinfoil.internal.transport.BoundTransport
+import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.Origin
+import sh.tinfoil.internal.transport.PinnedTls
 import sh.tinfoil.internal.transport.TransportProtocol
+import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.await
+import sh.tinfoil.internal.verification.AttestationFetcher
 import sh.tinfoil.internal.verification.Attestor
 import java.io.IOException
 import java.time.Instant
 import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration
 
 /**
  * One enclave's verification state and the requests that depend on it.
@@ -322,11 +329,78 @@ internal class EnclaveConnection(
 
     private fun closedError() = ConfigurationException("the client is closed")
 
-    private companion object {
-        const val REFRESH_PARALLELISM = 4
-        const val CALL_PARALLELISM = 64
+    internal companion object {
+        private const val REFRESH_PARALLELISM = 4
+        private const val CALL_PARALLELISM = 64
+
+        /**
+         * A connection to [enclave] that is checked but not yet verified.
+         * Every argument is checked here, and nothing here performs I/O.
+         */
+        @Throws(TinfoilException::class)
+        fun create(
+            enclave: String,
+            pin: Pin,
+            transportMode: TransportMode,
+            baseUrl: String?,
+            attestationRelay: String?,
+            verifier: Verifier,
+            verificationCheck: VerificationCheck?,
+            onVerificationResult: ((Result<Verification>) -> Unit)?,
+            internals: Internals,
+        ): EnclaveConnection {
+            val enclaveUrl = Urls.enclaveUrl(enclave)
+            val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
+            if (transportMode != TransportMode.Tls) {
+                throw ConfigurationException("TransportMode.$transportMode is not available in this version of the SDK")
+            }
+            if (base != null) {
+                if (!base.isHttps) {
+                    throw ConfigurationException("invalid base URL: TransportMode.Tls requires HTTPS")
+                }
+                if (Origin.of(base) != Origin.of(enclaveUrl)) {
+                    throw ConfigurationException(
+                        "a base URL off the enclave's origin ${Origin.of(enclaveUrl)} is a proxy, " +
+                            "which a pinned TLS connection cannot pass through",
+                    )
+                }
+            }
+            val relay = attestationRelay.nullIfEmpty()?.also(Urls::requireRelay)
+            val fetcher = lazy { AttestationFetcher(internals.http) }
+            val attestor = Attestor(
+                verifier = verifier.backend,
+                fetch = { url -> fetcher.value.fetch(url) },
+                check = verificationCheck,
+                clock = internals.clock,
+                retryDelay = internals.retryDelay,
+            )
+            attestor.checkOptions(enclave, relay, pin)
+
+            return EnclaveConnection(
+                enclave = enclave,
+                pin = pin,
+                baseUrl = base ?: enclaveUrl,
+                relay = relay,
+                attestor = attestor,
+                protocol = PinnedTls(internals.http),
+                onVerificationResult = onVerificationResult,
+                clock = internals.clock,
+                onClose = {
+                    if (fetcher.isInitialized()) {
+                        fetcher.value.close()
+                    }
+                },
+            )
+        }
     }
 }
+
+/** What tests replace; the defaults are what production runs with. */
+internal class Internals(
+    val http: HttpSettings = HttpSettings(),
+    val clock: () -> Instant = Instant::now,
+    val retryDelay: Duration = Attestor.RETRY_DELAY,
+)
 
 private fun <T : Throwable> T.alsoSuppressing(earlier: Throwable?): T = apply {
     if (earlier != null && earlier !== this) {

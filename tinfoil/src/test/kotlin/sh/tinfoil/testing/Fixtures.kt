@@ -20,6 +20,7 @@ import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.VerificationMetadata
 import sh.tinfoil.Verifier
+import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.LeafKeyPin
 import sh.tinfoil.internal.transport.TlsTrust
@@ -196,8 +197,8 @@ internal class TestEnclave(
 
     fun get(path: String = "/"): Request = Request.Builder().url(url(path)).build()
 
-    fun internals(proxy: Proxy? = null, retryDelay: Duration = 1.milliseconds): EnclaveHttpClient.Internals =
-        EnclaveHttpClient.Internals(
+    fun internals(proxy: Proxy? = null, retryDelay: Duration = 1.milliseconds): Internals =
+        Internals(
             http = HttpSettings(trust = authority.trust, proxy = proxy),
             clock = clock,
             retryDelay = retryDelay,
@@ -211,7 +212,7 @@ internal class TestEnclave(
         attestationRelay: String? = relayHost,
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-        internals: EnclaveHttpClient.Internals = internals(),
+        internals: Internals = internals(),
     ): EnclaveHttpClient = EnclaveHttpClient.create(
         enclave, pin, transportMode, baseUrl, attestationRelay, Verifier.appraisingWith(verifier), verificationCheck,
         onVerificationResult, internals,

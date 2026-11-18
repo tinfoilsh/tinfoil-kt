@@ -6,17 +6,9 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
-import sh.tinfoil.internal.nullIfEmpty
+import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.transport.AttestedCall
-import sh.tinfoil.internal.transport.HttpSettings
-import sh.tinfoil.internal.transport.Origin
-import sh.tinfoil.internal.transport.PinnedTls
-import sh.tinfoil.internal.transport.Urls
-import sh.tinfoil.internal.verification.AttestationFetcher
-import sh.tinfoil.internal.verification.Attestor
 import java.io.IOException
-import java.time.Instant
-import kotlin.time.Duration
 
 /**
  * Decides whether an enclave whose attestation has verified may be used.
@@ -296,59 +288,11 @@ public class EnclaveHttpClient private constructor(
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
-        ): EnclaveHttpClient {
-            val enclaveUrl = Urls.enclaveUrl(enclave)
-            val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
-            if (transportMode != TransportMode.Tls) {
-                throw ConfigurationException("TransportMode.$transportMode is not available in this version of the SDK")
-            }
-            if (base != null) {
-                if (!base.isHttps) {
-                    throw ConfigurationException("invalid base URL: TransportMode.Tls requires HTTPS")
-                }
-                if (Origin.of(base) != Origin.of(enclaveUrl)) {
-                    throw ConfigurationException(
-                        "a base URL off the enclave's origin ${Origin.of(enclaveUrl)} is a proxy, " +
-                            "which a pinned TLS connection cannot pass through",
-                    )
-                }
-            }
-            val relay = attestationRelay.nullIfEmpty()?.also(Urls::requireRelay)
-            val backend = (verifier ?: Verifier()).backend
-            val fetcher = lazy { AttestationFetcher(internals.http) }
-            val attestor = Attestor(
-                verifier = backend,
-                fetch = { url -> fetcher.value.fetch(url) },
-                check = verificationCheck,
-                clock = internals.clock,
-                retryDelay = internals.retryDelay,
-            )
-            attestor.checkOptions(enclave, relay, pin)
-
-            return EnclaveHttpClient(
-                EnclaveConnection(
-                    enclave = enclave,
-                    pin = pin,
-                    baseUrl = base ?: enclaveUrl,
-                    relay = relay,
-                    attestor = attestor,
-                    protocol = PinnedTls(internals.http),
-                    onVerificationResult = onVerificationResult,
-                    clock = internals.clock,
-                    onClose = {
-                        if (fetcher.isInitialized()) {
-                            fetcher.value.close()
-                        }
-                    },
-                ),
-            )
-        }
+        ): EnclaveHttpClient = EnclaveHttpClient(
+            EnclaveConnection.create(
+                enclave, pin, transportMode, baseUrl, attestationRelay, verifier ?: Verifier(), verificationCheck,
+                onVerificationResult, internals,
+            ),
+        )
     }
-
-    /** What tests replace; the defaults are what production runs with. */
-    internal class Internals(
-        val http: HttpSettings = HttpSettings(),
-        val clock: () -> Instant = Instant::now,
-        val retryDelay: Duration = Attestor.RETRY_DELAY,
-    )
 }
