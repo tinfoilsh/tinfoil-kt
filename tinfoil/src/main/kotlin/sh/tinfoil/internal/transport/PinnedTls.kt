@@ -195,9 +195,7 @@ internal class PinnedTlsTransport(
         .connectionPool(pool)
         // No cleartext, whatever the request's scheme.
         .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))
-        .hostnameVerifier(PinningHostnameVerifier(pin))
-        .addInterceptor(MismatchReporter)
-        .addNetworkInterceptor(RequestPinCheck(pin))
+        .pinnedTo(pin)
         .eventListener(CallTracker())
         // A response is the enclave's or nothing: a redirect or an
         // authentication challenge is handed to the caller, never acted on.
@@ -226,22 +224,7 @@ internal class PinnedTlsTransport(
         return call
     }
 
-    override fun keyRejection(failure: IOException): String? {
-        var cause: Throwable? = failure
-        repeat(MAX_CAUSE_DEPTH) {
-            when (val e = cause ?: return null) {
-                is PinMismatchException -> return "the enclave's certificate does not carry the attested TLS key"
-                is SSLPeerUnverifiedException -> return "the enclave's certificate was refused: ${e.message}"
-                is SSLHandshakeException ->
-                    if (e.hasCause<CertificateException>()) {
-                        return "the enclave's certificate was refused: ${e.message}"
-                    }
-                else -> Unit
-            }
-            cause = cause?.cause
-        }
-        return null
-    }
+    override fun keyRejection(failure: IOException): String? = pinRejection(failure)
 
     override fun retire() {
         retired = true
@@ -263,25 +246,59 @@ internal class PinnedTlsTransport(
     }
 
     private companion object {
-        const val MAX_CAUSE_DEPTH = 8
-
         // How long a response may go without sending a byte. Generous,
         // because an inference request can work for minutes before it
         // answers; a call's own timeout bounds the whole exchange.
         const val READ_TIMEOUT_MINUTES = 10L
+    }
+}
 
-        inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {
-            var cause = this.cause
-            repeat(MAX_CAUSE_DEPTH) {
-                when (cause) {
-                    null -> return false
-                    is T -> return true
-                    else -> cause = cause?.cause
+/**
+ * Holds every connection of the client that is being built to [pin]: a
+ * connection is accepted only if its leaf certificate carries the pinned
+ * key, and each request is written only to a connection that does. See
+ * [PinnedTlsTransport] for when the key is checked.
+ */
+internal fun OkHttpClient.Builder.pinnedTo(pin: LeafKeyPin): OkHttpClient.Builder =
+    hostnameVerifier(PinningHostnameVerifier(pin))
+        .addInterceptor(MismatchReporter)
+        .addNetworkInterceptor(RequestPinCheck(pin))
+
+/**
+ * Why [failure], of a call on a client that is [pinnedTo] a key, means that
+ * the server did not present that key or a certificate that the platform
+ * accepts, which shows before any of the request is written; or null for
+ * any other failure.
+ */
+internal fun pinRejection(failure: IOException): String? {
+    var cause: Throwable? = failure
+    repeat(MAX_CAUSE_DEPTH) {
+        when (val e = cause ?: return null) {
+            is PinMismatchException -> return "the enclave's certificate does not carry the attested TLS key"
+            is SSLPeerUnverifiedException -> return "the enclave's certificate was refused: ${e.message}"
+            is SSLHandshakeException ->
+                if (e.hasCause<CertificateException>()) {
+                    return "the enclave's certificate was refused: ${e.message}"
                 }
-            }
-            return false
+            else -> Unit
+        }
+        cause = cause?.cause
+    }
+    return null
+}
+
+private const val MAX_CAUSE_DEPTH = 8
+
+private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {
+    var cause = this.cause
+    repeat(MAX_CAUSE_DEPTH) {
+        when (cause) {
+            null -> return false
+            is T -> return true
+            else -> cause = cause?.cause
         }
     }
+    return false
 }
 
 /** A connection whose leaf certificate does not carry the pinned key. */
