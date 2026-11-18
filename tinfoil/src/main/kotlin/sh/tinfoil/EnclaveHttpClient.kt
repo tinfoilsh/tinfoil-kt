@@ -6,17 +6,10 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
-import sh.tinfoil.internal.nullIfEmpty
+import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.transport.AttestedCall
-import sh.tinfoil.internal.transport.HttpSettings
-import sh.tinfoil.internal.transport.Origin
-import sh.tinfoil.internal.transport.PinnedTls
-import sh.tinfoil.internal.transport.Urls
-import sh.tinfoil.internal.verification.AttestationFetcher
-import sh.tinfoil.internal.verification.Attestor
+import sh.tinfoil.internal.transport.UserCacheSecret
 import java.io.IOException
-import java.time.Instant
-import kotlin.time.Duration
 
 /**
  * Decides whether an enclave whose attestation has verified may be used.
@@ -148,6 +141,26 @@ public class EnclaveHttpClient private constructor(
      * answered: the response is returned as it is. No cookies are kept and
      * nothing is cached.
      *
+     * When the client has a user cache secret, it is added to the body of a
+     * `POST` whose path ends in `/chat/completions`, `/completions` or
+     * `/responses`, as the member `user_cache_secret`, if the body is one
+     * JSON object in which that member is absent or the empty string. The
+     * rest of the body is sent byte for byte as it was given, and the
+     * request's `Content-Length` is that of the new body. A non-empty
+     * `user_cache_secret` string in the body is the request's own scope and
+     * is kept. Any other body is sent unchanged: one that is not a JSON
+     * object in UTF-8, one that names the member more than once or with a
+     * value that is not a string,
+     * and a body of more than 64 MiB that declares its length or can be
+     * written again, which a router refuses for its size. To decide, the
+     * body is read into memory before the request is sent; a body that can
+     * be written only once is written then, and sent from memory. A request
+     * to one of those paths whose body cannot be examined is refused with a
+     * [ConfigurationException] before anything is sent, so that it does not
+     * land in the cache that the API key's other clients share: a duplex
+     * body, and a body that declares no length, can be written only once
+     * and is longer than 64 MiB.
+     *
      * The HTTP client may send a request again by itself, always to the same
      * URL and only over a connection that passes the same checks: when a
      * connection fails, which can be after part or all of the request was
@@ -227,6 +240,13 @@ public class EnclaveHttpClient private constructor(
          *   the enclave's attestation document on the client's behalf. It is
          *   not trusted: the document is verified whoever delivers it.
          * @param verifier The trust policy. Null selects the defaults.
+         * @param userCacheSecret The prompt-cache scope of the client's
+         *   requests, for an enclave that is one of Tinfoil's routers; other
+         *   enclaves do not read it. Null or empty sends none. It is added
+         *   to the JSON body of a `POST` to a chat, completions or responses
+         *   path, and such a request is refused if its body cannot be
+         *   examined; see [execute]. Use an opaque random value, not a user
+         *   ID or an API key.
          * @param verificationCheck Called with each verification that passes
          *   [verifier], before the enclave's keys are used; it throws to
          *   reject the enclave. It must not call back into the client.
@@ -251,10 +271,11 @@ public class EnclaveHttpClient private constructor(
             baseUrl: String? = null,
             attestationRelay: String? = null,
             verifier: Verifier? = null,
+            userCacheSecret: String? = null,
             verificationCheck: VerificationCheck? = null,
             onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         ): EnclaveHttpClient = create(
-            enclave, pin, transportMode, baseUrl, attestationRelay, verifier, verificationCheck,
+            enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
             onVerificationResult, Internals(),
         )
 
@@ -267,12 +288,13 @@ public class EnclaveHttpClient private constructor(
             baseUrl: String?,
             attestationRelay: String?,
             verifier: Verifier?,
+            userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
         ): EnclaveHttpClient {
             val client = unverified(
-                enclave, pin, transportMode, baseUrl, attestationRelay, verifier, verificationCheck,
+                enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
                 onVerificationResult, internals,
             )
             try {
@@ -293,62 +315,15 @@ public class EnclaveHttpClient private constructor(
             baseUrl: String?,
             attestationRelay: String?,
             verifier: Verifier?,
+            userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
-        ): EnclaveHttpClient {
-            val enclaveUrl = Urls.enclaveUrl(enclave)
-            val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
-            if (transportMode != TransportMode.Tls) {
-                throw ConfigurationException("TransportMode.$transportMode is not available in this version of the SDK")
-            }
-            if (base != null) {
-                if (!base.isHttps) {
-                    throw ConfigurationException("invalid base URL: TransportMode.Tls requires HTTPS")
-                }
-                if (Origin.of(base) != Origin.of(enclaveUrl)) {
-                    throw ConfigurationException(
-                        "a base URL off the enclave's origin ${Origin.of(enclaveUrl)} is a proxy, " +
-                            "which a pinned TLS connection cannot pass through",
-                    )
-                }
-            }
-            val relay = attestationRelay.nullIfEmpty()?.also(Urls::requireRelay)
-            val backend = (verifier ?: Verifier()).backend
-            val fetcher = lazy { AttestationFetcher(internals.http) }
-            val attestor = Attestor(
-                verifier = backend,
-                fetch = { url -> fetcher.value.fetch(url) },
-                check = verificationCheck,
-                clock = internals.clock,
-                retryDelay = internals.retryDelay,
-            )
-            attestor.checkOptions(enclave, relay, pin)
-
-            return EnclaveHttpClient(
-                EnclaveConnection(
-                    enclave = enclave,
-                    pin = pin,
-                    baseUrl = base ?: enclaveUrl,
-                    relay = relay,
-                    attestor = attestor,
-                    protocol = PinnedTls(internals.http),
-                    onVerificationResult = onVerificationResult,
-                    clock = internals.clock,
-                    onClose = {
-                        if (fetcher.isInitialized()) {
-                            fetcher.value.close()
-                        }
-                    },
-                ),
-            )
-        }
+        ): EnclaveHttpClient = EnclaveHttpClient(
+            EnclaveConnection.create(
+                enclave, pin, transportMode, baseUrl, attestationRelay, verifier ?: Verifier(),
+                UserCacheSecret.of(userCacheSecret), verificationCheck, onVerificationResult, internals,
+            ),
+        )
     }
-
-    /** What tests replace; the defaults are what production runs with. */
-    internal class Internals(
-        val http: HttpSettings = HttpSettings(),
-        val clock: () -> Instant = Instant::now,
-        val retryDelay: Duration = Attestor.RETRY_DELAY,
-    )
 }

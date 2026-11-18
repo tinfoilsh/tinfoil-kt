@@ -45,6 +45,13 @@ to what is verified belongs in tinfoil-go.
   Kotlin's `internal` is public to Java; a public class has no ordinary
   member that takes one. Classes under `sh.tinfoil.internal` stay visible to
   Java as such, and are not an API.
+- The router list is untrusted: it only proposes hosts, and each is verified
+  against the router's pin like any enclave. Nothing read from it may relax
+  a check, choose a pin, or be parsed with code that recurses on its input.
+- A request body is changed only to add the user cache secret, by splicing
+  it into the text of a body that a strict JSON scanner accepts as one
+  object; every other byte is the caller's. A body that the scanner does not
+  accept is sent unchanged.
 - Never put an API key, a cache secret or key material in a log, an exception
   message or a `toString()`.
 - Comments and test names describe this code; they do not cite other SDKs.

@@ -72,6 +72,18 @@ internal class Attestor(
         }
     }
 
+    /**
+     * A verification as [attest] returns it, from one attempt: a failure is
+     * not tried again. It is for a caller that has other hosts to try.
+     */
+    @Throws(TinfoilException::class)
+    suspend fun attestOnce(host: String, relay: String?, pin: Pin): Verification =
+        try {
+            attempt(host, relay, pin)
+        } catch (e: Final) {
+            throw e.error
+        }
+
     private suspend fun attempt(host: String, relay: String?, pin: Pin): Verification {
         val nonce = verifier.newNonce()
         val document = fetch(attestationUrl(host, relay, nonce))
