@@ -39,7 +39,8 @@ internal class UserCacheSecret private constructor(
 
     /**
      * [request], with this secret in its body if it takes one; otherwise
-     * [request] itself, or a request with the same body bytes.
+     * [request] itself, or a request whose body is the bytes that were read
+     * from [request]'s.
      *
      * A request takes the secret when it is a `POST` to a path that ends in
      * one of [ELIGIBLE_PATHS], and its body is the text of one JSON object
@@ -57,10 +58,11 @@ internal class UserCacheSecret private constructor(
      * is not a string.
      *
      * To decide, the body is read into memory here, before the request is
-     * sent and before anything is verified for it, and at most once. A body
-     * that can be written only once is sent from what was read. No more
-     * than [maxBodyBytes] are held, which is the largest body that the
-     * router accepts. So a body that declares more than that, or that can
+     * sent and before anything is verified for it, and at most once. What
+     * was read is what is sent, with or without the secret: the body is not
+     * written a second time, when it could write something else than what
+     * was examined. No more than [maxBodyBytes] are held, which is the
+     * largest body that the router accepts. So a body that declares more than that, or that can
      * be written again and turns out to be longer, is sent as it is: the
      * router refuses it for its size, and nothing of it is cached.
      *
@@ -108,12 +110,9 @@ internal class UserCacheSecret private constructor(
             // The body can be written again, so the HTTP client deals with it.
             return request
         }
-        val splice = splice(text)
-        if (splice == null && !oneShot) {
-            return request
-        }
-        // A body that could be read only once is sent from what was read.
-        val held = HeldBody(text, listOfNotNull(splice), body.contentType(), oneShot)
+        // Sent from what was read, whether or not it takes the secret: a
+        // second write of the caller's body need not match the first.
+        val held = HeldBody(text, listOfNotNull(splice(text)), body.contentType(), oneShot)
         return request.newBuilder().method(request.method, held).build()
     }
 

@@ -433,14 +433,41 @@ class UserCacheSecretTest {
     }
 
     @Test
-    fun aBodyThatIsLeftAloneIsTheCallersOwn() {
+    fun aBodyThatNeedsNoSecretIsSentFromWhatWasExamined() {
         for (text in listOf("not json", "[]", """{"user_cache_secret":"mine"}""", """{"user_cache_secret":"","user_cache_secret":""}""", "")) {
-            val body = CountingBody(text)
+            val body = CountingBody(text, type = json)
             val request = post("/v1/responses", body)
 
-            assertSame(request, provision(request), text)
-            assertEquals(1, body.writes.get(), "read once to decide")
+            val sent = provision(request)
+
+            assertEquals(text, sent.text(), text)
+            assertEquals(text, sent.text(), "it can be written again")
+            assertEquals(text.toByteArray().size.toLong(), sent.body!!.contentLength())
+            assertEquals(json, sent.body!!.contentType())
+            assertFalse(sent.body!!.isOneShot())
+            assertEquals(1, body.writes.get(), "read once to decide, and never written again")
         }
+    }
+
+    @Test
+    fun aBodyThatWritesSomethingElseTheSecondTimeIsSentAsItWasExamined() {
+        // The first text carries its own scope, so it is left alone; the
+        // second would land in the cache that every client shares.
+        val texts = ArrayDeque(listOf("""{"user_cache_secret":"mine","n":1}""", """{"prompt":"unscoped-marker","n":1}"""))
+        val changing = object : RequestBody() {
+            override fun contentType(): MediaType? = json
+
+            override fun contentLength(): Long = texts.first().length.toLong()
+
+            override fun writeTo(sink: BufferedSink) {
+                sink.writeUtf8(if (texts.size > 1) texts.removeFirst() else texts.first())
+            }
+        }
+
+        val sent = provision(post("/v1/chat/completions", changing))
+
+        assertEquals("""{"user_cache_secret":"mine","n":1}""", sent.text())
+        assertEquals("""{"user_cache_secret":"mine","n":1}""", sent.text())
     }
 
     @Test

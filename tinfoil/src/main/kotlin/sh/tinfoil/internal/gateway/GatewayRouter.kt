@@ -40,6 +40,7 @@ import sh.tinfoil.internal.transport.AttestedSender
 import sh.tinfoil.internal.transport.EhbpSealing
 import sh.tinfoil.internal.transport.Origin
 import sh.tinfoil.internal.transport.RecoverableCall
+import sh.tinfoil.internal.transport.SettledBody
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.transport.closeQuietly
@@ -315,11 +316,14 @@ internal class GatewayRouter private constructor(
     @Throws(IOException::class)
     override suspend fun send(request: Request, onCall: (Call) -> Unit): Response {
         checkOpen()
+        // What the body says about itself is taken once, so that the body
+        // that is examined here is the body that is sealed.
+        val settled = SettledBody.settle(request)
         // Each replica makes these checks too; here they refuse a request
         // before its body is read, the catalog is, or a replica is verified.
-        origin.requireDestinationOf(request, "the gateway")
-        EhbpSealing.checkRequest(request, cleartext = false)
-        val prepared = GatewayRequest.prepare(request, secret.value)
+        origin.requireDestinationOf(settled, "the gateway")
+        EhbpSealing.checkRequest(settled, cleartext = false)
+        val prepared = GatewayRequest.prepare(settled, secret.value)
         checkOpen()
         val model = prepared.model
         // Before the catalog is read, which could otherwise serve it.

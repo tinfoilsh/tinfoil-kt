@@ -30,6 +30,7 @@ import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.Origin
 import sh.tinfoil.internal.transport.PinnedTls
 import sh.tinfoil.internal.transport.RecoverableCall
+import sh.tinfoil.internal.transport.SettledBody
 import sh.tinfoil.internal.transport.TransportProtocol
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
@@ -177,8 +178,11 @@ internal class EnclaveConnection(
     @Throws(IOException::class)
     override suspend fun send(request: Request, onCall: (Call) -> Unit): Response {
         checkOpen()
-        checkRequest(request)
-        val outgoing = cacheSecret?.provision(request) ?: request
+        // What the body says about itself is taken once, so that the body
+        // that is judged here is the body that is sent.
+        val settled = SettledBody.settle(request)
+        checkRequest(settled)
+        val outgoing = cacheSecret?.provision(settled) ?: settled
         var rejection: AttestationException? = null
         while (true) {
             val state = verified(force = false)

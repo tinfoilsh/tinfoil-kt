@@ -118,6 +118,48 @@ class EhbpClientTest {
     // Options.
 
     @Test
+    fun aBodyWhoseLengthChangesAfterItWasJudgedNeverLeavesInTheClear() = test {
+        val marker = "plaintext-marker-5e1f0a"
+        for (client in listOf(direct("cache-secret-0a1b2c"), proxied())) {
+            for (path in listOf("v1/echo", "v1/chat/completions")) {
+                // However often the body is asked before it admits to a
+                // length, as a file does that is written while it is sent.
+                for (zeros in 0..6) {
+                    val asked = AtomicInteger()
+                    val body = object : RequestBody() {
+                        override fun contentType(): MediaType = JSON
+
+                        override fun contentLength(): Long = if (asked.incrementAndGet() <= zeros) 0L else marker.length.toLong()
+
+                        override fun writeTo(sink: BufferedSink) {
+                            sink.writeUtf8(marker)
+                        }
+                    }
+                    val outcome = runCatching {
+                        client.execute(Request.Builder().url(client.baseUrl.resolve(path)!!).post(body).build()).close()
+                    }
+                    // The first answer stands: a body that said that it was
+                    // empty is not sealed, and what it writes is not sent.
+                    if (zeros == 0) {
+                        outcome.getOrThrow()
+                    } else {
+                        assertIs<IOException>(outcome.exceptionOrNull(), "$path, $zeros")
+                    }
+                }
+            }
+        }
+
+        val received = atEnclave.received + atProxy.received
+        assertEquals(4, received.count { it.sealed })
+        for (request in received) {
+            assertFalse(request.wire.containsText(marker), "sealed=${request.sealed}")
+            if (!request.sealed) {
+                assertEquals(0, request.wire.size, "a request that is not sealed carries no body")
+            }
+        }
+    }
+
+    @Test
     fun aConnectionToAnEnclaveThatTheCallerNamedIsNotPinned() = test {
         // The host is the caller's choice, and may be anything that
         // forwards to the enclave; only the body is tied to the attestation.

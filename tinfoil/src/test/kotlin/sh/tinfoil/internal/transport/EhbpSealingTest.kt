@@ -1,8 +1,11 @@
 package sh.tinfoil.internal.transport
 
+import okhttp3.MediaType
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockWebServer
+import okio.BufferedSink
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
@@ -15,6 +18,7 @@ import sh.tinfoil.testing.httpsServer
 import sh.tinfoil.testing.verification
 import java.io.IOException
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -104,6 +108,43 @@ class EhbpSealingTest {
         assertFalse(direct.wire.containsText(MARKER) || proxied.wire.containsText(MARKER))
         assertNull(direct.request.getHeader(EhbpSealing.ENCLAVE_URL_HEADER))
         assertEquals("https://enclave.example", proxied.request.getHeader(EhbpSealing.ENCLAVE_URL_HEADER))
+    }
+
+    @Test
+    fun aBodyThatSaysItIsEmptyAndThenWritesIsNeverSentUnsealed() {
+        val server = tlsServer()
+        // However often the body is asked before it answers with a length,
+        // what it writes does not reach the wire in the clear.
+        for (zeros in 0..6) {
+            val asked = AtomicInteger()
+            val body = object : RequestBody() {
+                override fun contentType(): MediaType? = null
+
+                override fun contentLength(): Long = if (asked.incrementAndGet() <= zeros) 0L else MARKER.length.toLong()
+
+                override fun writeTo(sink: BufferedSink) {
+                    sink.writeUtf8(MARKER)
+                }
+            }
+            val request = Request.Builder().url("https://localhost:${server.port}/v1/echo").post(body).build()
+            val outcome = runCatching { bind(cleartext = false).newCall(request).execute().close() }
+            if (zeros == 0) {
+                outcome.getOrThrow()
+            } else {
+                // It said that it was empty, so it is not sealed, and what
+                // it then writes is not sent: the request fails.
+                assertTrue(outcome.exceptionOrNull() is IOException, "$zeros: $outcome")
+            }
+        }
+
+        assertTrue(sealing.received.any { it.sealed })
+        for (received in sealing.received) {
+            assertFalse(received.wire.containsText(MARKER), "sealed=${received.sealed}")
+            if (!received.sealed) {
+                assertEquals(0, received.wire.size)
+                assertEquals("0", received.request.getHeader("Content-Length"))
+            }
+        }
     }
 
     @Test

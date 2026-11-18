@@ -13,11 +13,14 @@ import okhttp3.Interceptor
 import okhttp3.MediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.Response
 import okhttp3.ResponseBody
 import okio.Buffer
+import okio.BufferedSink
 import okio.BufferedSource
 import okio.ForwardingSource
+import okio.Sink
 import okio.Timeout
 import okio.buffer
 import sh.tinfoil.AttestationException
@@ -441,18 +444,22 @@ internal class EhbpTransport(
         }
 
         /**
-         * Sees the request as it is about to be sent. A request with a body
-         * must have been sealed by now: one that was not is stopped here,
-         * before any of it is written.
+         * Sees the request as it is about to be sent. A body that was not
+         * sealed by now is one that said that it was empty, which is when
+         * the sealing client leaves a request as it is. The body is not
+         * asked again whether that is still so, here or by the HTTP client:
+         * it is replaced with a body that is empty whatever it is asked and
+         * that passes nothing on, so that nothing of a body is ever written
+         * unsealed.
          */
         private fun guard(chain: Interceptor.Chain): Response {
             val outgoing = chain.request()
             sealed = outgoing.header(EncapsulatedKeyHeader) != null
             val body = outgoing.body
-            if (!sealed && body != null && body.contentLength() != 0L) {
-                throw IOException("refusing to send a request body that is not sealed")
+            if (sealed || body == null) {
+                return chain.proceed(outgoing)
             }
-            return chain.proceed(outgoing)
+            return chain.proceed(outgoing.newBuilder().method(outgoing.method, DeclaredEmpty(body)).build())
         }
 
         /**
@@ -521,6 +528,39 @@ internal class EhbpTransport(
         override fun contentLength(): Long = -1L
 
         override fun source(): BufferedSource = source
+    }
+
+    /**
+     * What is sent for a [body] that said that it was empty: no bytes,
+     * whatever the body says or writes later. The body still gets its turn
+     * to write, to a sink that keeps nothing and is not the connection, so
+     * that one that does write after all fails its request and is not
+     * taken for an empty one.
+     */
+    private class DeclaredEmpty(private val body: RequestBody) : RequestBody() {
+        private val type: MediaType? = body.contentType()
+
+        override fun contentType(): MediaType? = type
+
+        override fun contentLength(): Long = 0L
+
+        override fun writeTo(sink: BufferedSink) {
+            val nothing = object : Sink {
+                override fun write(source: Buffer, byteCount: Long) {
+                    if (byteCount > 0) {
+                        throw ProtocolException("the request body declared no bytes and wrote some, which are not sent")
+                    }
+                }
+
+                override fun flush() = Unit
+
+                override fun timeout(): Timeout = Timeout.NONE
+
+                override fun close() = Unit
+            }.buffer()
+            body.writeTo(nothing)
+            nothing.emit()
+        }
     }
 
     private companion object {

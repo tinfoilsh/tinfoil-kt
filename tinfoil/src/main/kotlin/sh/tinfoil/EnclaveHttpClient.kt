@@ -147,6 +147,11 @@ public class EnclaveHttpClient private constructor(
      * answered: the response is returned as it is. No cookies are kept and
      * nothing is cached.
      *
+     * A request body is asked once for its length, its content type and
+     * whether it can be written again, and is held to those answers: a body
+     * that writes another number of bytes than the length that it declared
+     * fails the request with an [IOException].
+     *
      * When the client has a user cache secret, it is added to the body of a
      * `POST` whose path ends in `/chat/completions`, `/completions` or
      * `/responses`, as the member `user_cache_secret`, if the body is one
@@ -159,8 +164,8 @@ public class EnclaveHttpClient private constructor(
      * value that is not a string,
      * and a body of more than 64 MiB that declares its length or can be
      * written again, which a router refuses for its size. To decide, the
-     * body is read into memory before the request is sent; a body that can
-     * be written only once is written then, and sent from memory. A request
+     * body is read into memory before the request is sent: it is written
+     * once, then, and what it wrote is what is sent. A request
      * to one of those paths whose body cannot be examined is refused with a
      * [ConfigurationException] before anything is sent, so that it does not
      * land in the cache that the API key's other clients share: a duplex
@@ -204,7 +209,8 @@ public class EnclaveHttpClient private constructor(
      * - A request without a body, or with one that declares a length of
      *   zero, is not sealed, and neither is its response: the protocol
      *   cannot protect them. Nothing but the TLS connection to [baseUrl]'s
-     *   host authenticates such a response.
+     *   host authenticates such a response. A body that declared a length
+     *   of zero is sent as no bytes, whatever it writes.
      * - A response to a sealed request that reports success without being
      *   sealed fails with an [IOException], and so does a redirect. That a
      *   success is sealed has to show: the read of its body fails if the
