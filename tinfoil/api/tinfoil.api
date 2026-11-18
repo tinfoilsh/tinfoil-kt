@@ -95,6 +95,25 @@ public final class sh/tinfoil/EmbeddedReferences {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class sh/tinfoil/EnclaveHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+	public static final field Companion Lsh/tinfoil/EnclaveHttpClient$Companion;
+	public fun close ()V
+	public final fun ensureVerified (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public final fun getCurrent ()Lsh/tinfoil/Verification;
+	public final fun getEnclave ()Ljava/lang/String;
+	public final fun getPin ()Lsh/tinfoil/Pin;
+	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
+	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class sh/tinfoil/EnclaveHttpClient$Companion {
+	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public final class sh/tinfoil/Measurement {
 	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
 	public fun equals (Ljava/lang/Object;)Z
@@ -164,6 +183,14 @@ public abstract class sh/tinfoil/TinfoilException : java/io/IOException {
 	public final fun getDetail ()Ljava/lang/String;
 }
 
+public final class sh/tinfoil/TransportMode : java/lang/Enum {
+	public static final field Ehbp Lsh/tinfoil/TransportMode;
+	public static final field Tls Lsh/tinfoil/TransportMode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/TransportMode;
+	public static fun values ()[Lsh/tinfoil/TransportMode;
+}
+
 public final class sh/tinfoil/Verification {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCodeDigest ()Ljava/lang/String;
@@ -181,6 +208,10 @@ public final class sh/tinfoil/Verification {
 	public final fun getTlsPublicKeyFingerprint ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class sh/tinfoil/VerificationCheck {
+	public abstract fun check (Lsh/tinfoil/Verification;)V
 }
 
 public final class sh/tinfoil/VerificationLayer {
