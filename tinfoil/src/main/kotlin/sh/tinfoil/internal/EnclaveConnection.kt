@@ -21,10 +21,13 @@ import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.Verifier
+import sh.tinfoil.RecoverableResponse
 import sh.tinfoil.internal.transport.BoundTransport
+import sh.tinfoil.internal.transport.EhbpSealing
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.Origin
 import sh.tinfoil.internal.transport.PinnedTls
+import sh.tinfoil.internal.transport.RecoverableCall
 import sh.tinfoil.internal.transport.TransportProtocol
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
@@ -137,9 +140,9 @@ internal class EnclaveConnection(
      * One that takes the client's prompt-cache secret is given it once, so
      * that a request that is sent again carries the same body.
      * If the enclave turns out not to hold the verified keys, which shows
-     * before any of the request is handed to it, the enclave is verified
-     * again and the request is sent once more, when its body can be sent
-     * twice; otherwise, or if the new keys are refused too, the request
+     * before it can read any of what those keys protect, the enclave is
+     * verified again and the request is sent once more, when its body can be
+     * sent twice; otherwise, or if the new keys are refused too, the request
      * fails with an [AttestationException].
      */
     @Throws(IOException::class)
@@ -175,6 +178,27 @@ internal class EnclaveConnection(
                 rejection = AttestationException(reason, cause = e)
             }
         }
+    }
+
+    /**
+     * Sends [request] as [send] does, and returns the response with the
+     * session recovery token of the request that it answers. Only a
+     * transport that seals bodies has such tokens; any other is refused
+     * before any I/O.
+     */
+    @Throws(IOException::class)
+    suspend fun sendRecoverable(request: Request): RecoverableResponse {
+        checkOpen()
+        if (protocol.mode != TransportMode.Ehbp) {
+            throw ConfigurationException(
+                "session recovery tokens need TransportMode.Ehbp: TransportMode.${protocol.mode} seals no bodies",
+            )
+        }
+        // A request that is sent again is sealed again, and the token is
+        // that of the request that was answered: the last.
+        var answered: Call? = null
+        val response = send(request) { answered = it }
+        return RecoverableResponse(response, (answered as? RecoverableCall)?.recoveryToken)
     }
 
     /**
@@ -370,17 +394,25 @@ internal class EnclaveConnection(
         ): EnclaveConnection {
             val enclaveUrl = Urls.enclaveUrl(enclave)
             val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
-            if (transportMode != TransportMode.Tls) {
-                throw ConfigurationException("TransportMode.$transportMode is not available in this version of the SDK")
-            }
-            if (base != null) {
-                if (!base.isHttps) {
-                    throw ConfigurationException("invalid base URL: TransportMode.Tls requires HTTPS")
+            val proxied = base != null && Origin.of(base) != Origin.of(enclaveUrl)
+            when (transportMode) {
+                TransportMode.Tls -> if (base != null) {
+                    if (!base.isHttps) {
+                        throw ConfigurationException("invalid base URL: TransportMode.Tls requires HTTPS")
+                    }
+                    if (proxied) {
+                        throw ConfigurationException(
+                            "a base URL off the enclave's origin ${Origin.of(enclaveUrl)} is a proxy, " +
+                                "which a pinned TLS connection cannot pass through; a proxy requires TransportMode.Ehbp",
+                        )
+                    }
                 }
-                if (Origin.of(base) != Origin.of(enclaveUrl)) {
+                // Headers are not sealed, so they travel in the clear only
+                // where they never leave the machine.
+                TransportMode.Ehbp -> if (base != null && !base.isHttps && !Urls.isLoopback(base)) {
                     throw ConfigurationException(
-                        "a base URL off the enclave's origin ${Origin.of(enclaveUrl)} is a proxy, " +
-                            "which a pinned TLS connection cannot pass through",
+                        "invalid base URL: HTTP is allowed only for localhost or a loopback IP address; " +
+                            "use HTTPS to protect request headers",
                     )
                 }
             }
@@ -401,7 +433,16 @@ internal class EnclaveConnection(
                 baseUrl = base ?: enclaveUrl,
                 relay = relay,
                 attestor = attestor,
-                protocol = PinnedTls(internals.http),
+                protocol = when (transportMode) {
+                    TransportMode.Tls -> PinnedTls(internals.http)
+                    TransportMode.Ehbp -> EhbpSealing(
+                        cleartext = base != null && !base.isHttps,
+                        // A proxy is told which enclave the client verified,
+                        // as the caller named it.
+                        enclaveUrl = if (proxied) "https://$enclave" else null,
+                        settings = internals.http,
+                    )
+                },
                 onVerificationResult = onVerificationResult,
                 cacheSecret = cacheSecret,
                 clock = internals.clock,

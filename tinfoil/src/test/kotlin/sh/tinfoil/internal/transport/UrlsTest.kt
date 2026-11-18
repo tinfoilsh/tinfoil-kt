@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 class UrlsTest {
     @Test
@@ -103,5 +104,28 @@ class UrlsTest {
         assertEquals("https://host.example", origin("https://user:pw@host.example:443/path").toString())
         assertEquals("https://host.example:8443", origin("https://host.example:8443/").toString())
         assertEquals("http://[::1]:8080", origin("http://[::1]:8080/").toString())
+    }
+
+    @Test
+    fun onlyAHostThatIsWrittenAsThisMachineIsLoopback() {
+        val loopback = listOf(
+            "http://localhost/", "http://LOCALHOST:8080/", "http://127.0.0.1/", "http://127.255.255.254:1/",
+            "http://[::1]/", "http://[::1]:8080/x", "https://localhost/",
+        )
+        for (url in loopback) {
+            assertTrue(Urls.isLoopback(Urls.baseUrl(url)), url)
+        }
+        val remote = listOf(
+            "http://localhost.example/", "http://localhost./", "http://example.localhost/", "http://127.0.0.1.example/",
+            "http://126.0.0.1/", "http://128.0.0.1/", "http://0.0.0.0/", "http://10.0.0.1/", "http://192.168.0.1/",
+            "http://[::2]/", "http://[::]/", "http://[fe80::1]/", "http://proxy.example/",
+        )
+        for (url in remote) {
+            assertFalse(Urls.isLoopback(Urls.baseUrl(url)), url)
+        }
+        // An address that is written in another form than the one that is dialled is no base URL at all.
+        for (url in listOf("http://[::ffff:127.0.0.1]/", "http://[0:0:0:0:0:0:0:1]/", "http://127.1/", "http://0x7f.0.0.1/")) {
+            assertFailsWith<ConfigurationException>(url) { Urls.baseUrl(url) }
+        }
     }
 }

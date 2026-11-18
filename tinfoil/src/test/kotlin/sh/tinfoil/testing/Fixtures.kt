@@ -77,12 +77,20 @@ internal fun httpsServer(certificate: HeldCertificate, port: Int = 0): MockWebSe
     }
 
 internal const val TLS_KEY_FORMAT = Attestor.TLS_KEY_FORMAT
+internal const val HPKE_KEY_FORMAT = Attestor.HPKE_KEY_FORMAT
 
-/** A verification that endorses [fingerprint] as the TLS key until [expiresAt]. */
+/**
+ * A verification that endorses [fingerprint] as the TLS key, and [hpkePublicKey]
+ * as the HPKE key if there is one, until [expiresAt].
+ */
 internal fun verification(
     fingerprint: String?,
     expiresAt: Instant,
-    cryptoMaterial: List<CryptoMaterial> = listOfNotNull(fingerprint?.let { CryptoMaterial("tls", TLS_KEY_FORMAT, it) }),
+    hpkePublicKey: String? = null,
+    cryptoMaterial: List<CryptoMaterial> = listOfNotNull(
+        fingerprint?.let { CryptoMaterial("tls", TLS_KEY_FORMAT, it) },
+        hpkePublicKey?.let { CryptoMaterial("hpke", HPKE_KEY_FORMAT, it) },
+    ),
     codeDigest: String = "ab".repeat(32),
 ): Verification = Verification(
     configRepo = "tinfoilsh/example",
@@ -94,7 +102,7 @@ internal fun verification(
     runtime = null,
     platform = null,
     tlsPublicKeyFingerprint = fingerprint,
-    hpkePublicKey = null,
+    hpkePublicKey = hpkePublicKey,
     cryptoMaterial = cryptoMaterial,
     freshnessExpiresAt = expiresAt,
     metadata = VerificationMetadata(SoftwareIdentity("test", "0"), Instant.EPOCH),
@@ -174,7 +182,13 @@ internal class TestEnclave(
     @Volatile
     var endorsed: () -> String? = { certificate.fingerprint }
 
-    val verifier = FakeVerifier { _, _, _ -> verification(endorsed(), clock().plusSeconds(lifetimeSeconds)) }
+    /** The HPKE key that the next verification endorses; none unless a test says otherwise. */
+    @Volatile
+    var endorsedHpke: () -> String? = { null }
+
+    val verifier = FakeVerifier { _, _, _ ->
+        verification(endorsed(), clock().plusSeconds(lifetimeSeconds), hpkePublicKey = endorsedHpke())
+    }
     private val clients = CopyOnWriteArrayList<EnclaveHttpClient>()
 
     init {

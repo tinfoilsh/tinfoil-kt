@@ -25,11 +25,11 @@ import kotlin.coroutines.coroutineContext
  * models. [create] picks one, verifies it and returns a client that is bound
  * to it. From then on the client behaves as an [EnclaveHttpClient] for that
  * router: every request waits for a verification that is valid at that
- * moment, goes out only on a connection whose TLS certificate carries the
- * attested key, and the client verifies the same router again by itself when
- * a verification reaches its freshness deadline or the router stops
- * presenting the verified key. A client never moves to another router; to
- * choose again, create another client.
+ * moment, goes out under the keys that the verification endorses, and the
+ * client verifies the same router again by itself when a verification
+ * reaches its freshness deadline or the router stops holding the verified
+ * key. A client never moves to another router; to choose again, create
+ * another client.
  *
  * Send requests with [execute], or hand the client, which is an OkHttp
  * [Call.Factory], to a library that is built on OkHttp.
@@ -51,8 +51,8 @@ public class RouterHttpClient private constructor(
 
     /**
      * The URL that requests are sent under: the router's own origin,
-     * `https://<enclave>/`. Resolve request paths against it, as in
-     * `baseUrl.resolve("v1/models")`.
+     * `https://<enclave>/`, or the proxy that the client was created with.
+     * Resolve request paths against it, as in `baseUrl.resolve("v1/models")`.
      */
     public val baseUrl: HttpUrl get() = connection.baseUrl
 
@@ -95,11 +95,15 @@ public class RouterHttpClient private constructor(
      * the response.
      *
      * The rules are those of [EnclaveHttpClient.execute]: the request must be
-     * on [baseUrl]'s origin, over HTTPS, without credentials in its URL or a
-     * `Host` header; it waits for a valid verification and is written only
-     * to a connection that carries the attested key; redirects are not
-     * followed; and the HTTP client may send a request again by itself
-     * unless its body can be written only once.
+     * on [baseUrl]'s origin, without credentials in its URL or a `Host`
+     * header; it waits for a valid verification; redirects are not followed;
+     * and the HTTP client may send a request again by itself unless its body
+     * can be written only once or is sealed. With [TransportMode.Tls] it is
+     * written only to a connection that carries the attested key. With
+     * [TransportMode.Ehbp] only its body is sealed, to the attested HPKE
+     * key: its method, URL and headers are not, nor is a request without a
+     * body or the response to it; see [EnclaveHttpClient.execute] for all
+     * that this mode changes.
      *
      * The client's user cache secret is added to the body of a `POST` whose
      * path ends in `/chat/completions`, `/completions` or `/responses`, as
@@ -124,6 +128,17 @@ public class RouterHttpClient private constructor(
      */
     @Throws(IOException::class, CancellationException::class)
     public suspend fun execute(request: Request): Response = connection.send(request)
+
+    /**
+     * Sends [request] as [execute] does, and returns the response together
+     * with its session recovery token: the key material that can open this
+     * one response again later, without this client. It behaves as
+     * [EnclaveHttpClient.executeRecoverable] does: it requires
+     * [TransportMode.Ehbp], and the token, which is secret key material, is
+     * null for a response that is not sealed.
+     */
+    @Throws(IOException::class, CancellationException::class)
+    public suspend fun executeRecoverable(request: Request): RecoverableResponse = connection.sendRecoverable(request)
 
     /**
      * Prepares [request] as a call that follows the rules of [execute], for
@@ -165,12 +180,21 @@ public class RouterHttpClient private constructor(
          * Every argument is checked before any network I/O. Each call
          * chooses anew.
          *
-         * @param transportMode How requests are protected. Only
-         *   [TransportMode.Tls] is available in this version.
-         * @param baseUrl A proxy to send requests through. The router is not
-         *   known before it is chosen, so a base URL cannot be on its origin,
-         *   and a pinned TLS connection cannot pass through a proxy: it
-         *   requires [TransportMode.Ehbp], and is refused in this version.
+         * @param transportMode How requests are protected.
+         *   [TransportMode.Tls], the default, protects the whole exchange on
+         *   a direct connection; [TransportMode.Ehbp] protects only bodies,
+         *   and works through a proxy.
+         * @param baseUrl A proxy to send requests through, which forwards
+         *   each request to the router that the request's
+         *   `X-Tinfoil-Enclave-Url` header names. The router is not known
+         *   before it is chosen, so a base URL cannot name its origin, and
+         *   a pinned TLS connection cannot pass through a proxy: a base URL
+         *   requires [TransportMode.Ehbp]. It is an absolute URL without
+         *   user information, a query or a fragment. A proxy reads
+         *   everything that is not sealed, so it must use HTTPS; `http://`
+         *   is accepted only for `localhost` or a loopback IP address. The
+         *   routers are still verified directly, or through
+         *   [attestationRelay], and not through the proxy.
          * @param attestationRelay A host, with an optional port, that fetches
          *   attestation documents on the client's behalf. It is not trusted:
          *   a document is verified whoever delivers it. With a relay the
@@ -238,14 +262,14 @@ public class RouterHttpClient private constructor(
         ): RouterHttpClient {
             // Everything down to the fallback's connection is checked
             // before any I/O.
-            val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
-            if (transportMode != TransportMode.Tls) {
-                throw ConfigurationException("TransportMode.$transportMode is not available in this version of the SDK")
-            }
+            val base = baseUrl.nullIfEmpty()
             if (base != null) {
-                throw ConfigurationException(
-                    "a base URL is a proxy when the router is discovered, which requires TransportMode.Ehbp",
-                )
+                Urls.baseUrl(base)
+                if (transportMode == TransportMode.Tls) {
+                    throw ConfigurationException(
+                        "a base URL is a proxy when the router is discovered, which requires TransportMode.Ehbp",
+                    )
+                }
             }
             val policy = verifier ?: Verifier()
             if (policy.backend.callerAuthorizesConfig) {
@@ -257,7 +281,7 @@ public class RouterHttpClient private constructor(
             val secret = UserCacheSecret.orProcessDefault(userCacheSecret)
             val open = { host: String ->
                 EnclaveConnection.create(
-                    host, RouterDiscovery.ROUTER_PIN, transportMode, null, relay, policy, secret, verificationCheck,
+                    host, RouterDiscovery.ROUTER_PIN, transportMode, base, relay, policy, secret, verificationCheck,
                     onVerificationResult, internals,
                 )
             }

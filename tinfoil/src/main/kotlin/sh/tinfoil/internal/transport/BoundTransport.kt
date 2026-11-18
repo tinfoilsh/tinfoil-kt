@@ -55,8 +55,9 @@ internal interface BoundTransport {
 
     /**
      * Why [failure] means that the peer does not hold this transport's keys,
-     * found out before any part of the request was handed to that peer; or
-     * null for any other failure.
+     * found out before the peer could read any of the request that the keys
+     * protect, so that sending the request again under new keys delivers it
+     * once; or null for any other failure.
      */
     fun keyRejection(failure: IOException): String?
 
