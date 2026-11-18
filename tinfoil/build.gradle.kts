@@ -85,6 +85,9 @@ dependencies {
     // Suspend functions are part of the public API.
     api(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+    // The EHBP client and, through it, Bouncy Castle. No EHBP type is part of
+    // the public API.
+    implementation(libs.ehbp)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)

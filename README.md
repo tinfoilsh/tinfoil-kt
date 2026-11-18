@@ -22,6 +22,19 @@ export TINFOIL_GO_AAR=/path/to/TinfoilGo.aar
 ./gradlew :tinfoil:connectedDebugAndroidTest   # needs a running emulator or a device
 ```
 
+The EHBP client, which seals request bodies in `TransportMode.Ehbp`, is not
+released yet. It is built from source, as a Gradle included build, out of the
+`kotlin/` directory of a checkout of
+[encrypted-http-body-protocol](https://github.com/tinfoilsh/encrypted-http-body-protocol)
+at the commit in `ehbp.properties`. The build looks for the checkout next to
+this repository, in `../encrypted-http-body-protocol`; set `EHBP_KOTLIN_DIR`
+to the `kotlin/` directory of a checkout that is somewhere else:
+
+```bash
+git clone https://github.com/tinfoilsh/encrypted-http-body-protocol ../encrypted-http-body-protocol
+git -C ../encrypted-http-body-protocol checkout "$(sed -n 's/^commit=//p' ehbp.properties)"
+```
+
 The verifier library is native code for Android, so the tests that reach it
 are instrumented tests; the unit tests run on the JVM without it.
 

@@ -8,6 +8,8 @@ Guidance for AI agents working in this repository.
   Everything under `sh.tinfoil.internal` is implementation detail.
 - `tinfoil-go.properties`: the tinfoil-go commit that the attestation verifier
   library is built from.
+- `ehbp.properties`: the encrypted-http-body-protocol commit that the EHBP
+  client is built from, as an included build of a checkout; see the README.
 
 ## The verifier is not written here
 
@@ -18,7 +20,9 @@ to what is verified belongs in tinfoil-go.
 
 ## Building and testing
 
-`TINFOIL_GO_AAR` must name a `TinfoilGo.aar`; see the README.
+`TINFOIL_GO_AAR` must name a `TinfoilGo.aar`, and a checkout of the EHBP
+client must be next to this repository or named by `EHBP_KOTLIN_DIR`; see the
+README.
 
 - `./gradlew :tinfoil:testDebugUnitTest` runs the unit tests on the JVM. The
   verifier library cannot load there, so these tests use fakes for it.
