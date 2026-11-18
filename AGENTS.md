@@ -97,8 +97,12 @@ README.
   clients. Depend on `openai-java-core` alone: the artifacts `openai-java`
   and `openai-java-client-okhttp` bring an HTTP client of their own and must
   stay off the classpath. The OpenAI clients set their HTTP client and base
-  URL after the caller's options, and read nothing from the environment or
-  from system properties; `OpenAIHttpAdapter` opens no connection.
+  URL after the caller's options, and take no credential, URL or option from
+  the environment or from system properties; `OpenAIHttpAdapter` opens no
+  connection. What the OpenAI SDK reads there by itself is known and
+  harmless: `OPENAI_LOG` when its options builder is made, which is then
+  overridden with logging off, and `os.*` and `java.version` for its
+  `X-Stainless-*` headers.
 - A failure that must not be retried, an `AttestationException` or a
   `ConfigurationException`, leaves the adapter wrapped in a plain
   `OpenAIException`, never as an `IOException` or an `OpenAIIoException`:

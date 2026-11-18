@@ -32,8 +32,12 @@ client.close()
 [OpenAI Java SDK](https://github.com/openai/openai-java), with blocking
 calls, and `client.openAIAsync` is the same client with calls that return a
 `CompletableFuture`, which a coroutine awaits with `await()`. Use them as
-that SDK documents. The API key is passed in: nothing is read from the
-environment or from system properties.
+that SDK documents. The API key is passed in: no credential, URL or option
+is taken from the environment or from system properties. (The OpenAI SDK
+reads the variable `OPENAI_LOG` when its options are made, which this SDK
+overrides with logging off, and it describes the platform in its
+`X-Stainless-*` request headers, from the system properties `os.name`,
+`os.arch`, `os.version` and `java.version`.)
 
 A streamed response becomes a `Flow` with `asFlow()`. Events arrive as the
 service sends them, and cancelling the collection cancels the request:
@@ -188,6 +192,14 @@ try {
 The OpenAI SDK sends a request again after a failure of the network and
 after some error statuses, twice by default (`maxRetries`). It does not send
 one again after an `AttestationException` or a `ConfigurationException`.
+Each of its attempts can itself send the request more than once, when an
+enclave has changed its key and is verified again, so how often one call can
+send a request depends on the route. With the default options it is up to 6
+times with `Client`, `RouterOpenAIClient` and `EnclaveOpenAIClient`: 3
+attempts of up to 2 sends. With `GatewayOpenAIClient` it is up to 24 times:
+3 attempts of up to 8 sends, because the gateway can also route a request to
+another replica up to 3 times. A request whose body the OpenAI SDK can write
+only once, such as an upload that it streams, is sent once.
 
 ### App size
 

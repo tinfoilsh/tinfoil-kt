@@ -173,7 +173,10 @@ public class EnclaveHttpClient private constructor(
      * `/responses`, as the member `user_cache_secret`, if the body is one
      * JSON object in which that member is absent or the empty string. The
      * rest of the body is sent byte for byte as it was given, and the
-     * request's `Content-Length` is that of the new body. A non-empty
+     * request's `Content-Length` is that of the new body. Only a member
+     * with exactly that name counts: one whose name differs from it only by
+     * case, such as `User_Cache_Secret`, is left as it was written, and the
+     * client's member is added beside it. A non-empty
      * `user_cache_secret` string in the body is the request's own scope and
      * is kept. Any other body is sent unchanged: one that is not a JSON
      * object in UTF-8, one that names the member more than once or with a

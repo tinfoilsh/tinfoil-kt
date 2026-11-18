@@ -118,7 +118,9 @@ public class RouterHttpClient private constructor(
      * path ends in `/chat/completions`, `/completions` or `/responses`, as
      * the member `user_cache_secret`, if the body is one JSON object in
      * which that member is absent or the empty string. The rest of the body
-     * is sent byte for byte as it was given. A non-empty `user_cache_secret`
+     * is sent byte for byte as it was given. A member whose name differs
+     * from `user_cache_secret` only by case is left as it was written, and
+     * the client's member, with exactly that name, is added beside it. A non-empty `user_cache_secret`
      * string in the body is the request's own scope and is kept, so a server
      * can give each of its users a cache of their own. Any other body that
      * can be examined is sent unchanged, without the client's secret. A

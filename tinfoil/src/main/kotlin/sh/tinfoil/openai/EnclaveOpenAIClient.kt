@@ -53,11 +53,12 @@ import java.io.IOException
  * 409, 429 or 5xx: twice by default, which its `maxRetries` option changes.
  * Each of those attempts is a request to [httpClient] in its own right,
  * which may itself send it twice, when the enclave has changed its key and
- * is verified again. A request with the default options is therefore sent
- * at most six times, three of which at most reach an enclave that holds the
- * key that the request was protected with; this is besides what the HTTP
- * client re-sends when a connection fails, as [EnclaveHttpClient.execute]
- * describes. A request whose body the OpenAI SDK can write only once, such
+ * is verified again. On this route and on the router's, a request with the
+ * default options is therefore sent at most six times, three of which at
+ * most reach an enclave that holds the key that the request was protected
+ * with; this is besides what the HTTP client re-sends when a connection
+ * fails, as [EnclaveHttpClient.execute] describes. On the gateway's route
+ * the number is higher; see [GatewayOpenAIClient]. A request whose body the OpenAI SDK can write only once, such
  * as an upload that it streams, is sent once.
  *
  * **Timeouts.** Of the OpenAI SDK's timeout, only the time for a whole
@@ -73,8 +74,15 @@ import java.io.IOException
  * runs to its end in the background, within its timeout.
  *
  * **What can bypass the enclave.** Nothing that [create] is given: the HTTP
- * client and the base URL are set after the caller's options, and nothing
- * is read from the environment or from system properties. A request's own
+ * client and the base URL are set after the caller's options, and no
+ * credential, URL or option is taken from the environment or from system
+ * properties. Two things are read there, and neither decides where a
+ * request goes or what it carries of the caller's: the OpenAI SDK's options
+ * builder reads the variable `OPENAI_LOG` when it is made, and this SDK
+ * then sets logging off, whatever was read; and the OpenAI SDK describes
+ * the platform in the `X-Stainless-*` headers of each request, from the
+ * system properties `os.name`, `os.arch`, `os.version` and `java.version`.
+ * A request's own
  * options cannot change where it goes. But `withOptions`, on [openAI] or on
  * any of its services, returns a client that the caller configures freely:
  * if it is given another HTTP client, its requests, and the API key in

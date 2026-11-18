@@ -39,7 +39,9 @@ import java.io.IOException
  * cancellations apply, and what a client made with `withOptions` can
  * bypass, are as [EnclaveOpenAIClient] describes them. A request can be
  * sent more often here: each of the OpenAI SDK's attempts can send it up to
- * 8 times, as [GatewayHttpClient.execute] describes.
+ * 8 times, as [GatewayHttpClient.execute] describes, so with the OpenAI
+ * SDK's default of two retries one call can send a request up to 24 times,
+ * each time sealed to a replica that verified.
  *
  * A client holds threads and connections until it is [closed][close]. It is
  * safe to use from several threads and coroutines at once.
