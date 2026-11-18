@@ -63,26 +63,34 @@ internal class HeldBody(
             try {
                 body.writeTo(sink)
                 sink.flush()
+                return held.bytes()
             } catch (e: IOException) {
                 if (e.isOverLimit()) {
                     return null
                 }
                 throw e
             }
-            return held.bytes()
         }
 
         private fun IOException.isOverLimit(): Boolean =
             generateSequence<Throwable>(this) { it.cause }.take(MAX_CAUSE_DEPTH).any { it is OverLimit }
     }
 
-    /** Keeps what is written to it, up to [limit] bytes, and fails the write that would pass that. */
+    /**
+     * Keeps what is written to it, up to [limit] bytes, and fails the write
+     * that would pass that and every write after it: a body that goes on
+     * writing after a failure that it swallowed must not leave a text that
+     * lacks what the failed write carried. Once a write has failed, there
+     * is no text to take.
+     */
     private class Held(room: Int, private val limit: Int) : Sink {
         private var bytes = ByteArray(minOf(room, limit))
         private var size = 0
+        private var failed = false
 
         override fun write(source: Buffer, byteCount: Long) {
-            if (byteCount > limit - size) {
+            if (failed || byteCount > limit - size) {
+                failed = true
                 throw OverLimit()
             }
             val count = byteCount.toInt()
@@ -100,7 +108,13 @@ internal class HeldBody(
             size += count
         }
 
-        fun bytes(): ByteArray = if (size == bytes.size) bytes else bytes.copyOf(size)
+        @Throws(IOException::class)
+        fun bytes(): ByteArray {
+            if (failed) {
+                throw OverLimit()
+            }
+            return if (size == bytes.size) bytes else bytes.copyOf(size)
+        }
 
         override fun flush() = Unit
 

@@ -613,6 +613,39 @@ class UserCacheSecretTest {
     }
 
     @Test
+    fun aBodyThatGoesOnWritingAfterItPassedTheBoundIsNotHeldInPart() {
+        val bounded = UserCacheSecret.of("s3cret", maxBodyBytes = 64)!!
+        // It swallows the failure of the write that passed the bound, drops
+        // what it had written, and goes on with something shorter.
+        class Stubborn(private val declared: Long, private val oneShot: Boolean) : RequestBody() {
+            override fun contentType(): MediaType? = json
+
+            override fun contentLength(): Long = declared
+
+            override fun isOneShot(): Boolean = oneShot
+
+            override fun writeTo(sink: BufferedSink) {
+                try {
+                    sink.writeUtf8("""{"prompt":"${"x".repeat(100_000)}"}""")
+                    sink.flush()
+                } catch (_: IOException) {
+                    sink.buffer.clear()
+                }
+                sink.writeUtf8("""{"tail":1}""")
+            }
+        }
+
+        assertFailsWith<ConfigurationException> { provision(post("/v1/responses", Stubborn(-1, oneShot = true)), bounded) }
+        assertFailsWith<ProtocolException> { provision(post("/v1/responses", Stubborn(10, oneShot = true)), bounded) }
+        // One that can be written again is left to the HTTP client, as any
+        // body is that is longer than is read.
+        for (declared in listOf(-1L, 10L)) {
+            val again = post("/v1/responses", Stubborn(declared, oneShot = false))
+            assertSame(again, provision(again, bounded))
+        }
+    }
+
+    @Test
     fun aBodyThatFailsToWriteFailsTheRequest() {
         val failing = object : RequestBody() {
             override fun contentType(): MediaType? = null
