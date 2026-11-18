@@ -103,7 +103,13 @@ public class RouterHttpClient private constructor(
      * [TransportMode.Ehbp] only its body is sealed, to the attested HPKE
      * key: its method, URL and headers are not, nor is a request without a
      * body or the response to it; see [EnclaveHttpClient.execute] for all
-     * that this mode changes.
+     * that this mode changes. One thing is stricter here than there: the
+     * caller did not choose the router's host, so a connection that goes
+     * to the router itself, and not to a proxy, must present the attested
+     * TLS key in this mode too, and a router that presents another key is
+     * verified again and then refused, exactly as with [TransportMode.Tls].
+     * Through a proxy, the connection is the proxy's, and is validated as
+     * any HTTPS connection is.
      *
      * The client's user cache secret is added to the body of a `POST` whose
      * path ends in `/chat/completions`, `/completions` or `/responses`, as
@@ -163,19 +169,33 @@ public class RouterHttpClient private constructor(
          * Creates a client for one of Tinfoil's routers, verified before
          * this returns.
          *
-         * The router is the first on Tinfoil's router list that verifies.
-         * The list is only a proposal: each router on it is verified against
-         * Tinfoil's router by name, exactly as an enclave that the caller
-         * names would be, and nothing is sent to one that does not verify.
+         * The router is the first on Tinfoil's router list that verifies
+         * and holds its attested TLS key. The list is only a proposal, and
+         * is not trusted. Each router on it is verified against Tinfoil's
+         * router by name, exactly as an enclave that the caller names would
+         * be. A host could pass that by handing on a genuine router's
+         * attestation document, so it must also present the TLS key that
+         * the document endorses, on a connection that is opened to check
+         * that and carries no request. The client's later connections to
+         * the router are pinned to that key in both transport modes. So
+         * whatever the list says, no request, header or body is written to
+         * a host that does not hold a verified router's TLS key; a forged
+         * list can only cost time, or decide which genuine router is
+         * chosen.
+         *
          * Routers are tried in the order of the list, one at a time and
          * once each, for at most 30 seconds in all, the fetch of the list
-         * included. A router that cannot be reached, does not verify or is
-         * rejected by [verificationCheck] is passed over. If no router is
-         * chosen, because the list could not be fetched or is empty, none
-         * verified or the time ran out, the client uses
-         * `inference.tinfoil.sh`, which is verified in the same way, with
-         * one more attempt if the first fails; if that fails too, this
-         * fails with its error.
+         * included. A router that cannot be reached, does not verify, does
+         * not present its attested key or is rejected by
+         * [verificationCheck] is passed over. If no router is chosen,
+         * because the list could not be fetched or is empty, none passed
+         * or the time ran out, the client uses `inference.tinfoil.sh`,
+         * which is verified in the same way, with one more attempt if the
+         * first fails; if that fails too, this fails with its error. Its
+         * connections are pinned to its attested key like any router's.
+         *
+         * With a [baseUrl], which is a proxy, or an [attestationRelay], the
+         * list is not fetched and the client uses `inference.tinfoil.sh`.
          *
          * Every argument is checked before any network I/O. Each call
          * chooses anew.
@@ -192,9 +212,16 @@ public class RouterHttpClient private constructor(
          *   requires [TransportMode.Ehbp]. It is an absolute URL without
          *   user information, a query or a fragment. A proxy reads
          *   everything that is not sealed, so it must use HTTPS; `http://`
-         *   is accepted only for `localhost` or a loopback IP address. The
-         *   routers are still verified directly, or through
-         *   [attestationRelay], and not through the proxy.
+         *   is accepted only for `localhost` or a loopback IP address. With
+         *   a proxy the router list is not consulted, and the router is
+         *   always `inference.tinfoil.sh`: the proxy opens the connection
+         *   to the host that the header names and passes it every header,
+         *   the API key included, and this SDK cannot hold that connection
+         *   to the attested key, so the header never names a host that an
+         *   untrusted list proposed. The router is still verified directly,
+         *   or through [attestationRelay], and not through the proxy. The
+         *   proxy itself is trusted with everything that is not sealed; see
+         *   [EnclaveHttpClient.execute].
          * @param attestationRelay A host, with an optional port, that fetches
          *   attestation documents on the client's behalf. It is not trusted:
          *   a document is verified whoever delivers it. With a relay the
@@ -283,12 +310,19 @@ public class RouterHttpClient private constructor(
                 EnclaveConnection.create(
                     host, RouterDiscovery.ROUTER_PIN, transportMode, base, relay, policy, secret, verificationCheck,
                     onVerificationResult, internals,
+                    // The caller named no host, so a direct connection to
+                    // the router is pinned in both transport modes.
+                    proposed = true,
                 )
             }
             val fallback = open(internals.discovery.fallback)
 
+            // A proxy forwards each request, with its headers, to the host
+            // that the request names, over a connection that only the proxy
+            // sees. A listed host could not be held to its attested key
+            // there, so none is used.
             val discovered = try {
-                if (relay == null) discover(open, internals) else null
+                if (relay == null && base == null) discover(open, internals) else null
             } catch (e: Throwable) {
                 fallback.close()
                 throw e

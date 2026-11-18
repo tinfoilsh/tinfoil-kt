@@ -184,7 +184,12 @@ public class EnclaveHttpClient private constructor(
      * **With [TransportMode.Ehbp]**, connections are not pinned. They are
      * validated as the platform validates any HTTPS connection to
      * [baseUrl]'s host, which may be a proxy, and the request's body is
-     * sealed to the attested HPKE key instead:
+     * sealed to the attested HPKE key instead. The attestation shows what
+     * holds that key; it does not show that [baseUrl]'s host is the
+     * enclave. So this mode trusts the host that the client was created
+     * with, the proxy's or else the enclave's own, and whoever holds a
+     * certificate for it that the platform accepts, with everything that is
+     * not sealed:
      * - Only bodies are sealed. Whatever ends the TLS connection reads the
      *   method, the URL and the headers of every request, and can change
      *   them, and the same goes for the status and the headers of every

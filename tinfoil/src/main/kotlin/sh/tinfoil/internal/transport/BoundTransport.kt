@@ -1,6 +1,7 @@
 package sh.tinfoil.internal.transport
 
 import okhttp3.Call
+import okhttp3.HttpUrl
 import okhttp3.Request
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
@@ -60,6 +61,18 @@ internal interface BoundTransport {
      * once; or null for any other failure.
      */
     fun keyRejection(failure: IOException): String?
+
+    /**
+     * Opens a connection to [url]'s host as a request would, and closes it
+     * without writing any of a request to it. A transport that pins its
+     * connections to an attested key thereby finds out whether the host
+     * presents that key; one that pins nothing does nothing here.
+     *
+     * @throws IOException if no connection that would carry a request can
+     *   be opened; [keyRejection] says whether the key is why.
+     */
+    @Throws(IOException::class)
+    suspend fun probe(url: HttpUrl)
 
     /**
      * Stops keeping connections for later requests, because a newer

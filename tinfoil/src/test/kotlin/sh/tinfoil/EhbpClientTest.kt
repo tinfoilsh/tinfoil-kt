@@ -118,6 +118,17 @@ class EhbpClientTest {
     // Options.
 
     @Test
+    fun aConnectionToAnEnclaveThatTheCallerNamedIsNotPinned() = test {
+        // The host is the caller's choice, and may be anything that
+        // forwards to the enclave; only the body is tied to the attestation.
+        enclave.endorsed = { "ab".repeat(32) }
+        val client = direct()
+
+        assertEquals("ok", client.execute(client.post("""{"a":1}""")).text())
+        assertTrue(atEnclave.received.single().sealed)
+    }
+
+    @Test
     fun aProxyMustUseHttpsUnlessItIsOnThisMachine() = test {
         val refused = listOf(
             "http://proxy.example/",

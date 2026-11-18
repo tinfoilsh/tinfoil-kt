@@ -67,6 +67,11 @@ README.
 - The router list is untrusted: it only proposes hosts, and each is verified
   against the router's pin like any enclave. Nothing read from it may relax
   a check, choose a pin, or be parsed with code that recurses on its input.
+  An attestation document is not tied to the host that served it, so a
+  listed host is only ever reached over connections that are pinned to its
+  attested TLS key, in both transport modes, and is never named to a proxy:
+  with a proxy base URL the router client uses the fallback router and does
+  not fetch the list.
 - A request body is changed only to add the user cache secret or, on the
   gateway route, to replace it with the cache salt, by rewriting those
   members in the text of a body that a strict JSON scanner accepts as one

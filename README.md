@@ -225,7 +225,13 @@ What this mode does not protect:
   for `localhost` or a loopback IP address.
 - **A request without a body is not sealed, and neither is its response.**
 - Connections are validated as any HTTPS connection is, and are not pinned to
-  the enclave's key.
+  the enclave's key: whoever holds a valid certificate for the host that you
+  named, the proxy's or the enclave's own, reads what is not sealed. The
+  router clients are the exception, because you do not name the router's
+  host. Without a proxy, their connections are pinned to the router's
+  attested key in this mode too. With a proxy, which makes the connection to
+  the router itself, they always use `inference.tinfoil.sh` and do not
+  consult Tinfoil's router list, which is not trusted.
 - A response with an error status of 400 or above may come from the proxy and
   not from the enclave. A response that the enclave did not seal is
   authenticated by nothing.

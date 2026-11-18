@@ -8,6 +8,7 @@ import okhttp3.ConnectionSpec
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
 import okhttp3.EventListener
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType
 import okhttp3.OkHttpClient
@@ -45,9 +46,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * Seals request and response bodies to the HPKE key that a verification
  * endorses, with the EHBP client library, which owns the cryptography and
  * the framing. The connections that carry the sealed bodies are validated as
- * the platform validates any HTTPS connection, and are not pinned: they may
- * end at a proxy, which sees the method, the URL and the headers of every
- * request, and the whole of a request that has no body.
+ * the platform validates any HTTPS connection. Whatever they end at sees the
+ * method, the URL and the headers of every request, and the whole of a
+ * request that has no body, so where they end matters:
+ * - Unpinned, they end at the base URL's host, whoever holds a certificate
+ *   for it: a proxy, or an enclave that the caller named. That host is the
+ *   caller's choice, and is trusted with the headers.
+ * - Pinned, they must also present the TLS key that the verification
+ *   endorses, as with [PinnedTls]. That is for a direct connection to an
+ *   enclave whose host the caller did not choose: an attestation document
+ *   is not tied to the host that served it, so without the pin a host with
+ *   a certificate of its own could pass on a genuine enclave's document and
+ *   then be sent the headers.
  *
  * Its transports each have connections of their own and share the threads
  * that calls run on.
@@ -63,6 +73,11 @@ internal class EhbpSealing(
      * origin, when the base URL is on another origin; otherwise null.
      */
     private val enclaveUrl: String?,
+    /**
+     * Whether connections must present the attested TLS key as well. It is
+     * for connections that go to the enclave itself, never to a proxy.
+     */
+    private val pinned: Boolean,
     private val settings: HttpSettings = HttpSettings(),
 ) : TransportProtocol {
     override val mode: TransportMode = TransportMode.Ehbp
@@ -85,7 +100,11 @@ internal class EhbpSealing(
     override fun checkRequest(request: Request) = checkRequest(request, cleartext)
 
     override fun bind(verification: Verification): EhbpTransport =
-        EhbpTransport(identityOf(verification.hpkePublicKey), enclaveUrl, cleartext, dispatcher, executor, calls, settings)
+        EhbpTransport(
+            identityOf(verification.hpkePublicKey),
+            if (pinned) LeafKeyPin.of(verification.tlsPublicKeyFingerprint) else null,
+            enclaveUrl, cleartext, dispatcher, executor, calls, settings,
+        )
 
     override fun close() {
         calls.close()
@@ -174,9 +193,14 @@ internal class EhbpSealing(
  * another's and each request can be cancelled and timed by itself. A request
  * with a body leaves sealed or not at all. A request without a body, and its
  * response, are not sealed: the protocol cannot protect them.
+ *
+ * With a [pin], every connection must also present that TLS key, checked as
+ * [PinnedTlsTransport] checks it, so that nothing of a request, its headers
+ * included, is written to a host that does not hold the key.
  */
 internal class EhbpTransport(
     private val identity: Identity,
+    private val pin: LeafKeyPin?,
     private val enclaveUrl: String?,
     private val cleartext: Boolean,
     dispatcher: Dispatcher,
@@ -209,6 +233,7 @@ internal class EhbpTransport(
         .retryOnConnectionFailure(true)
         .readTimeout(READ_TIMEOUT_MINUTES, TimeUnit.MINUTES)
         .apply {
+            pin?.let { pinnedTo(it) }
             settings.trust?.let { sslSocketFactory(it.socketFactory, it.trustManager) }
             settings.proxy?.let { proxy(it) }
         }
@@ -223,8 +248,28 @@ internal class EhbpTransport(
         return call
     }
 
-    override fun keyRejection(failure: IOException): String? =
-        if (isKeyConfigError(failure)) "the enclave does not hold the attested HPKE key" else null
+    override fun keyRejection(failure: IOException): String? = when {
+        isKeyConfigError(failure) -> "the enclave does not hold the attested HPKE key"
+        // Without a pin, a certificate that is refused says nothing about
+        // the enclave's keys: the connection may be a proxy's.
+        pin != null -> pinRejection(failure)
+        else -> null
+    }
+
+    override suspend fun probe(url: HttpUrl) {
+        if (pin == null) {
+            return
+        }
+        var probing: Call? = null
+        try {
+            client.probePin(url) { call ->
+                calls.add(call)
+                probing = call
+            }
+        } finally {
+            probing?.let(::finished)
+        }
+    }
 
     override fun retire() {
         retired = true

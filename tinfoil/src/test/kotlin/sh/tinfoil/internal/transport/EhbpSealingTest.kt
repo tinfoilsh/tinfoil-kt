@@ -48,7 +48,7 @@ class EhbpSealingTest {
     }
 
     private fun protocol(cleartext: Boolean, enclaveUrl: String? = null): EhbpSealing =
-        EhbpSealing(cleartext, enclaveUrl, HttpSettings(authority.trust)).also { protocols += it }
+        EhbpSealing(cleartext, enclaveUrl, pinned = false, HttpSettings(authority.trust)).also { protocols += it }
 
     private fun bind(cleartext: Boolean, hpke: String? = key.publicKey, enclaveUrl: String? = null): EhbpTransport =
         protocol(cleartext, enclaveUrl).bind(verification(authority.fingerprint, Instant.MAX, hpkePublicKey = hpke))

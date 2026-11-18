@@ -7,6 +7,7 @@ import okhttp3.ConnectionSpec
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
 import okhttp3.EventListener
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -17,6 +18,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import java.io.IOException
+import java.net.ProtocolException
 import java.net.Proxy
 import java.security.MessageDigest
 import java.security.cert.Certificate
@@ -226,6 +228,9 @@ internal class PinnedTlsTransport(
 
     override fun keyRejection(failure: IOException): String? = pinRejection(failure)
 
+    // The call is tracked like any other, so closing the client ends it.
+    override suspend fun probe(url: HttpUrl) = client.probePin(url, calls::add)
+
     override fun retire() {
         retired = true
         pool.evictAll()
@@ -285,6 +290,39 @@ internal fun pinRejection(failure: IOException): String? {
         cause = cause?.cause
     }
     return null
+}
+
+/**
+ * Opens a connection to [url]'s host with this client, which is [pinnedTo]
+ * a key, and gives it up once the connection has passed every check that a
+ * request's connection passes and before any of a request is written to it.
+ * [admit] is handed the call before it starts.
+ *
+ * @throws IOException if no such connection can be opened; [pinRejection]
+ *   says whether the key is why.
+ */
+@Throws(IOException::class)
+internal suspend fun OkHttpClient.probePin(url: HttpUrl, admit: (Call) -> Unit) {
+    // Network interceptors run in the order in which they were added, so
+    // this one runs after the check of the connection's key.
+    val call = newBuilder().addNetworkInterceptor(ProbeEnd).build().newCall(Request.Builder().url(url).build())
+    admit(call)
+    try {
+        call.await().closeQuietly()
+    } catch (_: ProbeComplete) {
+        return
+    }
+    throw ProtocolException("a connection that was only to be opened carried a request")
+}
+
+/**
+ * Ends a probe where its request would be written. It is a protocol error
+ * for the HTTP client, which therefore does not try the request again.
+ */
+private class ProbeComplete : ProtocolException("the connection was opened only to check its key")
+
+private object ProbeEnd : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response = throw ProbeComplete()
 }
 
 private const val MAX_CAUSE_DEPTH = 8
