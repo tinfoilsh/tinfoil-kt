@@ -222,7 +222,8 @@ What this mode does not protect:
 - **Only bodies are sealed.** The method, the URL and the headers of every
   request, an API key among them, are not: the proxy reads them and can
   change them. The proxy must therefore use HTTPS; `http://` is accepted only
-  for `localhost` or a loopback IP address.
+  for `localhost` or a loopback IP address. A base URL on this machine is
+  reached directly, whatever HTTP proxy the system is configured with.
 - **A request without a body is not sealed, and neither is its response.**
 - Connections are validated as any HTTPS connection is, and are not pinned to
   the enclave's key: whoever holds a valid certificate for the host that you

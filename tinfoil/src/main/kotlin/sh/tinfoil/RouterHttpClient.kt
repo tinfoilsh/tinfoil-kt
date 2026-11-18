@@ -212,8 +212,10 @@ public class RouterHttpClient private constructor(
          *   requires [TransportMode.Ehbp]. It is an absolute URL without
          *   user information, a query or a fragment. A proxy reads
          *   everything that is not sealed, so it must use HTTPS; `http://`
-         *   is accepted only for `localhost` or a loopback IP address. With
-         *   a proxy the router list is not consulted, and the router is
+         *   is accepted only for `localhost` or a loopback IP address, and
+         *   a base URL on this machine is reached directly, whatever HTTP
+         *   proxy the system is configured with. With a base URL the
+         *   router list is not consulted, and the router is
          *   always `inference.tinfoil.sh`: the proxy opens the connection
          *   to the host that the header names and passes it every header,
          *   the API key included, and this SDK cannot hold that connection

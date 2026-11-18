@@ -118,6 +118,28 @@ class EhbpClientTest {
     // Options.
 
     @Test
+    fun aBaseUrlOnThisMachineIsNeverReachedThroughAProxy() = test {
+        // What a device's proxy setting would send requests through.
+        val systemProxy = MockWebServer().apply { start() }
+        try {
+            val settings = enclave.internals(proxy = java.net.Proxy(java.net.Proxy.Type.HTTP, systemProxy.toProxyAddress().address()))
+            val overHttp = enclave.client(transportMode = TransportMode.Ehbp, baseUrl = proxyUrl, internals = settings)
+            val overTls = enclave.client(transportMode = TransportMode.Ehbp, internals = settings)
+
+            for (client in listOf(overHttp, overTls)) {
+                assertEquals("ok", client.execute(client.post("""{"q":"$MARKER"}""").newBuilder().header("Authorization", "Bearer k").build()).text())
+                client.execute(client.get()).close()
+            }
+
+            assertEquals(0, systemProxy.requestCount, "a request for this machine was handed to a proxy")
+            assertEquals(2, atProxy.received.size)
+            assertEquals(2, atEnclave.received.size)
+        } finally {
+            systemProxy.shutdown()
+        }
+    }
+
+    @Test
     fun aBodyWhoseLengthChangesAfterItWasJudgedNeverLeavesInTheClear() = test {
         val marker = "plaintext-marker-5e1f0a"
         for (client in listOf(direct("cache-secret-0a1b2c"), proxied())) {

@@ -347,8 +347,12 @@ public class EnclaveHttpClient private constructor(
          *   names. A proxy reads everything that is not sealed, so it must
          *   use HTTPS; `http://` is accepted only for `localhost` or a
          *   loopback IP address, on any port, for a proxy on the same
-         *   machine. On Android, cleartext HTTP also has to be permitted by
-         *   the app's network security configuration.
+         *   machine. With [TransportMode.Ehbp], requests to a base URL on
+         *   `localhost` or a loopback IP address, over HTTP or HTTPS, are
+         *   sent there directly, whatever HTTP proxy the system is
+         *   configured with: such a proxy would otherwise be handed them.
+         *   On Android, cleartext HTTP also has to be permitted by the
+         *   app's network security configuration.
          * @param attestationRelay A host, with an optional port, that fetches
          *   the enclave's attestation document on the client's behalf. It is
          *   not trusted: the document is verified whoever delivers it.

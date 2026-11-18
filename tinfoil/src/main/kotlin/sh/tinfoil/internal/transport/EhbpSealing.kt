@@ -35,6 +35,7 @@ import sh.tinfoil.ehbp.protocol.ResponseNonceHeader
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ProtocolException
+import java.net.Proxy
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
@@ -78,6 +79,15 @@ internal class EhbpSealing(
      * for connections that go to the enclave itself, never to a proxy.
      */
     private val pinned: Boolean,
+    /**
+     * Whether requests go to this machine: to a base URL on `localhost` or
+     * a loopback IP address. They are then sent there directly, whatever
+     * proxy the system is set to use: a proxy would be handed the request
+     * to forward, and with cleartext HTTP that is all of it, the API key
+     * included, when the point of such a base URL is that nothing leaves
+     * the machine.
+     */
+    private val local: Boolean = false,
     private val settings: HttpSettings = HttpSettings(),
 ) : TransportProtocol {
     override val mode: TransportMode = TransportMode.Ehbp
@@ -103,7 +113,7 @@ internal class EhbpSealing(
         EhbpTransport(
             identityOf(verification.hpkePublicKey),
             if (pinned) LeafKeyPin.of(verification.tlsPublicKeyFingerprint) else null,
-            enclaveUrl, cleartext, dispatcher, executor, calls, settings,
+            enclaveUrl, cleartext, local, dispatcher, executor, calls, settings,
         )
 
     override fun close() {
@@ -203,6 +213,7 @@ internal class EhbpTransport(
     private val pin: LeafKeyPin?,
     private val enclaveUrl: String?,
     private val cleartext: Boolean,
+    local: Boolean,
     dispatcher: Dispatcher,
     private val executor: ThreadPoolExecutor,
     private val calls: ActiveCalls,
@@ -235,7 +246,9 @@ internal class EhbpTransport(
         .apply {
             pin?.let { pinnedTo(it) }
             settings.trust?.let { sslSocketFactory(it.socketFactory, it.trustManager) }
-            settings.proxy?.let { proxy(it) }
+            // A destination on this machine is reached directly, never
+            // through a proxy, whichever is configured.
+            if (local) proxy(Proxy.NO_PROXY) else settings.proxy?.let { proxy(it) }
         }
         .build()
 

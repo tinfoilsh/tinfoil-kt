@@ -474,6 +474,7 @@ internal class EnclaveConnection(
                         // that was only proposed has to show the attested
                         // TLS key first, as it does with TransportMode.Tls.
                         pinned = proposed && !proxied,
+                        local = Urls.isLoopback(base ?: enclaveUrl),
                         settings = internals.http,
                     )
                 },
