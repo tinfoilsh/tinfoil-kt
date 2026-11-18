@@ -2,6 +2,7 @@ package sh.tinfoil.internal.transport
 
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Request
 import sh.tinfoil.ConfigurationException
 
 /**
@@ -24,6 +25,29 @@ internal class Origin private constructor(
     override fun toString(): String {
         val authority = if (host.contains(':')) "[$host]" else host
         return if (port == HttpUrl.defaultPort(scheme)) "$scheme://$authority" else "$scheme://$authority:$port"
+    }
+
+    /**
+     * Throws for a request that would leave this origin, or that says where
+     * it goes in a way that the client does not control: credentials in its
+     * URL, or a `Host` header. [boundFor] names what the client is bound to
+     * this origin for.
+     */
+    @Throws(ConfigurationException::class)
+    fun requireDestinationOf(request: Request, boundFor: String) {
+        val url = request.url
+        if (url.username.isNotEmpty() || url.password.isNotEmpty()) {
+            throw ConfigurationException("request URLs must not carry credentials")
+        }
+        val target = of(url)
+        if (target != this) {
+            throw ConfigurationException(
+                "refusing to send a request to $target: the client is bound to $this for $boundFor",
+            )
+        }
+        if (request.header("Host") != null) {
+            throw ConfigurationException("requests must not set the Host header, which names the verified enclave")
+        }
     }
 
     companion object {

@@ -16,6 +16,24 @@ public final class sh/tinfoil/AttestationException : sh/tinfoil/TinfoilException
 	public final fun getLayer-7qrYzj4 ()Ljava/lang/String;
 }
 
+public final class sh/tinfoil/Catalog {
+	public fun <init> (Ljava/util/Map;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun get (Ljava/lang/String;)Lsh/tinfoil/CatalogEntry;
+	public final fun getEntries ()Ljava/util/Map;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/CatalogEntry {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHosts ()Ljava/util/List;
+	public final fun getRepo ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class sh/tinfoil/Client : java/lang/AutoCloseable {
 	public static final field Companion Lsh/tinfoil/Client$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/openai/RouterOpenAIClient;Lokhttp3/HttpUrl;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -132,12 +150,44 @@ public final class sh/tinfoil/EnclaveHttpClient$Companion {
 	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
+public abstract interface annotation class sh/tinfoil/ExperimentalTinfoilApi : java/lang/annotation/Annotation {
+}
+
+public final class sh/tinfoil/GatewayHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+	public static final field Companion Lsh/tinfoil/GatewayHttpClient$Companion;
+	public static final field DEFAULT_BASE_URL Ljava/lang/String;
+	public synthetic fun <init> (Lsh/tinfoil/internal/gateway/GatewayRouter;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun ensureVerified (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public final fun getCurrent ()Ljava/util/List;
+	public final fun models (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/GatewayHttpClient$Companion {
+	public final fun create (Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/GatewayHttpClient$Companion;Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun fetchCatalog (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class sh/tinfoil/Measurement {
 	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getRegisters ()Ljava/util/List;
 	public final fun getType ()Ljava/lang/String;
 	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/ModelPin {
+	public fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;)V
+	public synthetic fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getRepo ()Ljava/lang/String;
+	public final fun getVerifier ()Lsh/tinfoil/Verifier;
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -182,6 +232,17 @@ public final class sh/tinfoil/ReferenceSource$Companion {
 	public final fun getEMBEDDED-_jS_QyA ()Ljava/lang/String;
 	public final fun getENDORSEMENT-_jS_QyA ()Ljava/lang/String;
 	public final fun getPOLICY-_jS_QyA ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/ReplicaVerification {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getModels ()Ljava/util/List;
+	public final fun getPinnedModel ()Ljava/lang/String;
+	public final fun getReference ()Ljava/lang/String;
+	public final fun getVerification ()Lsh/tinfoil/Verification;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/RouterHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
@@ -344,6 +405,21 @@ public final class sh/tinfoil/openai/EnclaveOpenAIClient$Companion {
 
 public final class sh/tinfoil/openai/ErrorsKt {
 	public static final fun getTinfoilException (Ljava/lang/Throwable;)Lsh/tinfoil/TinfoilException;
+}
+
+public final class sh/tinfoil/openai/GatewayOpenAIClient : java/lang/AutoCloseable {
+	public static final field Companion Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;
+	public synthetic fun <init> (Lsh/tinfoil/GatewayHttpClient;Lcom/openai/client/OpenAIClient;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun getHttpClient ()Lsh/tinfoil/GatewayHttpClient;
+	public final fun getOpenAI ()Lcom/openai/client/OpenAIClient;
+	public final fun getOpenAIAsync ()Lcom/openai/client/OpenAIClientAsync;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/openai/GatewayOpenAIClient$Companion {
+	public final fun create (Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class sh/tinfoil/openai/RouterOpenAIClient : java/lang/AutoCloseable {

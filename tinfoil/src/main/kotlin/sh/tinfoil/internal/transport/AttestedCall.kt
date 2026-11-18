@@ -11,13 +11,30 @@ import okhttp3.Callback
 import okhttp3.Request
 import okhttp3.Response
 import okio.Timeout
-import sh.tinfoil.internal.EnclaveConnection
+import kotlinx.coroutines.CoroutineScope
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration.Companion.nanoseconds
+
+/** What sends the requests of [AttestedCall]s: a client's attested path to an enclave. */
+internal interface AttestedSender {
+    /**
+     * Runs calls that are not awaited. It is never cancelled, so that every
+     * such call gets an answer: a sender that is closed fails the call.
+     */
+    val scope: CoroutineScope
+
+    /**
+     * Sends [request] under a verification that is valid now, and returns
+     * the response with its body still to be read. [onCall] is handed each
+     * call that goes out for it.
+     */
+    @Throws(IOException::class)
+    suspend fun send(request: Request, onCall: (Call) -> Unit = {}): Response
+}
 
 /**
  * A request to an attested enclave, as a [Call] for code that is written
@@ -30,7 +47,7 @@ import kotlin.time.Duration.Companion.nanoseconds
  * is an [IOException].
  */
 internal class AttestedCall(
-    private val connection: EnclaveConnection,
+    private val connection: AttestedSender,
     private val request: Request,
 ) : Call {
     private val executed = AtomicBoolean()
