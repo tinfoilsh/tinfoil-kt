@@ -4,7 +4,6 @@ package sh.tinfoil.internal
 internal object SdkIdentity {
     const val NAME: String = "tinfoil-kt"
 
-    // There is no release yet; the release tooling will derive this from the
-    // published version.
-    const val VERSION: String = "0.0.0-dev"
+    /** The Gradle project's version, written into the build by its `generateSdkVersion` task. */
+    const val VERSION: String = GeneratedSdkVersion.VERSION
 }

@@ -4,6 +4,147 @@ A Kotlin client for verifiably private AI inference with [Tinfoil](https://tinfo
 
 This SDK is under development and is not yet ready for use.
 
+## Usage
+
+`Client` is an OpenAI client for inference on Tinfoil's recommended route.
+Creating one verifies the service that it will talk to; from then on, every
+request that the OpenAI SDK makes, the API key included, goes to that
+verified service and nowhere else.
+
+```kotlin
+import com.openai.models.chat.completions.ChatCompletionCreateParams
+import kotlinx.coroutines.future.await
+import sh.tinfoil.Client
+
+val client = Client.create(apiKey = apiKey)
+
+val params = ChatCompletionCreateParams.builder()
+    .model("gpt-oss-120b")
+    .addUserMessage("Hello!")
+    .build()
+val completion = client.openAIAsync.chat().completions().create(params).await()
+println(completion.choices().first().message().content().orElse(""))
+
+client.close()
+```
+
+`client.openAI` is the client of the official
+[OpenAI Java SDK](https://github.com/openai/openai-java), with blocking
+calls, and `client.openAIAsync` is the same client with calls that return a
+`CompletableFuture`, which a coroutine awaits with `await()`. Use them as
+that SDK documents. The API key is passed in: nothing is read from the
+environment or from system properties.
+
+A streamed response becomes a `Flow` with `asFlow()`. Events arrive as the
+service sends them, and cancelling the collection cancels the request:
+
+```kotlin
+import sh.tinfoil.openai.asFlow
+
+client.openAIAsync.chat().completions().createStreaming(params).asFlow().collect { chunk ->
+    chunk.choices().forEach { choice -> choice.delta().content().ifPresent(::print) }
+}
+```
+
+Other options of the OpenAI client are set on its own options builder:
+
+```kotlin
+val client = Client.create(apiKey = apiKey) {
+    maxRetries(1)
+    timeout(Duration.ofMinutes(2))
+}
+```
+
+An HTTP client or a base URL that is set there is replaced: the OpenAI
+client reaches the network only through this SDK. The one way around that is
+the OpenAI SDK's `withOptions`, on the client or on one of its services: a
+client that it returns with another HTTP client sends its requests, and the
+API key, without any of this SDK's protection.
+
+### Choosing the route
+
+`Client` says nothing about how requests reach the models, so that the route
+can change. Two clients do, and take the options of the HTTP clients that
+they send through.
+
+`RouterOpenAIClient` sends to one of Tinfoil's routers, which it chooses and
+verifies when it is created:
+
+```kotlin
+import sh.tinfoil.TinfoilEvent
+import sh.tinfoil.TransportMode
+import sh.tinfoil.openai.RouterOpenAIClient
+
+val client = RouterOpenAIClient.create(
+    transportMode = TransportMode.Ehbp,
+    baseUrl = "https://proxy.example.com/v1/",
+    userCacheSecret = cacheSecret,
+    apiKey = apiKey,
+    tinfoilEvents = setOf(TinfoilEvent.WebSearch),
+)
+```
+
+`EnclaveOpenAIClient` sends to an enclave that you name, verified against
+what you pin it to:
+
+```kotlin
+import sh.tinfoil.Pin
+import sh.tinfoil.openai.EnclaveOpenAIClient
+
+val client = EnclaveOpenAIClient.create(
+    enclave = "inference.tinfoil.sh",
+    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+    apiKey = apiKey,
+)
+println(client.httpClient.current?.codeDigest)
+```
+
+Both send to `https://<enclave>/v1/`, or to `baseUrl` as it is given. Their
+`httpClient` is the attested HTTP client itself, for requests that the
+OpenAI SDK has no call for.
+
+### Errors
+
+Creating a client throws this SDK's exceptions, which are `IOException`s:
+an `AttestationException` when the enclave is not to be trusted, a
+`NetworkException` when it cannot be reached to be verified, and a
+`ConfigurationException` for an invalid argument.
+
+The OpenAI SDK throws unchecked exceptions, all of them `OpenAIException`s.
+An error status from the API is one of its subclasses, such as
+`UnauthorizedException`. A failure of this SDK during a request, such as an
+enclave that no longer verifies, is the cause of the exception that the
+OpenAI SDK's call throws, and `tinfoilException` finds it:
+
+```kotlin
+import com.openai.errors.OpenAIException
+import com.openai.errors.OpenAIServiceException
+import sh.tinfoil.AttestationException
+import sh.tinfoil.openai.tinfoilException
+
+try {
+    client.openAI.chat().completions().create(params)
+} catch (e: OpenAIException) {
+    val failure = e.tinfoilException
+    when {
+        failure is AttestationException -> println("The enclave is not to be trusted: ${failure.detail}")
+        failure != null -> println("The request could not be sent: ${failure.detail}")
+        e is OpenAIServiceException -> println("The API answered with ${e.statusCode()}")
+        else -> println("The request failed: ${e.message}")
+    }
+}
+```
+
+The OpenAI SDK sends a request again after a failure of the network and
+after some error statuses, twice by default (`maxRetries`). It does not send
+one again after an `AttestationException` or a `ConfigurationException`.
+
+### App size
+
+The OpenAI SDK is large: its classes add tens of megabytes to an app that is
+not shrunk. Build release variants with R8 (`isMinifyEnabled = true`). The
+OpenAI SDK and this SDK each carry the keep rules that they need.
+
 ## Transport modes
 
 A client protects its requests with the keys that the enclave's attestation
@@ -107,6 +248,19 @@ network, so they are skipped unless they are asked for:
 ./gradlew :tinfoil:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true
 ```
+
+The live tests that complete a chat also need an API key. It is passed on
+the command line, from the environment, and those tests are skipped without
+it. Never write it into a file:
+
+```bash
+./gradlew :tinfoil:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true \
+  -Pandroid.testInstrumentationRunnerArguments.tinfoilApiKey="$TINFOIL_API_KEY"
+```
+
+The SDK's version is `version` in `gradle.properties`, and `Tinfoil.VERSION`
+is generated from it.
 
 The public API is pinned in `tinfoil/api/tinfoil.api`, and `apiCheck` fails
 when the code and that file disagree. After a deliberate change to the API,

@@ -6,6 +6,8 @@ Guidance for AI agents working in this repository.
 
 - `tinfoil/`: the SDK, an Android library in the package `sh.tinfoil`.
   Everything under `sh.tinfoil.internal` is implementation detail.
+  `sh.tinfoil.openai` holds the OpenAI clients that name their route;
+  `sh.tinfoil.Client` is the one that does not.
 - `tinfoil-go.properties`: the tinfoil-go commit that the attestation verifier
   library is built from.
 - `ehbp.properties`: the encrypted-http-body-protocol commit that the EHBP
@@ -64,8 +66,25 @@ README.
   it into the text of a body that a strict JSON scanner accepts as one
   object; every other byte is the caller's. A body that the scanner does not
   accept is sent unchanged.
+- The OpenAI SDK reaches the network only through this SDK's attested
+  clients. Depend on `openai-java-core` alone: the artifacts `openai-java`
+  and `openai-java-client-okhttp` bring an HTTP client of their own and must
+  stay off the classpath. The OpenAI clients set their HTTP client and base
+  URL after the caller's options, and read nothing from the environment or
+  from system properties; `OpenAIHttpAdapter` opens no connection.
+- A failure that must not be retried, an `AttestationException` or a
+  `ConfigurationException`, leaves the adapter wrapped in a plain
+  `OpenAIException`, never as an `IOException` or an `OpenAIIoException`:
+  the OpenAI SDK sends a request again after those.
+- The OpenAI SDK's client is exposed as it is. Do not wrap its services or
+  re-declare its calls.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
 - Comments and test names describe this code; they do not cite other SDKs.
 - Live tests take credentials from the environment and skip without them.
-  Never write a credential into a file.
+  An instrumented test receives the API key as the instrumentation argument
+  `tinfoilApiKey`, passed on the command line as
+  `-Pandroid.testInstrumentationRunnerArguments.tinfoilApiKey="$TINFOIL_API_KEY"`.
+  Never write a credential into a file, and never log one.
+- The examples in the README are compiled, in `DocumentationExamplesTest`.
+  Change both together.
