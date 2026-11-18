@@ -5,6 +5,7 @@ import com.openai.errors.OpenAIServiceException
 import com.openai.models.chat.completions.ChatCompletionCreateParams
 import kotlinx.coroutines.future.await
 import sh.tinfoil.openai.EnclaveOpenAIClient
+import sh.tinfoil.openai.GatewayOpenAIClient
 import sh.tinfoil.openai.RouterOpenAIClient
 import sh.tinfoil.openai.asFlow
 import sh.tinfoil.openai.tinfoilException
@@ -64,6 +65,17 @@ class DocumentationExamplesTest {
             apiKey = apiKey,
         )
         println(client.httpClient.current?.codeDigest)
+    }
+
+    @OptIn(ExperimentalTinfoilApi::class)
+    private suspend fun gateway(apiKey: String): GatewayOpenAIClient {
+        val client = GatewayOpenAIClient.create(
+            modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash")),
+            pinnedModelsOnly = true,
+            apiKey = apiKey,
+        )
+        println(client.httpClient.models())
+        return client
     }
 
     private fun errors(client: Client, params: ChatCompletionCreateParams) {

@@ -39,6 +39,7 @@ import java.io.IOException
 import java.time.Instant
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
+import kotlin.time.TimeSource
 
 /**
  * One enclave's verification state and the requests that depend on it.
@@ -451,6 +452,8 @@ internal class Internals(
     val clock: () -> Instant = Instant::now,
     val retryDelay: Duration = Attestor.RETRY_DELAY,
     val discovery: RouterDiscovery.Settings = RouterDiscovery.Settings(),
+    /** What measures the time between fetches of a gateway's catalog. */
+    val timeSource: TimeSource = TimeSource.Monotonic,
 )
 
 private fun <T : Throwable> T.alsoSuppressing(earlier: Throwable?): T = apply {
