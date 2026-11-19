@@ -233,9 +233,9 @@ internal class EhbpTransport(
         // One or the other, never a choice: cleartext only for a base URL
         // on a loopback host, and then nothing else.
         .connectionSpecs(listOf(if (cleartext) ConnectionSpec.CLEARTEXT else ConnectionSpec.MODERN_TLS))
-        // A response is handed to the caller as it is: a redirect or an
-        // authentication challenge is never acted on. The sealing client
-        // turns redirects off as well.
+        // A redirect or an authentication challenge is never acted on.
+        // The sealing client turns redirects off as well, and fails a
+        // redirect that answers a sealed request.
         .followRedirects(false)
         .followSslRedirects(false)
         .authenticator(Authenticator.NONE)
@@ -441,14 +441,12 @@ internal class EhbpTransport(
                 outgoing.body?.let { body -> if (body.contentLength() == 0L) DeclaredEmpty(body).writeTo(Buffer()) }
                 var returned = sealing.roundTrip(outgoing)
                 response = returned
-                if (sealed) {
-                    refuseUnusable(returned)
-                    // The sealing client has opened this response if and
-                    // only if it carries the header, whatever its status.
-                    if (returned.header(ResponseNonceHeader) != null) {
-                        returned = returned.proven()
-                        response = returned
-                    }
+                // The sealing client has opened the response to a sealed
+                // request if and only if it carries the header, whatever
+                // its status.
+                if (sealed && returned.header(ResponseNonceHeader) != null) {
+                    returned = returned.proven()
+                    response = returned
                 }
                 // The sealing client is this request's alone, so its token
                 // is this request's. It has none for a response that is not
@@ -479,26 +477,6 @@ internal class EhbpTransport(
                 return chain.proceed(outgoing)
             }
             return chain.proceed(outgoing.newBuilder().method(outgoing.method, DeclaredEmpty(body)).build())
-        }
-
-        /**
-         * Refuses the answers to a sealed request that the sealing client
-         * would hand on although nothing authenticates them: a redirect,
-         * whose `Location` is not sealed; an informational status without
-         * the header that a sealed response carries; and a status that
-         * reports success and cannot have a body.
-         */
-        private fun refuseUnusable(response: Response) {
-            val code = response.code
-            if (code in REDIRECTS) {
-                throw ProtocolException("UNEXPECTED_REDIRECT: status $code in response to a sealed request")
-            }
-            if (code < SUCCESS && response.header(ResponseNonceHeader) == null) {
-                throw ProtocolException("MISSING_RESPONSE_NONCE: status $code in response to a sealed request")
-            }
-            if (code == NO_CONTENT || code == RESET_CONTENT) {
-                throw ProtocolException("FRAMING_TRUNCATED: status $code cannot carry a sealed body")
-            }
         }
 
         private fun adopt(call: Call) {
@@ -554,10 +532,6 @@ internal class EhbpTransport(
 
     private companion object {
         const val CANCELED = "Canceled"
-        const val SUCCESS = 200
-        const val NO_CONTENT = 204
-        const val RESET_CONTENT = 205
-        val REDIRECTS = 300..399
 
         // How long a response may go without sending a byte. Generous,
         // because an inference request can work for minutes before it

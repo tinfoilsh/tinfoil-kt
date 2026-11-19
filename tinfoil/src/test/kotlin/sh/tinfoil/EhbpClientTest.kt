@@ -503,6 +503,20 @@ class EhbpClientTest {
     }
 
     @Test
+    fun anInformationalAnswerToASealedRequestFailsClosed() = test {
+        val client = proxied()
+        // It is not an error, so it is not handed on as one that a proxy
+        // may have answered, and nothing of it is sealed.
+        atProxy.answer = { MockResponse().setStatus("HTTP/1.1 101 Switching Protocols") }
+        val bare = assertFailsWith<IOException> { client.execute(client.post("""{"q":"$MARKER"}""")) }
+        assertTrue(bare.message!!.contains("MISSING_RESPONSE_NONCE"), bare.message)
+
+        atProxy.answer = { MockResponse().setStatus("HTTP/1.1 101 Switching Protocols").setHeader(RESPONSE_NONCE_HEADER, "5c".repeat(32)) }
+        val marked = assertFailsWith<IOException> { client.execute(client.post("""{"q":"$MARKER"}""")).text() }
+        assertTrue(marked.message!!.contains("FRAMING_TRUNCATED"), marked.message)
+    }
+
+    @Test
     fun aNonceThatIsNotOneFailsClosed() = test {
         val client = proxied()
         val nonces = listOf("", "abcd", "zz".repeat(32), "ab".repeat(33))
@@ -661,7 +675,8 @@ class EhbpClientTest {
         }
         // A redirect that the enclave sealed is refused as well: its target is not sealed.
         atProxy.answer = { it.reply("moved", code = 307).setHeader("Location", "/elsewhere") }
-        assertFailsWith<IOException> { client.execute(client.post("""{"q":"$MARKER"}""")) }
+        val sealed = assertFailsWith<IOException> { client.execute(client.post("""{"q":"$MARKER"}""")) }
+        assertTrue(sealed.message!!.contains("UNEXPECTED_REDIRECT"), sealed.message)
         assertEquals(6, proxy.requestCount, "no redirect was followed")
     }
 
