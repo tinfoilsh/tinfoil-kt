@@ -4,11 +4,28 @@ Guidance for AI agents working in this repository.
 
 ## Layout
 
-- `tinfoil/`: the SDK, an Android library in the package `sh.tinfoil`.
-  Everything under `sh.tinfoil.internal` is implementation detail.
-  `sh.tinfoil.openai` holds the OpenAI clients that name their route;
-  `sh.tinfoil.Client` is the one that does not. `sh.tinfoil.internal.gateway`
-  is the experimental gateway route.
+The SDK is two Android library modules, which become two artifacts with one
+version. A class's package names its artifact.
+
+- `tinfoil/`: the artifact `tinfoil`, in the package `sh.tinfoil`: the
+  bundled verifier library, the attested HTTP clients, their options and
+  exceptions. Everything under `sh.tinfoil.internal` is implementation
+  detail; `sh.tinfoil.internal.gateway` is the experimental gateway route.
+  It does not depend on the OpenAI SDK, on Jackson or on `kotlin-reflect`,
+  directly or through another dependency, and its build fails if it does
+  (`checkRuntimeDependencies`): apps use it alone to stay small.
+- `tinfoil-openai/`: the artifact `tinfoil-openai`, in the package
+  `sh.tinfoil.openai` and nowhere else: the OpenAI clients that name their
+  route, `Client`, which does not, their options and `TinfoilEvent`. Its
+  implementation detail is under `sh.tinfoil.openai.internal`. It depends on
+  `tinfoil` and on the OpenAI SDK, and has no native library of its own.
+- `tinfoil/src/testFixtures`: the fakes and test servers that the tests of
+  both modules share, in `sh.tinfoil.testing`. They are sources of `tinfoil`
+  so that they can use its internals. What is public in them is what the
+  tests of `tinfoil-openai` use. They are not part of an artifact and are
+  never published.
+- `build-logic/`: the convention plugin `tinfoil.android-library`, which
+  holds what the two modules' builds have in common.
 - `tinfoil-go.properties`: the tinfoil-go commit that the attestation verifier
   library is built from.
 - `ehbp.properties`: the encrypted-http-body-protocol commit that the EHBP
@@ -31,18 +48,22 @@ to what is verified belongs in tinfoil-go.
 client must be next to this repository or named by `EHBP_KOTLIN_DIR`; see the
 README.
 
-- `./gradlew :tinfoil:testDebugUnitTest` runs the unit tests on the JVM. The
+A task that is named without a module runs in both modules; `:tinfoil:` or
+`:tinfoil-openai:` before it runs it in one.
+
+- `./gradlew testDebugUnitTest` runs the unit tests on the JVM. The
   verifier library cannot load there, so these tests use fakes for it.
-- `./gradlew :tinfoil:connectedDebugAndroidTest` runs the tests that reach the
+- `./gradlew connectedDebugAndroidTest` runs the tests that reach the
   verifier library, on a running emulator or a device.
 - Instrumented tests that reach production enclaves are skipped unless the
   instrumentation argument `tinfoilIntegration` is `true`:
   `-Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true`.
   Run them after a change to verification, the TLS pin or the transports.
-- `./gradlew :tinfoil:lintRelease` must pass; warnings are errors.
-- `./gradlew :tinfoil:apiCheck` compares the public API with
-  `tinfoil/api/tinfoil.api`. Change that file only with
-  `./gradlew :tinfoil:apiDump`, and only for a deliberate API change.
+- `./gradlew lintRelease` must pass; warnings are errors.
+- `./gradlew apiCheck` compares the public API of each module with its
+  dump, `tinfoil/api/tinfoil.api` and
+  `tinfoil-openai/api/tinfoil-openai.api`. Change those files only with
+  `./gradlew apiDump`, and only for a deliberate API change.
 
 ## Rules
 
@@ -57,6 +78,22 @@ README.
   Kotlin's `internal` is public to Java; a public class has no ordinary
   member that takes one. Classes under `sh.tinfoil.internal` stay visible to
   Java as such, and are not an API.
+- `tinfoil-openai` uses `tinfoil` through its public API and through what is
+  marked `@InternalTinfoilApi`, and nothing else: Kotlin's `internal` ends at
+  the module. Everything that is marked is in or named by
+  `sh.tinfoil.internal.CrossArtifact`. Keep that set as small as it is. It
+  is left out of the API dumps (`nonPublicMarkers` in the root build file)
+  and has no compatibility promise, which is sound only because the two
+  artifacts are released together and `tinfoil-openai` depends on exactly
+  its own version of `tinfoil`; keep that so when publishing is set up. A
+  marked function is `@JvmSynthetic`.
+- Nothing that is marked `@InternalTinfoilApi` may take or reveal a verifier,
+  a trust anchor, a clock or a proxy: an app that opts in must gain nothing
+  that weakens verification. The seams for those stay `internal` to
+  `tinfoil`. The tests of `tinfoil-openai` reach them only through the test
+  fixtures, which wrap them in public functions, such as
+  `TestEnclave.connections()`; the OpenAI clients' own seam for tests takes
+  a function that returns an attested HTTP client, and nothing less.
 - With `TransportMode.EHBP`, a request body is sealed to the HPKE key of the
   verification that the request was sent under, and to no other key: the key
   comes only from the verification, never from the network. The sealing
@@ -92,7 +129,7 @@ README.
   does.
 - Every export of the gateway route carries `@ExperimentalTinfoilApi`, its
   KDoc says that it may change or be removed, and `ExperimentalApiTest`
-  lists it. Experimental classes stay in `tinfoil/api/tinfoil.api`.
+  of its module lists it. Experimental classes stay in the API dumps.
 - The OpenAI SDK reaches the network only through this SDK's attested
   clients. Depend on `openai-java-core` alone: the artifacts `openai-java`
   and `openai-java-client-okhttp` bring an HTTP client of their own and must
@@ -112,19 +149,24 @@ README.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
 - A `create` function takes what it requires as parameters and everything
-  else as a property of its options type, in `Options.kt`, set in the one
-  block that it takes. A new option is a new property with a default, never
-  a new parameter or an overload. The block runs once, on the caller's
-  thread, and a client is made only from the copies that are taken when it
-  returns (`sh.tinfoil.internal.Settings.kt`). The options types are sealed
-  and marked `@TinfoilOptionsDsl`; only `Options.kt` makes one.
+  else as a property of its options type, in its module's `Options.kt`, set
+  in the one block that it takes. A new option is a new property with a
+  default, never a new parameter or an overload. The block runs once, on the
+  caller's thread, and a client is made only from the copies that are taken
+  when it returns (`sh.tinfoil.internal.Settings.kt`). The options types are
+  marked `@TinfoilOptionsDsl`, and only the two `Options.kt` files make one.
+  An option of a route is declared once, in `tinfoil`: the options types of
+  the OpenAI clients extend the route's, which is why those are abstract
+  classes whose constructors are marked `@InternalTinfoilApi`, and not
+  sealed. Do not copy an option into `tinfoil-openai`.
 - The suspending functions and `close()` of every client are safe to call
   from Android's main thread, where the platform refuses network work, the
   closing of a TLS socket included. Nothing that they do on the caller's
   thread may reach a socket, read a request body, or call into the verifier
   library, whose first use loads it: such work runs through
-  `sh.tinfoil.internal.Background`. `MainThreadSafetyTest` runs the clients
-  from the main thread of a device; `CallerThreadTest` checks the same on
+  `sh.tinfoil.internal.Background`. `MainThreadSafetyTest` and
+  `OpenAIMainThreadSafetyTest` run the clients from the main thread of a
+  device; `CallerThreadTest` and `OpenAICallerThreadTest` check the same on
   the JVM.
 - The verifier library's test-only entry points, whose names contain
   `DangerousTestOnly`, replace the trust anchors and the clock. Only the
@@ -132,7 +174,9 @@ README.
   under `src/main` never names them, and a library that has them is never
   packaged or published. Do not weaken or bypass the build's checks for
   this (`checkVerifierLibraryEntryPoints` and the refusal of release tasks
-  under `TINFOIL_CONFORMANCE=1`).
+  under `TINFOIL_CONFORMANCE=1`, which the convention plugin applies to both
+  modules: `tinfoil-openai` would otherwise package the library as a
+  dependency).
 - A conformance vector that fails is a finding to investigate. Do not add it
   to the known divergences in `ConformanceVectorTest`, and do not change the
   decoding or the error classification to make it pass, without a decision
@@ -143,5 +187,5 @@ README.
   `tinfoilApiKey`, passed on the command line as
   `-Pandroid.testInstrumentationRunnerArguments.tinfoilApiKey="$TINFOIL_API_KEY"`.
   Never write a credential into a file, and never log one.
-- The examples in the README are compiled, in `DocumentationExamplesTest`.
-  Change both together.
+- The examples in the README are compiled, in the `DocumentationExamplesTest`
+  of the module whose API they use. Change both together.

@@ -1,80 +1,29 @@
 package sh.tinfoil
 
-import com.openai.errors.OpenAIException
-import com.openai.errors.OpenAIServiceException
-import com.openai.models.chat.completions.ChatCompletionCreateParams
-import kotlinx.coroutines.future.await
-import sh.tinfoil.openai.EnclaveOpenAIClient
-import sh.tinfoil.openai.GatewayOpenAIClient
-import sh.tinfoil.openai.RouterOpenAIClient
-import sh.tinfoil.openai.asFlow
-import java.time.Duration
+import okhttp3.Request
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * The README's examples, kept here so that they compile against the API as
- * it is. They are not run: each would verify a production enclave. Change
- * the README and this file together.
+ * The README's examples of this module, kept here so that they compile
+ * against the API as it is. They are not run: each would verify a production
+ * enclave. Change the README and this file together.
  */
 @Suppress("unused")
 class DocumentationExamplesTest {
-    private suspend fun chatCompletion(apiKey: String) {
-        val client = Client.create(apiKey)
-
-        val params = ChatCompletionCreateParams.builder()
-            .model("gpt-oss-120b")
-            .addUserMessage("Hello!")
-            .build()
-        val completion = client.openAIAsync.chat().completions().create(params).await()
-        println(completion.choices().first().message().content().orElse(""))
-
-        client.close()
-    }
-
-    private suspend fun streaming(client: Client, params: ChatCompletionCreateParams) {
-        client.openAIAsync.chat().completions().createStreaming(params).asFlow().collect { chunk ->
-            chunk.choices().forEach { choice -> choice.delta().content().ifPresent(::print) }
-        }
-    }
-
-    private suspend fun options(apiKey: String): Client {
-        val client = Client.create(apiKey) {
-            openAI {
-                maxRetries(1)
-                timeout(Duration.ofMinutes(2))
-            }
-        }
-        return client
-    }
-
-    private suspend fun router(apiKey: String, cacheSecret: String): RouterOpenAIClient {
-        val client = RouterOpenAIClient.create(apiKey) {
-            transportMode = TransportMode.EHBP
-            baseUrl = "https://proxy.example.com/v1/"
-            userCacheSecret = cacheSecret
-            tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
-        }
-        return client
-    }
-
-    private suspend fun enclave(apiKey: String) {
-        val client = EnclaveOpenAIClient.create(
+    private suspend fun httpClient(apiKey: String) {
+        val client = EnclaveHttpClient.create(
             enclave = "inference.tinfoil.sh",
             pin = Pin(repo = "tinfoilsh/confidential-model-router"),
-            apiKey = apiKey,
         )
-        println(client.httpClient.current?.codeDigest)
-    }
 
-    @OptIn(ExperimentalTinfoilApi::class)
-    private suspend fun gateway(apiKey: String): GatewayOpenAIClient {
-        val client = GatewayOpenAIClient.create(apiKey) {
-            modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
-            pinnedModelsOnly = true
-        }
-        println(client.httpClient.models())
-        return client
+        val request = Request.Builder()
+            .url(client.baseUrl.resolve("v1/models")!!)
+            .header("Authorization", "Bearer $apiKey")
+            .build()
+        client.execute(request).use { response -> println(response.body!!.string()) }
+
+        client.close()
     }
 
     private suspend fun sealedBodies(): EnclaveHttpClient {
@@ -88,22 +37,8 @@ class DocumentationExamplesTest {
         return client
     }
 
-    private fun errors(client: Client, params: ChatCompletionCreateParams) {
-        try {
-            client.openAI.chat().completions().create(params)
-        } catch (e: OpenAIException) {
-            val failure = e.tinfoilException
-            when {
-                failure is AttestationException -> println("The enclave is not to be trusted: ${failure.detail}")
-                failure != null -> println("The request could not be sent: ${failure.detail}")
-                e is OpenAIServiceException -> println("The API answered with ${e.statusCode()}")
-                else -> println("The request failed: ${e.message}")
-            }
-        }
-    }
-
     @Test
-    fun theExamplesNameTheEventThatTheyAskFor() {
-        assertEquals("web_search", TinfoilEvent.WEB_SEARCH.value)
+    fun theExamplesNameTheTransportModeThatTheyAskFor() {
+        assertEquals("EHBP", TransportMode.EHBP.name)
     }
 }

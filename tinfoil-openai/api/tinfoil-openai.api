@@ -1,0 +1,88 @@
+public final class sh/tinfoil/openai/Client : java/lang/AutoCloseable {
+	public static final field Companion Lsh/tinfoil/openai/Client$Companion;
+	public synthetic fun <init> (Lsh/tinfoil/openai/RouterOpenAIClient;Lokhttp3/HttpUrl;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public final fun getHttpClient ()Lokhttp3/Call$Factory;
+	public final fun getOpenAI ()Lcom/openai/client/OpenAIClient;
+	public final fun getOpenAIAsync ()Lcom/openai/client/OpenAIClientAsync;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/openai/Client$Companion {
+	public final fun create (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/Client$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class sh/tinfoil/openai/EnclaveOpenAIClient : java/lang/AutoCloseable {
+	public static final field Companion Lsh/tinfoil/openai/EnclaveOpenAIClient$Companion;
+	public synthetic fun <init> (Lsh/tinfoil/EnclaveHttpClient;Lcom/openai/client/OpenAIClient;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun getHttpClient ()Lsh/tinfoil/EnclaveHttpClient;
+	public final fun getOpenAI ()Lcom/openai/client/OpenAIClient;
+	public final fun getOpenAIAsync ()Lcom/openai/client/OpenAIClientAsync;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/openai/EnclaveOpenAIClient$Companion {
+	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/EnclaveOpenAIClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract class sh/tinfoil/openai/EnclaveOpenAIOptions : sh/tinfoil/EnclaveOptions, sh/tinfoil/openai/OpenAIOptions {
+}
+
+public final class sh/tinfoil/openai/GatewayOpenAIClient : java/lang/AutoCloseable {
+	public static final field Companion Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;
+	public synthetic fun <init> (Lsh/tinfoil/GatewayHttpClient;Lcom/openai/client/OpenAIClient;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun getHttpClient ()Lsh/tinfoil/GatewayHttpClient;
+	public final fun getOpenAI ()Lcom/openai/client/OpenAIClient;
+	public final fun getOpenAIAsync ()Lcom/openai/client/OpenAIClientAsync;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/openai/GatewayOpenAIClient$Companion {
+	public final fun create (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract class sh/tinfoil/openai/GatewayOpenAIOptions : sh/tinfoil/GatewayOptions, sh/tinfoil/openai/OpenAIOptions {
+}
+
+public abstract interface class sh/tinfoil/openai/OpenAIOptions {
+	public abstract fun getTinfoilEvents ()Ljava/util/Set;
+	public abstract fun openAI (Lkotlin/jvm/functions/Function1;)V
+	public abstract fun setTinfoilEvents (Ljava/util/Set;)V
+}
+
+public final class sh/tinfoil/openai/OpenAIStreams {
+	public static final fun asFlow (Lcom/openai/core/http/AsyncStreamResponse;)Lkotlinx/coroutines/flow/Flow;
+}
+
+public final class sh/tinfoil/openai/RouterOpenAIClient : java/lang/AutoCloseable {
+	public static final field Companion Lsh/tinfoil/openai/RouterOpenAIClient$Companion;
+	public synthetic fun <init> (Lsh/tinfoil/RouterHttpClient;Lcom/openai/client/OpenAIClient;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun getHttpClient ()Lsh/tinfoil/RouterHttpClient;
+	public final fun getOpenAI ()Lcom/openai/client/OpenAIClient;
+	public final fun getOpenAIAsync ()Lcom/openai/client/OpenAIClientAsync;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/openai/RouterOpenAIClient$Companion {
+	public final fun create (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/RouterOpenAIClient$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract class sh/tinfoil/openai/RouterOpenAIOptions : sh/tinfoil/RouterOptions, sh/tinfoil/openai/OpenAIOptions {
+}
+
+public final class sh/tinfoil/openai/TinfoilEvent : java/lang/Enum {
+	public static final field WEB_SEARCH Lsh/tinfoil/openai/TinfoilEvent;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getValue ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/openai/TinfoilEvent;
+	public static fun values ()[Lsh/tinfoil/openai/TinfoilEvent;
+}
+

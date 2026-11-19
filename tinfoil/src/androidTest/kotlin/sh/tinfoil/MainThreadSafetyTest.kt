@@ -10,7 +10,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.Callback
@@ -34,14 +33,13 @@ import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.LeafKeyPin
 import sh.tinfoil.internal.transport.TlsTrust
 import sh.tinfoil.internal.verification.AttestationVerifier
-import sh.tinfoil.openai.RouterOpenAIClient
+import sh.tinfoil.testing.MainThread
 import java.io.IOException
 import java.net.InetAddress
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -51,7 +49,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Uses the clients from Android's main thread, as an app does that creates
+ * Uses the HTTP clients from Android's main thread, as an app does that creates
  * one in a coroutine on `Dispatchers.Main` and closes it in a lifecycle
  * callback. The platform refuses network work on that thread, the closing
  * of a TLS socket included, so nothing that a client does there may reach a
@@ -128,35 +126,13 @@ class MainThreadSafetyTest {
         assumeTrue("live tests run only with the instrumentation argument tinfoilIntegration=true", enabled == "true")
     }
 
-    /** Runs [block] on the main thread, and throws here what it throws there. */
-    private fun onMain(block: () -> Unit) {
-        val failure = AtomicReference<Throwable>()
-        instrumentation.runOnMainSync {
-            check(Looper.getMainLooper().isCurrentThread)
-            try {
-                block()
-            } catch (e: Throwable) {
-                failure.set(e)
-            }
-        }
-        failure.get()?.let { throw it }
-    }
+    private val main = MainThread(instrumentation)
 
-    /** Runs [block] in a coroutine on `Dispatchers.Main`, as an app's own coroutines run. */
-    private fun <T> fromMain(block: suspend () -> T): T = runBlocking {
-        withTimeout(180.seconds) {
-            withContext(Dispatchers.Main) {
-                check(Looper.getMainLooper().isCurrentThread)
-                block()
-            }
-        }
-    }
+    private fun onMain(block: () -> Unit) = main.onMain(block)
 
-    /** Sends [request] from the main dispatcher, and reads the answer where an app may: off the main thread. */
-    private fun answerTo(send: suspend (Request) -> Response, request: Request): Pair<Int, String> = fromMain {
-        val response = send(request)
-        withContext(Dispatchers.IO) { response.use { it.code to it.body!!.string() } }
-    }
+    private fun <T> fromMain(block: suspend () -> T): T = main.fromMain(block)
+
+    private fun answerTo(send: suspend (Request) -> Response, request: Request): Pair<Int, String> = main.answerTo(send, request)
 
     @Test
     fun thePlatformRefusesNetworkWorkOnTheMainThread() {
@@ -233,20 +209,6 @@ class MainThreadSafetyTest {
         val models = Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build()
         assertEquals(200, answerTo(client::execute, models).first)
         onMain { client.close() }
-    }
-
-    @Test
-    fun theOpenAIClientsAreCreatedAndClosedOnTheMainThread() {
-        requireLive()
-        val client = fromMain { Client.create("none") }
-        val listed = runBlocking { withContext(Dispatchers.IO) { client.openAI.models().list().data().size } }
-        assertTrue(listed > 0)
-        onMain { client.close() }
-
-        val sealed = fromMain { RouterOpenAIClient.create("none") { transportMode = TransportMode.EHBP } }
-        val models = Request.Builder().url(sealed.httpClient.baseUrl.resolve("v1/models")!!).build()
-        assertEquals(200, answerTo(sealed.httpClient::execute, models).first)
-        onMain { sealed.close() }
     }
 
     @Test
