@@ -230,8 +230,10 @@ public final class sh/tinfoil/Measurement {
 public final class sh/tinfoil/ModelPin {
 	public fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;)V
 	public synthetic fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
 	public final fun getRepo ()Ljava/lang/String;
 	public final fun getVerifier ()Lsh/tinfoil/Verifier;
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 

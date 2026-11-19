@@ -1,5 +1,6 @@
 package sh.tinfoil
 
+import sh.tinfoil.testing.FakeVerifier
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -71,6 +72,22 @@ class ValueTypesTest {
         assertNotEquals(one, EmbeddedReferences(config, byteArrayOf(1), null))
         assertNotEquals(one, EmbeddedReferences(null, byteArrayOf(1), byteArrayOf(2)))
         assertEquals(EmbeddedReferences(), EmbeddedReferences())
+    }
+
+    @OptIn(ExperimentalTinfoilApi::class)
+    @Test
+    fun modelPinsCompareByRepositoryAndByTheVerifierItself() {
+        val verifier = Verifier.appraisingWith(FakeVerifier())
+        val another = Verifier.appraisingWith(FakeVerifier())
+        assertEquals(ModelPin("tinfoilsh/m"), ModelPin("tinfoilsh/m"))
+        assertEquals(ModelPin("tinfoilsh/m").hashCode(), ModelPin("tinfoilsh/m").hashCode())
+        assertEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m", verifier))
+        assertEquals(ModelPin("tinfoilsh/m", verifier).hashCode(), ModelPin("tinfoilsh/m", verifier).hashCode())
+        assertNotEquals(ModelPin("tinfoilsh/m"), ModelPin("tinfoilsh/other"))
+        assertNotEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m", another))
+        assertNotEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m"))
+        assertEquals("ModelPin(repo=tinfoilsh/m, verifier=the client's)", ModelPin("tinfoilsh/m").toString())
+        assertEquals("ModelPin(repo=tinfoilsh/m, verifier=its own)", ModelPin("tinfoilsh/m", verifier).toString())
     }
 
     @Test
