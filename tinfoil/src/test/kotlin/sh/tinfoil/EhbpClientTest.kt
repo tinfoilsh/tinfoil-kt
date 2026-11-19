@@ -874,6 +874,39 @@ class EhbpClientTest {
     }
 
     @Test
+    fun aFrameIsNotAllocatedBeforeItArrives() = test {
+        val client = proxied()
+        // The largest frame that is accepted. Its length is not
+        // authenticated: whatever ends the TLS connection can claim it.
+        val claimed = 64 * 1024 * 1024
+        val arrived = 256 * 1024
+        // The meter sees an allocation of that size on this thread.
+        assertTrue(allocatedHere { assertEquals(claimed, ByteArray(claimed).size) } >= claimed)
+
+        // The frame stops arriving and the body ends.
+        atProxy.answer = { received ->
+            MockResponse().setHeader(RESPONSE_NONCE_HEADER, received.respond().nonce)
+                .setBody(Buffer().writeInt(claimed).write(ByteArray(arrived)))
+        }
+        val ended = client.execute(client.post("""{"q":1}"""))
+        var error: IOException? = null
+        val forEnded = allocatedHere { error = assertFailsWith<IOException> { ended.text() } }
+        assertTrue(error!!.message!!.contains("FRAMING_TRUNCATED"), error!!.message)
+        assertTrue(forEnded < claimed / 8, "$forEnded bytes were allocated for a frame of which $arrived arrived")
+
+        // The frame stops arriving and the connection stays open, until
+        // the call's time runs out.
+        atProxy.answer = { received ->
+            MockResponse().setHeader(RESPONSE_NONCE_HEADER, received.respond().nonce)
+                .setBody(Buffer().writeInt(claimed).write(ByteArray(8 * arrived)))
+                .throttleBody(arrived.toLong(), 3, TimeUnit.SECONDS)
+        }
+        val stalled = client.newCall(client.post("""{"q":1}""")).apply { timeout().timeout(1, TimeUnit.SECONDS) }.execute()
+        val forStalled = allocatedHere { assertFailsWith<IOException> { stalled.text() } }
+        assertTrue(forStalled < claimed / 8, "$forStalled bytes were allocated for a frame of which $arrived arrived")
+    }
+
+    @Test
     fun plaintextIsReleasedFrameByFrame() = test {
         val client = proxied()
         atProxy.answer = { received ->
@@ -1362,6 +1395,23 @@ class EhbpClientTest {
             source.readUtf8LineStrict()
         }
         return encapsulated to body.readByteArray()
+    }
+
+    /**
+     * How many bytes this thread allocates while it runs [block], as the
+     * JVM counts them. A response's body is opened on the thread that
+     * reads it.
+     */
+    private fun allocatedHere(block: () -> Unit): Long {
+        // Looked up by name: the classes are the JVM's, and are not part
+        // of what Android code is compiled against.
+        val threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null)
+        val allocated = Class.forName("com.sun.management.ThreadMXBean")
+            .getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
+        val thread = Thread.currentThread().id
+        val before = allocated.invoke(threads, thread) as Long
+        block()
+        return allocated.invoke(threads, thread) as Long - before
     }
 
     /** A sealed response as it might be kept somewhere and fetched again. */
