@@ -23,7 +23,7 @@
       -->
       <component group="com.github.tinfoilsh" name="encrypted-http-body-protocol" version="v0.7.0">
          <artifact name="encrypted-http-body-protocol-v0.7.0.jar">
-            <sha256 value="f9567bd35e78afd8d84cebb2ef4b8fef06d89d85965cf54e515d4534e85f8de2" origin="downloaded from JitPack and compared with a local build of the tag"/>
+            <sha256 value="f9567bd35e78afd8d84cebb2ef4b8fef06d89d85965cf54e515d4534e85f8de2" origin="downloaded from JitPack; against a local build of the tag, 26 of its 30 entries are byte-identical and the other four, the classes of its one Java source, have the same bytecode"/>
          </artifact>
          <artifact name="encrypted-http-body-protocol-v0.7.0.module">
             <sha256 value="0b8a3e80fac1f5490c6f8971659b4d6f8b7a33efb58adf1525a97901a8bf59ed" origin="downloaded from JitPack"/>
