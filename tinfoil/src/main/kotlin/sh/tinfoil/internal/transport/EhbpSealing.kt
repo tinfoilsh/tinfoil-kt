@@ -10,13 +10,12 @@ import okhttp3.Dispatcher
 import okhttp3.EventListener
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
-import okhttp3.MediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okio.Buffer
-import okio.BufferedSink
 import okio.Sink
 import okio.Timeout
 import okio.buffer
@@ -233,9 +232,9 @@ internal class EhbpTransport(
         // One or the other, never a choice: cleartext only for a base URL
         // on a loopback host, and then nothing else.
         .connectionSpecs(listOf(if (cleartext) ConnectionSpec.CLEARTEXT else ConnectionSpec.MODERN_TLS))
-        // A response is handed to the caller as it is: a redirect or an
-        // authentication challenge is never acted on. The sealing client
-        // turns redirects off as well.
+        // A redirect or an authentication challenge is never acted on.
+        // The sealing client turns redirects off as well, and fails a
+        // redirect that answers a sealed request.
         .followRedirects(false)
         .followSslRedirects(false)
         .authenticator(Authenticator.NONE)
@@ -436,19 +435,18 @@ internal class EhbpTransport(
                 } else {
                     original.newBuilder().header(EhbpSealing.ENCLAVE_URL_HEADER, enclaveUrl).build()
                 }
-                // The sealing client sends a body that says that it is
-                // empty as an empty one, and does not ask it to write.
-                outgoing.body?.let { body -> if (body.contentLength() == 0L) DeclaredEmpty(body).writeTo(Buffer()) }
+                // A body that says that it is empty is not sealed, and
+                // the sealing client sends it as an empty one without
+                // asking it to write. It gets its turn here.
+                outgoing.body?.let { body -> if (body.contentLength() == 0L) requireNoBytes(body) }
                 var returned = sealing.roundTrip(outgoing)
                 response = returned
-                if (sealed) {
-                    refuseUnusable(returned)
-                    // The sealing client has opened this response if and
-                    // only if it carries the header, whatever its status.
-                    if (returned.header(ResponseNonceHeader) != null) {
-                        returned = returned.proven()
-                        response = returned
-                    }
+                // The sealing client has opened the response to a sealed
+                // request if and only if it carries the header, whatever
+                // its status.
+                if (sealed && returned.header(ResponseNonceHeader) != null) {
+                    returned = returned.proven()
+                    response = returned
                 }
                 // The sealing client is this request's alone, so its token
                 // is this request's. It has none for a response that is not
@@ -463,13 +461,14 @@ internal class EhbpTransport(
         }
 
         /**
-         * Sees the request as it is about to be sent. A body that was not
-         * sealed by now is one that said that it was empty, which is when
-         * the sealing client leaves a request as it is. The body is not
-         * asked again whether that is still so, here or by the HTTP client:
-         * it is replaced with a body that is empty whatever it is asked and
-         * that passes nothing on, so that nothing of a body is ever written
-         * unsealed.
+         * Sees the request as it is about to be sent. One whose body was
+         * not sealed by now is one whose body is empty: it said so, or it
+         * did not say how long it is and wrote nothing, which is when the
+         * sealing client leaves a request unsealed, and sends an empty
+         * body of its own making in place of the caller's. That is not
+         * taken on trust here, where a body's bytes would leave: whatever
+         * body an unsealed request has is replaced with an empty one, so
+         * that nothing of a body is ever written unsealed.
          */
         private fun guard(chain: Interceptor.Chain): Response {
             val outgoing = chain.request()
@@ -478,27 +477,7 @@ internal class EhbpTransport(
             if (sealed || body == null) {
                 return chain.proceed(outgoing)
             }
-            return chain.proceed(outgoing.newBuilder().method(outgoing.method, DeclaredEmpty(body)).build())
-        }
-
-        /**
-         * Refuses the answers to a sealed request that the sealing client
-         * would hand on although nothing authenticates them: a redirect,
-         * whose `Location` is not sealed; an informational status without
-         * the header that a sealed response carries; and a status that
-         * reports success and cannot have a body.
-         */
-        private fun refuseUnusable(response: Response) {
-            val code = response.code
-            if (code in REDIRECTS) {
-                throw ProtocolException("UNEXPECTED_REDIRECT: status $code in response to a sealed request")
-            }
-            if (code < SUCCESS && response.header(ResponseNonceHeader) == null) {
-                throw ProtocolException("MISSING_RESPONSE_NONCE: status $code in response to a sealed request")
-            }
-            if (code == NO_CONTENT || code == RESET_CONTENT) {
-                throw ProtocolException("FRAMING_TRUNCATED: status $code cannot carry a sealed body")
-            }
+            return chain.proceed(outgoing.newBuilder().method(outgoing.method, ByteArray(0).toRequestBody(body.contentType())).build())
         }
 
         private fun adopt(call: Call) {
@@ -520,44 +499,31 @@ internal class EhbpTransport(
     }
 
     /**
-     * What is sent for a [body] that said that it was empty: no bytes,
-     * whatever the body says or writes later. The body still gets its turn
-     * to write, to a sink that keeps nothing and is not the connection, so
-     * that one that does write after all fails its request and is not
-     * taken for an empty one.
+     * Gives a [body] that said that it was empty its turn to write, to a
+     * sink that keeps nothing and is not the connection, so that one that
+     * does write after all fails its request and is not taken for an
+     * empty one.
      */
-    private class DeclaredEmpty(private val body: RequestBody) : RequestBody() {
-        private val type: MediaType? = body.contentType()
-
-        override fun contentType(): MediaType? = type
-
-        override fun contentLength(): Long = 0L
-
-        override fun writeTo(sink: BufferedSink) {
-            val nothing = object : Sink {
-                override fun write(source: Buffer, byteCount: Long) {
-                    if (byteCount > 0) {
-                        throw ProtocolException("the request body declared no bytes and wrote some, which are not sent")
-                    }
+    private fun requireNoBytes(body: RequestBody) {
+        val nothing = object : Sink {
+            override fun write(source: Buffer, byteCount: Long) {
+                if (byteCount > 0) {
+                    throw ProtocolException("the request body declared no bytes and wrote some, which are not sent")
                 }
+            }
 
-                override fun flush() = Unit
+            override fun flush() = Unit
 
-                override fun timeout(): Timeout = Timeout.NONE
+            override fun timeout(): Timeout = Timeout.NONE
 
-                override fun close() = Unit
-            }.buffer()
-            body.writeTo(nothing)
-            nothing.emit()
-        }
+            override fun close() = Unit
+        }.buffer()
+        body.writeTo(nothing)
+        nothing.emit()
     }
 
     private companion object {
         const val CANCELED = "Canceled"
-        const val SUCCESS = 200
-        const val NO_CONTENT = 204
-        const val RESET_CONTENT = 205
-        val REDIRECTS = 300..399
 
         // How long a response may go without sending a byte. Generous,
         // because an inference request can work for minutes before it
