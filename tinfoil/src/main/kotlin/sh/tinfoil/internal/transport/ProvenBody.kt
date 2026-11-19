@@ -11,15 +11,26 @@ import java.net.ProtocolException
 
 /**
  * This response, which the sealing client has opened, with a body that has
- * to prove that something was sealed. A response without a body is returned
- * as it is.
+ * to prove that something was sealed, where the sealing client does not ask
+ * for that proof itself. A response without a body is returned as it is.
  *
  * The header that marks a response as sealed proves nothing by itself: it
  * is not sealed, any 32 bytes pass for its value, and a body without a
- * sealed piece leaves nothing to check it against. That is so at every
- * status, an error's included. So the body has to yield at least one byte,
- * which the sealing client releases only once the piece that carries it has
- * authenticated; a body that ends before that fails the read.
+ * sealed piece leaves nothing to check it against.
+ *
+ * Below a status of 400 the sealing client asks for the proof: it fails a
+ * body in which no piece authenticates, and a piece that seals no bytes
+ * counts, so an empty response that the enclave sealed is read as empty.
+ * Such a response is returned as it is.
+ *
+ * From 400 on the sealing client accepts a body without any piece, because
+ * the protocol lets an error pass that is not sealed at all. But an error
+ * that is marked as sealed is presented as the enclave's, and one that is
+ * not is presented as nobody's, so the mark has to be proven there too.
+ * The sealing client does not say whether a piece authenticated, so the
+ * body has to yield at least one byte, which is released only once the
+ * piece that carries it has authenticated; a body that ends before that
+ * fails the read. A sealed error with an empty body is refused with it.
  *
  * This shows that the response is the enclave's and how it begins. It does
  * not show that the response is whole: a sealed body carries no mark of its
@@ -27,9 +38,14 @@ import java.net.ProtocolException
  * finished.
  */
 internal fun Response.proven(): Response {
-    val sealed = body ?: return this
+    val sealed = body
+    if (code < FIRST_ERROR_STATUS || sealed == null) {
+        return this
+    }
     return newBuilder().body(ProvenBody(sealed)).build()
 }
+
+private const val FIRST_ERROR_STATUS = 400
 
 private class ProvenBody(private val sealed: ResponseBody) : ResponseBody() {
     private val source: BufferedSource = object : ForwardingSource(sealed.source()) {

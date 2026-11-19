@@ -142,6 +142,10 @@ public class TestGateway : AutoCloseable {
             received += Received(request, wire, null, null)
             return SealingDispatcher.keyConfigProblem()
         }
+        if (opened.plaintext.isEmpty()) {
+            received += Received(request, wire, null, null)
+            return SealingDispatcher.nothingSealed()
+        }
         return Received(request, wire, opened.plaintext, opened).also { received += it }.let(answer)
     }
 

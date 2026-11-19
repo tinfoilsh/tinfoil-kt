@@ -357,9 +357,12 @@ What this mode does not protect:
   mark the last piece, so a proxy can end a response early. What you read is
   the enclave's, but only its content shows that it is complete, such as the
   `[DONE]` event at the end of a stream, or JSON that parses.
-- Protocol upgrades, such as WebSockets, and `CONNECT` are refused. So is a
-  response that is marked as sealed and has an empty body, whatever its
-  status: nothing in it shows that the enclave sent it.
+- Protocol upgrades, such as WebSockets, and `CONNECT` are refused.
+- A response that is marked as sealed has to show it: the read of its body
+  fails unless a piece of it authenticates. An empty response that the
+  enclave sealed is read as empty, except with an error status of 400 or
+  above, where it is refused: the sealing library does not tell it there
+  from one that only claims to be sealed.
 
 Requests to a proxy carry `X-Tinfoil-Enclave-Url: https://<enclave>`, which
 tells the proxy where to forward them. See `EnclaveHttpClient.execute` for

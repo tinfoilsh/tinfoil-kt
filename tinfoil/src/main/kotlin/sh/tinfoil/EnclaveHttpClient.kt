@@ -239,13 +239,16 @@ public class EnclaveHttpClient private constructor(
      *   cannot protect them. Nothing but the TLS connection to [baseUrl]'s
      *   host authenticates such a response. A body that declared a length
      *   of zero is sent as no bytes, whatever it writes.
-     * - A response to a sealed request that reports success without being
-     *   sealed fails with an [IOException], and so does a redirect. That a
-     *   response is sealed has to show, whatever its status: the header
-     *   that marks it as sealed is not sealed itself, so the read of the
-     *   body fails if the body ends before it has yielded a byte. A sealed
-     *   response with an empty body, an error included, is therefore not
-     *   accepted in this mode, and neither is a status of 204 or 205.
+     * - A response to a sealed request with a status below 400 that is
+     *   not sealed fails with an [IOException], and so does a redirect,
+     *   sealed or not. That a response is sealed has to show, whatever
+     *   its status: the header that marks it as sealed is not sealed
+     *   itself, so the read of the body fails unless a piece of the body
+     *   authenticates. Below a status of 400, a piece that seals no bytes
+     *   is enough, which is what the enclave sends for an empty body: such
+     *   a response is read as empty. From 400 on, the body has to yield a
+     *   byte, so a sealed error with an empty body is not accepted in this
+     *   mode. Neither is a status of 204 or 205, which cannot have a body.
      *   A response with an error status of 400 or above that is not marked
      *   as sealed is returned as it is: a proxy or a load balancer answers
      *   so when the request never reached the enclave. Nothing

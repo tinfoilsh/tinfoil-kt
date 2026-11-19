@@ -107,7 +107,11 @@ public class Received(
     public val sealed: Boolean get() = request.getHeader(ENCAPSULATED_KEY_HEADER) != null
     public val text: String? get() = plaintext?.toString(Charsets.UTF_8)
 
-    /** A response that is sealed if the request was, as an enclave answers. */
+    /**
+     * A response that is sealed if the request was, as an enclave answers.
+     * A sealed response with an empty [body] still carries one frame, which
+     * seals no bytes, so that there is something to authenticate.
+     */
     public fun reply(body: String, code: Int = 200, pieces: Int = 1): MockResponse {
         val response = MockResponse().setResponseCode(code)
         if (opened == null) {
@@ -116,7 +120,7 @@ public class Received(
         val sealing = opened.respond()
         val frames = Buffer()
         val size = maxOf(1, (body.length + pieces - 1) / pieces)
-        body.chunked(size).forEach { frames.write(sealing.frame(it)) }
+        body.chunked(size).ifEmpty { listOf("") }.forEach { frames.write(sealing.frame(it)) }
         return response.setHeader(RESPONSE_NONCE_HEADER, sealing.nonce).setBody(frames)
     }
 
@@ -148,10 +152,21 @@ public class SealingDispatcher(
             received += Received(request, wire, null, null)
             return keyConfigProblem()
         }
+        if (opened.plaintext.isEmpty()) {
+            received += Received(request, wire, null, null)
+            return nothingSealed()
+        }
         return Received(request, wire, opened.plaintext, opened).also { received += it }.let(answer)
     }
 
     public companion object {
+        /**
+         * What an enclave answers a request that carries a key and seals
+         * no bytes: it answers nothing with that key's secret.
+         */
+        public fun nothingSealed(): MockResponse = MockResponse().setResponseCode(400)
+
+
         /** What an enclave answers a body that is not sealed to a key that it holds. */
         public fun keyConfigProblem(): MockResponse = MockResponse()
             .setResponseCode(422)

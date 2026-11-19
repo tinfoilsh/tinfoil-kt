@@ -537,14 +537,15 @@ class EhbpClientTest {
             { MockResponse().setHeader(RESPONSE_NONCE_HEADER, forgedNonce) },
             { MockResponse().setHeader(RESPONSE_NONCE_HEADER, forgedNonce).setBody(Buffer().writeInt(0).writeInt(0)) },
             { MockResponse().setResponseCode(201).setHeader(RESPONSE_NONCE_HEADER, forgedNonce).setChunkedBody("", 8) },
-            // A sealed piece that carries no bytes shows nothing to the reader either.
-            { it.respond().let { sealing -> MockResponse().setHeader(RESPONSE_NONCE_HEADER, sealing.nonce).setBody(Buffer().write(sealing.frame(""))) } },
+            // A piece that seals no bytes proves something only under the
+            // nonce that it was sealed with.
+            { MockResponse().setHeader(RESPONSE_NONCE_HEADER, forgedNonce).setBody(Buffer().write(it.respond().frame(""))) },
         )
         for (answer in empty) {
             atProxy.answer = answer
             val recoverable = client.executeRecoverable(client.post("""{"q":"$MARKER"}"""))
             val error = assertFailsWith<IOException> { recoverable.response.text() }
-            assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+            assertTrue(Regex("FRAMING_TRUNCATED|AEAD_DECRYPT_FAILED").containsMatchIn(error.message!!), error.message)
         }
         for (code in listOf(204, 205)) {
             atProxy.answer = { MockResponse().setResponseCode(code).setHeader(RESPONSE_NONCE_HEADER, forgedNonce) }
@@ -571,6 +572,49 @@ class EhbpClientTest {
         // An error that the enclave sealed is read as before.
         atProxy.answer = { it.reply("""{"error":"$ANSWER"}""", code = 500) }
         assertEquals("""{"error":"$ANSWER"}""", client.execute(client.post("""{"q":"$MARKER"}""")).text())
+        // One that the enclave sealed with an empty body is refused with
+        // the forged ones: from 400 on, a read that yields nothing does
+        // not show whether anything authenticated.
+        for (code in listOf(404, 500)) {
+            atProxy.answer = { it.reply("", code = code) }
+            val response = client.execute(client.post("""{"q":"$MARKER"}"""))
+            assertEquals(code, response.code)
+            val error = assertFailsWith<IOException>("$code") { response.text() }
+            assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+        }
+    }
+
+    @Test
+    fun aSealedSuccessWithAnEmptyBodyIsReadAsEmpty() = test {
+        val client = proxied()
+        val stored = CopyOnWriteArrayList<Pair<String, ByteArray>>()
+        for (code in listOf(200, 201, 202)) {
+            // What the enclave sends for an empty body: one piece, which
+            // seals no bytes and authenticates.
+            atProxy.answer = { received ->
+                val sealing = received.respond()
+                val frames = sealing.frame("")
+                stored += sealing.nonce to frames
+                MockResponse().setResponseCode(code).setHeader(RESPONSE_NONCE_HEADER, sealing.nonce).setBody(Buffer().write(frames))
+            }
+            val recoverable = client.executeRecoverable(client.post("""{"q":"$MARKER"}"""))
+            val token = assertNotNull(recoverable.recoveryToken)
+
+            assertEquals(code, recoverable.response.code)
+            assertEquals("", recoverable.response.text())
+
+            // And so is a stored copy of it, opened with the token.
+            val (nonce, frames) = stored.last()
+            assertEquals(16, frames.size - 4, "the piece is an authentication tag and nothing else")
+            assertEquals("", token.decryptResponse(storedResponse(nonce, frames).newBuilder().code(code).build()).text())
+            // The same piece under another response's nonce does not authenticate.
+            val other = token.decryptResponse(storedResponse("5c".repeat(32), frames).newBuilder().code(code).build())
+            val error = assertFailsWith<IOException> { other.text() }
+            assertTrue(error.message!!.contains("AEAD_DECRYPT_FAILED"), error.message)
+        }
+        // The test enclave's own way of answering sends the same.
+        atProxy.answer = { it.reply("") }
+        assertEquals("", client.execute(client.post("""{"q":"$MARKER"}""")).text())
     }
 
     @Test
@@ -587,6 +631,39 @@ class EhbpClientTest {
                 val opened = token.decryptResponse(stored)
                 assertEquals(code, opened.code)
                 val error = assertFailsWith<IOException>("$code") { opened.text() }
+                assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+            }
+        }
+        // A status that cannot have a body cannot be opened at all.
+        for (code in listOf(204, 205)) {
+            val stored = storedResponse(forgedNonce, ByteArray(0)).newBuilder().code(code).build()
+            val error = assertFailsWith<IOException>("$code") { token.decryptResponse(stored) }
+            assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+        }
+    }
+
+    @Test
+    fun aStoredErrorThatTheEnclaveSealedIsOpenedUnlessItIsEmpty() = test {
+        val client = proxied()
+        val stored = CopyOnWriteArrayList<Pair<String, ByteArray>>()
+        atProxy.answer = { received ->
+            val sealing = received.respond()
+            stored += sealing.nonce to sealing.frame(if (stored.isEmpty()) """{"error":"$ANSWER"}""" else "")
+            MockResponse().setResponseCode(500).setHeader(RESPONSE_NONCE_HEADER, stored.last().first).setBody(Buffer().write(stored.last().second))
+        }
+        for (expected in listOf("""{"error":"$ANSWER"}""", null)) {
+            val recoverable = client.executeRecoverable(client.post("""{"q":"$MARKER"}"""))
+            val token = assertNotNull(recoverable.recoveryToken)
+            recoverable.response.close()
+            val (nonce, frames) = stored.last()
+
+            val opened = token.decryptResponse(storedResponse(nonce, frames).newBuilder().code(500).build())
+
+            assertEquals(500, opened.code)
+            if (expected != null) {
+                assertEquals(expected, opened.text())
+            } else {
+                val error = assertFailsWith<IOException> { opened.text() }
                 assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
             }
         }
