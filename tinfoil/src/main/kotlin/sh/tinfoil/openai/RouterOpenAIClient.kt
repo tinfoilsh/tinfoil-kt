@@ -1,3 +1,5 @@
+@file:OptIn(InternalTinfoilApi::class)
+
 package sh.tinfoil.openai
 
 import com.openai.client.OpenAIClient
@@ -5,11 +7,11 @@ import com.openai.client.OpenAIClientAsync
 import kotlinx.coroutines.CancellationException
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
+import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.RouterOpenAIOptions
-import sh.tinfoil.internal.Background
-import sh.tinfoil.internal.Internals
+import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.OpenAISettings
 import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
@@ -122,17 +124,20 @@ public class RouterOpenAIClient private constructor(
         public suspend fun create(
             apiKey: String,
             options: RouterOpenAIOptions.() -> Unit = {},
-        ): RouterOpenAIClient = create(apiKey, Internals(), options)
+        ): RouterOpenAIClient = create(apiKey, CrossArtifact::routerHttpClient, options)
 
-        /** [create] with the parts that tests replace. */
+        /**
+         * [create] with [connect] in place of what makes the HTTP client,
+         * which tests replace. Whatever it returns is an attested client.
+         */
         @JvmSynthetic
         internal suspend fun create(
             apiKey: String,
-            internals: Internals,
+            connect: suspend (settings: RouteSettings) -> RouterHttpClient,
             options: RouterOpenAIOptions.() -> Unit,
         ): RouterOpenAIClient {
             val (route, openAISettings) = routerOpenAISettings(options)
-            return create(apiKey, route, openAISettings, internals)
+            return create(apiKey, route, openAISettings, connect)
         }
 
         /** [create] with options that were read already. */
@@ -141,14 +146,14 @@ public class RouterOpenAIClient private constructor(
             apiKey: String,
             route: RouteSettings,
             openAISettings: OpenAISettings,
-            internals: Internals,
-        ): RouterOpenAIClient = Background.creating {
+            connect: suspend (settings: RouteSettings) -> RouterHttpClient,
+        ): RouterOpenAIClient = CrossArtifact.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
             val prepared = PreparedOpenAIOptions.prepare(apiKey, openAISettings)
             val httpClient = try {
-                RouterHttpClient.create(route, internals)
+                connect(route)
             } catch (e: Throwable) {
                 prepared.discard()
                 throw e

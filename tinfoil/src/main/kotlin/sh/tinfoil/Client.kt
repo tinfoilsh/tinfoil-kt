@@ -1,3 +1,5 @@
+@file:OptIn(InternalTinfoilApi::class)
+
 package sh.tinfoil
 
 import com.openai.client.OpenAIClient
@@ -5,8 +7,7 @@ import com.openai.client.OpenAIClientAsync
 import kotlinx.coroutines.CancellationException
 import okhttp3.Call
 import okhttp3.HttpUrl
-import sh.tinfoil.internal.Background
-import sh.tinfoil.internal.Internals
+import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.openai.EnclaveOpenAIClient
@@ -123,24 +124,29 @@ public class Client private constructor(
         public suspend fun create(
             apiKey: String,
             options: OpenAIOptions.() -> Unit = {},
-        ): Client = create(apiKey, null, Internals(), options)
+        ): Client = create(apiKey, null, CrossArtifact::routerHttpClient, options)
 
-        /** [create] with the parts that tests replace. */
+        /**
+         * [create] with a trust policy, and with [connect] in place of what
+         * makes the HTTP client, which tests replace.
+         */
         @JvmSynthetic
         internal suspend fun create(
             apiKey: String,
             verifier: Verifier?,
-            internals: Internals,
+            connect: suspend (settings: RouteSettings) -> RouterHttpClient,
             options: OpenAIOptions.() -> Unit,
         ): Client {
             val openAISettings = openAISettings(options)
-            return Background.creating {
+            // The route's options, of which this client sets the one.
+            val (routeSettings, _) = routerOpenAISettings { this.verifier = verifier }
+            return CrossArtifact.creating {
                 // Checking the options, which calls into the verifier
                 // library, and everything after it run on a background
                 // thread, so that any thread may call this.
                 // Today the recommended route is one of Tinfoil's routers,
                 // over connections that are pinned to its attested key.
-                val route = RouterOpenAIClient.create(apiKey, RouteSettings(verifier = verifier), openAISettings, internals)
+                val route = RouterOpenAIClient.create(apiKey, routeSettings, openAISettings, connect)
                 return@creating Client(route, PreparedOpenAIOptions.apiUrl(route.httpClient.baseUrl, null))
             }
         }

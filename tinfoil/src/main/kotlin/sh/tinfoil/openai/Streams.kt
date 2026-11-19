@@ -1,4 +1,5 @@
 @file:JvmName("OpenAIStreams")
+@file:OptIn(InternalTinfoilApi::class)
 
 package sh.tinfoil.openai
 
@@ -11,7 +12,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
-import sh.tinfoil.internal.Background
+import sh.tinfoil.InternalTinfoilApi
+import sh.tinfoil.internal.CrossArtifact
 import java.util.Optional
 import java.util.concurrent.CompletionException
 
@@ -60,4 +62,4 @@ public fun <T : Any> AsyncStreamResponse<T>.asFlow(): Flow<T> = callbackFlow {
     // the collector's thread may not be allowed to do; so the subscription
     // and the closing run on a background thread, and only the events are
     // handed to the collector.
-}.buffer(Channel.RENDEZVOUS).flowOn(Background.dispatcher)
+}.buffer(Channel.RENDEZVOUS).flowOn(CrossArtifact.dispatcher)

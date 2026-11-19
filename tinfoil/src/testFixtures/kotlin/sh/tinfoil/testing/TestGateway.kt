@@ -32,50 +32,50 @@ import kotlin.time.TestTimeSource
  * requests with, by the replica that a request says it is sealed to, as a
  * real replica would. A verifier endorses whatever the test says.
  */
-internal class TestGateway : AutoCloseable {
-    val authority = TestAuthority()
-    val clock = TestClock()
-    val timeSource = TestTimeSource()
-    val server: MockWebServer = httpsServer(authority.issue())
-    val host: String = "localhost:${server.port}"
-    val baseUrl: String = "https://$host/v1/"
+public class TestGateway : AutoCloseable {
+    public val authority: TestAuthority = TestAuthority()
+    public val clock: TestClock = TestClock()
+    public val timeSource: TestTimeSource = TestTimeSource()
+    public val server: MockWebServer = httpsServer(authority.issue())
+    public val host: String = "localhost:${server.port}"
+    public val baseUrl: String = "https://$host/v1/"
 
     /** The catalog that the gateway serves. */
     @Volatile
-    var catalog: () -> MockResponse = { MockResponse().setBody("{}") }
+    public var catalog: () -> MockResponse = { MockResponse().setBody("{}") }
 
     /** How many times the catalog was fetched. */
-    val catalogFetches = AtomicInteger()
+    public val catalogFetches: AtomicInteger = AtomicInteger()
 
     /** The replicas whose attestation documents were fetched, in order. */
-    val attestationFetches = CopyOnWriteArrayList<String>()
+    public val attestationFetches: CopyOnWriteArrayList<String> = CopyOnWriteArrayList<String>()
 
     /** What the relay answers for a replica's attestation document; the document names the replica. */
     @Volatile
-    var attestation: (replica: String) -> MockResponse = { MockResponse().setBody(it) }
+    public var attestation: (replica: String) -> MockResponse = { MockResponse().setBody(it) }
 
     /** Every request that was not for the catalog or an attestation document, in order. */
-    val received = CopyOnWriteArrayList<Received>()
+    public val received: CopyOnWriteArrayList<Received> = CopyOnWriteArrayList<Received>()
 
     /** What a request that the gateway forwarded is answered. */
     @Volatile
-    var answer: (Received) -> MockResponse = { it.reply("ok") }
+    public var answer: (Received) -> MockResponse = { it.reply("ok") }
 
     /** What the gateway does with a request before it forwards it; a response here is the gateway's own. */
     @Volatile
-    var intercept: (RecordedRequest) -> MockResponse? = { null }
+    public var intercept: (RecordedRequest) -> MockResponse? = { null }
 
     /** The key that each replica holds. */
     private val keys = ConcurrentHashMap<String, SealingKey>()
 
     /** Every pin that a replica's document was verified against, with the replica. */
-    val verified = CopyOnWriteArrayList<Pair<String, Pin>>()
+    public val verified: CopyOnWriteArrayList<Pair<String, Pin>> = CopyOnWriteArrayList<Pair<String, Pin>>()
 
     /** What a replica's verification says; throw to fail it. */
     @Volatile
-    var endorse: (replica: String, pin: Pin) -> Verification = { replica, _ -> endorsement(replica) }
+    public var endorse: (replica: String, pin: Pin) -> Verification = { replica, _ -> endorsement(replica) }
 
-    val verifier = FakeVerifier { document, _, pin ->
+    internal val verifier = FakeVerifier { document, _, pin ->
         val replica = document.toString(Charsets.UTF_8)
         verified += replica to pin
         endorse(replica, pin)
@@ -87,7 +87,7 @@ internal class TestGateway : AutoCloseable {
      * A response that the gateway does not send until the test opens the
      * gate that this returns, or ends.
      */
-    fun hold(): CountDownLatch = CountDownLatch(1).also { gates += it }
+    public fun hold(): CountDownLatch = CountDownLatch(1).also { gates += it }
 
     init {
         server.dispatcher = object : Dispatcher() {
@@ -110,19 +110,19 @@ internal class TestGateway : AutoCloseable {
     }
 
     /** The key of [replica], made when it is first asked for. */
-    fun key(replica: String): SealingKey = keys.computeIfAbsent(replica) { SealingKey() }
+    public fun key(replica: String): SealingKey = keys.computeIfAbsent(replica) { SealingKey() }
 
     /** Gives [replica] a new key, as a replica that restarted has. */
-    fun rotateKey(replica: String) {
+    public fun rotateKey(replica: String) {
         keys[replica] = SealingKey()
     }
 
     /** A verification that endorses [replica]'s key for an hour. */
-    fun endorsement(replica: String): Verification =
+    public fun endorsement(replica: String): Verification =
         verification("ab".repeat(32), clock().plusSeconds(3600), hpkePublicKey = key(replica).publicKey)
 
     /** Serves [models] as the catalog: each model's repository and replicas. */
-    fun serve(vararg models: Pair<String, Pair<String, List<String>>>) {
+    public fun serve(vararg models: Pair<String, Pair<String, List<String>>>) {
         val body = models.joinToString(",", "{", "}") { (model, entry) ->
             """"$model":{"repo":"${entry.first}","hosts":[${entry.second.joinToString(",") { "\"$it\"" }}],"context":1048576}"""
         }
@@ -145,14 +145,23 @@ internal class TestGateway : AutoCloseable {
         return Received(request, wire, opened.plaintext, opened).also { received += it }.let(answer)
     }
 
-    fun internals(): Internals = Internals(
+    /** A trust policy that appraises with [verifier]. */
+    public fun appraisingVerifier(): Verifier = Verifier.appraisingWith(verifier)
+
+    /** How many documents [verifier] was asked to verify. */
+    public val verifications: Int get() = verifier.verifications.get()
+
+    /** What makes clients as [internals] has them made. */
+    public fun connections(): TestConnections = TestConnections(internals())
+
+    internal fun internals(): Internals = Internals(
         http = HttpSettings(trust = authority.trust),
         clock = clock,
         retryDelay = 1.milliseconds,
         timeSource = timeSource,
     )
 
-    suspend fun client(
+    public suspend fun client(
         modelPins: Map<String, ModelPin> = emptyMap(),
         pinnedModelsOnly: Boolean = false,
         baseUrl: String? = this.baseUrl,
@@ -173,7 +182,7 @@ internal class TestGateway : AutoCloseable {
     }.also { clients += it }
 
     /** A client that is checked but has fetched nothing, so that any I/O shows. */
-    fun unverified(
+    public fun unverified(
         modelPins: Map<String, ModelPin> = emptyMap(),
         pinnedModelsOnly: Boolean = false,
         baseUrl: String? = this.baseUrl,
@@ -184,12 +193,12 @@ internal class TestGateway : AutoCloseable {
         GatewaySettings(modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, null, null, catalog), internals(),
     ).also { clients += it }
 
-    fun track(client: AutoCloseable) {
+    public fun track(client: AutoCloseable) {
         clients += client
     }
 
     /** A document that does not verify. */
-    fun refuse(): Nothing = throw AttestationException("the document does not verify")
+    public fun refuse(): Nothing = throw AttestationException("the document does not verify")
 
     override fun close() {
         clients.forEach { it.close() }

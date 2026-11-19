@@ -1,3 +1,5 @@
+@file:OptIn(InternalTinfoilApi::class)
+
 package sh.tinfoil.internal
 
 import com.openai.client.OpenAIClient
@@ -7,6 +9,7 @@ import com.openai.core.LogLevel
 import okhttp3.Call
 import okhttp3.HttpUrl
 import sh.tinfoil.ConfigurationException
+import sh.tinfoil.InternalTinfoilApi
 
 /**
  * The OpenAI SDK's options for a client of this SDK, checked and complete
@@ -47,7 +50,7 @@ internal class PreparedOpenAIOptions private constructor(
         fun prepare(apiKey: String, settings: OpenAISettings): PreparedOpenAIOptions {
             // The message never repeats the key, whatever it holds.
             if (apiKey.isBlank()) {
-                throw ConfigurationException("the API key is empty or blank")
+                throw CrossArtifact.configurationException("the API key is empty or blank")
             }
             val adapter = OpenAIHttpAdapter(TinfoilEvents.headerValue(settings.tinfoilEvents))
             val builder = ClientOptions.builder()
@@ -86,7 +89,7 @@ internal class PreparedOpenAIOptions private constructor(
 
         private const val API_PATH = "/v1/"
 
-        private fun invalid(e: RuntimeException): ConfigurationException = ConfigurationException(
+        private fun invalid(e: RuntimeException): ConfigurationException = CrossArtifact.configurationException(
             "the OpenAI options do not make a client: ${e.message ?: e.javaClass.simpleName}",
             cause = e,
         )

@@ -13,26 +13,26 @@ import kotlin.concurrent.thread
  * A TLS server that hands each connection to [serve] once its handshake has
  * completed, so that a test sees exactly what a client wrote to it.
  */
-internal class RawTlsServer(
+public class RawTlsServer(
     certificate: HeldCertificate,
     private val serve: RawTlsServer.(SSLSocket) -> Unit,
 ) : AutoCloseable {
     private val listener = certificate.serverHandshake().sslContext().serverSocketFactory
         .createServerSocket(0, 50, InetAddress.getByName("localhost")) as SSLServerSocket
 
-    val port: Int = listener.localPort
+    public val port: Int = listener.localPort
 
     /** Connections whose TLS handshake completed. */
-    val handshakes = AtomicInteger()
+    public val handshakes: AtomicInteger = AtomicInteger()
 
     /** Connections that have ended. */
-    val finished = AtomicInteger()
+    public val finished: AtomicInteger = AtomicInteger()
 
     /** Bytes of application data that clients sent. */
-    val bytesReceived = AtomicLong()
+    public val bytesReceived: AtomicLong = AtomicLong()
 
     /** Bytes of application data that the server managed to write. */
-    val bytesSent = AtomicLong()
+    public val bytesSent: AtomicLong = AtomicLong()
 
     init {
         thread(isDaemon = true) {
@@ -62,7 +62,7 @@ internal class RawTlsServer(
     }
 
     /** Reads whatever the client sends until it closes or goes quiet, counting it. */
-    fun countWhatArrives(socket: SSLSocket) {
+    public fun countWhatArrives(socket: SSLSocket) {
         socket.soTimeout = 2_000
         val buffer = ByteArray(4096)
         while (true) {
@@ -80,7 +80,7 @@ internal class RawTlsServer(
 }
 
 /** Waits until [condition] holds, failing after [timeoutMillis]. */
-internal fun awaitUntil(timeoutMillis: Long = 10_000, condition: () -> Boolean) {
+public fun awaitUntil(timeoutMillis: Long = 10_000, condition: () -> Boolean) {
     val deadline = System.nanoTime() + timeoutMillis * 1_000_000
     while (!condition()) {
         check(System.nanoTime() < deadline) { "condition not met within $timeoutMillis ms" }

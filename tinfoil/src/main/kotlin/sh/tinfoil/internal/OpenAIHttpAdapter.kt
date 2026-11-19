@@ -1,3 +1,5 @@
+@file:OptIn(InternalTinfoilApi::class)
+
 package sh.tinfoil.internal
 
 import com.openai.core.RequestOptions
@@ -19,9 +21,9 @@ import okhttp3.Response
 import okio.BufferedSink
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
+import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.TinfoilException
-import sh.tinfoil.internal.transport.closeQuietly
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -112,9 +114,9 @@ internal class OpenAIHttpAdapter(
 
     private fun newCall(request: HttpRequest, requestOptions: RequestOptions): Call {
         if (closed.get()) {
-            throw refusal(ConfigurationException("the client is closed"))
+            throw refusal(invalid("the client is closed"))
         }
-        val calls = calls ?: throw refusal(ConfigurationException("the client is not ready"))
+        val calls = calls ?: throw refusal(invalid("the client is not ready"))
         val outgoing = toRequest(request)
         val call = try {
             calls.newCall(outgoing)
@@ -133,7 +135,7 @@ internal class OpenAIHttpAdapter(
 
     private fun toRequest(request: HttpRequest): Request {
         val base = request.baseUrl.toHttpUrlOrNull()
-            ?: throw refusal(ConfigurationException("the OpenAI client's base URL is not an absolute HTTP URL"))
+            ?: throw refusal(invalid("the OpenAI client's base URL is not an absolute HTTP URL"))
         val url = base.newBuilder().apply {
             request.pathSegments.forEach(::addPathSegment)
             request.queryParams.keys().forEach { key ->
@@ -148,7 +150,7 @@ internal class OpenAIHttpAdapter(
         try {
             builder.method(method, body)
         } catch (_: IllegalArgumentException) {
-            throw refusal(ConfigurationException("a $method request cannot carry a body"))
+            throw refusal(invalid("a $method request cannot carry a body"))
         }
         request.headers.names().forEach { name ->
             request.headers.values(name).forEach { value ->
@@ -158,7 +160,7 @@ internal class OpenAIHttpAdapter(
                     // The value may be a credential, so it is not repeated,
                     // and neither is a message that could quote it.
                     throw refusal(
-                        ConfigurationException("the request header ${printable(name)} is not valid in an HTTP request"),
+                        invalid("the request header ${printable(name)} is not valid in an HTTP request"),
                     )
                 }
             }
@@ -224,7 +226,11 @@ internal class OpenAIHttpAdapter(
             if (!finished.getAndSet(true)) {
                 call.cancel()
             }
-            response.closeQuietly()
+            try {
+                response.close()
+            } catch (_: Exception) {
+                // Nothing can be done for a response that will not close.
+            }
         }
     }
 
@@ -260,5 +266,7 @@ internal class OpenAIHttpAdapter(
         }
 
         fun refusal(e: TinfoilException): OpenAIException = OpenAIException(e.message, e)
+
+        fun invalid(detail: String): ConfigurationException = CrossArtifact.configurationException(detail)
     }
 }

@@ -1,3 +1,5 @@
+@file:OptIn(InternalTinfoilApi::class)
+
 package sh.tinfoil.openai
 
 import com.openai.client.OpenAIClient
@@ -7,11 +9,11 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.GatewayOpenAIOptions
+import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.gatewayOpenAISettings
-import sh.tinfoil.internal.Background
+import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.GatewaySettings
-import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.OpenAISettings
 import sh.tinfoil.internal.PreparedOpenAIOptions
 import java.io.IOException
@@ -121,17 +123,20 @@ public class GatewayOpenAIClient private constructor(
         public suspend fun create(
             apiKey: String,
             options: GatewayOpenAIOptions.() -> Unit = {},
-        ): GatewayOpenAIClient = create(apiKey, Internals(), options)
+        ): GatewayOpenAIClient = create(apiKey, CrossArtifact::gatewayHttpClient, options)
 
-        /** [create] with the parts that tests replace. */
+        /**
+         * [create] with [connect] in place of what makes the HTTP client,
+         * which tests replace. Whatever it returns is a gateway client.
+         */
         @JvmSynthetic
         internal suspend fun create(
             apiKey: String,
-            internals: Internals,
+            connect: suspend (settings: GatewaySettings) -> GatewayHttpClient,
             options: GatewayOpenAIOptions.() -> Unit,
         ): GatewayOpenAIClient {
             val (route, openAISettings) = gatewayOpenAISettings(options)
-            return create(apiKey, route, openAISettings, internals)
+            return create(apiKey, route, openAISettings, connect)
         }
 
         /** [create] with options that were read already. */
@@ -140,14 +145,14 @@ public class GatewayOpenAIClient private constructor(
             apiKey: String,
             route: GatewaySettings,
             openAISettings: OpenAISettings,
-            internals: Internals,
-        ): GatewayOpenAIClient = Background.creating {
+            connect: suspend (settings: GatewaySettings) -> GatewayHttpClient,
+        ): GatewayOpenAIClient = CrossArtifact.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
             val prepared = PreparedOpenAIOptions.prepare(apiKey, openAISettings)
             val httpClient = try {
-                GatewayHttpClient.create(route, internals)
+                connect(route)
             } catch (e: Throwable) {
                 prepared.discard()
                 throw e

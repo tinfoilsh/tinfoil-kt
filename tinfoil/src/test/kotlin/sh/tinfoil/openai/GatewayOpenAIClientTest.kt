@@ -53,11 +53,11 @@ class GatewayOpenAIClientTest {
         apiKey: String = KEY,
         tinfoilEvents: Set<TinfoilEvent> = emptySet(),
         configure: (ClientOptions.Builder.() -> Unit)? = null,
-    ): GatewayOpenAIClient = GatewayOpenAIClient.create(apiKey, gateway.internals()) {
+    ): GatewayOpenAIClient = GatewayOpenAIClient.create(apiKey, gateway.connections()::gateway) {
         this.modelPins = modelPins
         this.pinnedModelsOnly = pinnedModelsOnly
         this.baseUrl = baseUrl
-        verifier = Verifier.appraisingWith(gateway.verifier)
+        verifier = gateway.appraisingVerifier()
         this.userCacheSecret = userCacheSecret
         this.tinfoilEvents = tinfoilEvents
         configure?.let { openAI(it) }

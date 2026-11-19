@@ -2,11 +2,10 @@
 
 package sh.tinfoil.internal
 
-import com.openai.core.ClientOptions
 import sh.tinfoil.Catalog
 import sh.tinfoil.ExperimentalTinfoilApi
+import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.ModelPin
-import sh.tinfoil.TinfoilEvent
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
@@ -16,33 +15,34 @@ import sh.tinfoil.Verifier
 // client is made from these copies alone, so nothing that happens to the
 // options object afterwards reaches it. None of them is a data class: they
 // hold secrets, and must not print them.
+//
+// They are public, and marked, because the OpenAI clients, which are another
+// artifact, take a snapshot of their caller's block and hand it back when
+// the client is made. Only this artifact makes one, and only from an
+// options object: a snapshot holds what a caller's block set, and nothing
+// else.
 
 /** The options of a client for one enclave, or for a router that is chosen. */
-internal class RouteSettings(
-    val transportMode: TransportMode = TransportMode.TLS,
-    val baseUrl: String? = null,
-    val attestationRelay: String? = null,
-    val verifier: Verifier? = null,
-    val userCacheSecret: String? = null,
-    val verificationCheck: VerificationCheck? = null,
-    val onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+@InternalTinfoilApi
+public class RouteSettings internal constructor(
+    @get:JvmSynthetic public val transportMode: TransportMode = TransportMode.TLS,
+    @get:JvmSynthetic public val baseUrl: String? = null,
+    @get:JvmSynthetic public val attestationRelay: String? = null,
+    @get:JvmSynthetic public val verifier: Verifier? = null,
+    @get:JvmSynthetic public val userCacheSecret: String? = null,
+    @get:JvmSynthetic public val verificationCheck: VerificationCheck? = null,
+    @get:JvmSynthetic public val onVerificationResult: ((Result<Verification>) -> Unit)? = null,
 )
 
 /** The options of a client for the gateway. */
-internal class GatewaySettings(
-    val modelPins: Map<String, ModelPin> = emptyMap(),
-    val pinnedModelsOnly: Boolean = false,
-    val baseUrl: String? = null,
-    val verifier: Verifier? = null,
-    val userCacheSecret: String? = null,
-    val verificationCheck: VerificationCheck? = null,
-    val onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-    val catalog: (() -> Catalog)? = null,
-)
-
-/** The options of the OpenAI client that is put over an attested client. */
-internal class OpenAISettings(
-    val tinfoilEvents: Set<TinfoilEvent> = emptySet(),
-    /** What the caller does to the OpenAI SDK's options builder, in the order in which it was given. */
-    val configure: List<ClientOptions.Builder.() -> Unit> = emptyList(),
+@InternalTinfoilApi
+public class GatewaySettings internal constructor(
+    @get:JvmSynthetic public val modelPins: Map<String, ModelPin> = emptyMap(),
+    @get:JvmSynthetic public val pinnedModelsOnly: Boolean = false,
+    @get:JvmSynthetic public val baseUrl: String? = null,
+    @get:JvmSynthetic public val verifier: Verifier? = null,
+    @get:JvmSynthetic public val userCacheSecret: String? = null,
+    @get:JvmSynthetic public val verificationCheck: VerificationCheck? = null,
+    @get:JvmSynthetic public val onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+    @get:JvmSynthetic public val catalog: (() -> Catalog)? = null,
 )

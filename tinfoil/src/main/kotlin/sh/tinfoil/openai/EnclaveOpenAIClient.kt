@@ -1,3 +1,5 @@
+@file:OptIn(InternalTinfoilApi::class)
+
 package sh.tinfoil.openai
 
 import com.openai.client.OpenAIClient
@@ -7,12 +9,12 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.EnclaveHttpClient
 import sh.tinfoil.EnclaveOpenAIOptions
+import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.TransportMode
 import sh.tinfoil.enclaveOpenAISettings
-import sh.tinfoil.internal.Background
-import sh.tinfoil.internal.Internals
+import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.OpenAISettings
 import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
@@ -177,19 +179,22 @@ public class EnclaveOpenAIClient private constructor(
             pin: Pin,
             apiKey: String,
             options: EnclaveOpenAIOptions.() -> Unit = {},
-        ): EnclaveOpenAIClient = create(enclave, pin, apiKey, Internals(), options)
+        ): EnclaveOpenAIClient = create(enclave, pin, apiKey, CrossArtifact::enclaveHttpClient, options)
 
-        /** [create] with the parts that tests replace. */
+        /**
+         * [create] with [connect] in place of what makes the HTTP client,
+         * which tests replace. Whatever it returns is an attested client.
+         */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
             pin: Pin,
             apiKey: String,
-            internals: Internals,
+            connect: suspend (enclave: String, pin: Pin, settings: RouteSettings) -> EnclaveHttpClient,
             options: EnclaveOpenAIOptions.() -> Unit,
         ): EnclaveOpenAIClient {
             val (route, openAISettings) = enclaveOpenAISettings(options)
-            return create(enclave, pin, apiKey, route, openAISettings, internals)
+            return create(enclave, pin, apiKey, route, openAISettings, connect)
         }
 
         /** [create] with options that were read already. */
@@ -200,14 +205,14 @@ public class EnclaveOpenAIClient private constructor(
             apiKey: String,
             route: RouteSettings,
             openAISettings: OpenAISettings,
-            internals: Internals,
-        ): EnclaveOpenAIClient = Background.creating {
+            connect: suspend (enclave: String, pin: Pin, settings: RouteSettings) -> EnclaveHttpClient,
+        ): EnclaveOpenAIClient = CrossArtifact.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
             val prepared = PreparedOpenAIOptions.prepare(apiKey, openAISettings)
             val httpClient = try {
-                EnclaveHttpClient.create(enclave, pin, route, internals)
+                connect(enclave, pin, route)
             } catch (e: Throwable) {
                 prepared.discard()
                 throw e

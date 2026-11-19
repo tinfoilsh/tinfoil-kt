@@ -218,6 +218,9 @@ public abstract class sh/tinfoil/GatewayOptions {
 	public final fun setVerifier (Lsh/tinfoil/Verifier;)V
 }
 
+public abstract interface annotation class sh/tinfoil/InternalTinfoilApi : java/lang/annotation/Annotation {
+}
+
 public final class sh/tinfoil/Measurement {
 	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
 	public fun equals (Ljava/lang/Object;)Z

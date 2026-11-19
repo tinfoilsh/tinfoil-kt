@@ -318,6 +318,8 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
         allWarningsAsErrors.set(true)
+        // This module owns what is marked for the SDK's other artifacts.
+        optIn.add("sh.tinfoil.InternalTinfoilApi")
     }
 }
 
