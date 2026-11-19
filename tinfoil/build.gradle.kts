@@ -293,6 +293,13 @@ android {
         sourceSets["androidTest"].kotlin.srcDir("src/androidTestConformance/kotlin")
     }
 
+    // The fakes and test servers that the tests of every module share. They
+    // are sources of this module so that they can use its internals, and
+    // are never published: they replace the trust anchors and the verifier.
+    testFixtures {
+        enable = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -334,6 +341,10 @@ dependencies {
     api(libs.openai.java.core)
     // The OpenAI SDK reflects on its models with kotlin-reflect at run time.
     implementation(libs.kotlin.reflect)
+
+    testFixturesApi(libs.okhttp.tls)
+    testFixturesApi(libs.okhttp.mockwebserver)
+    testFixturesImplementation(libs.ehbp)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
