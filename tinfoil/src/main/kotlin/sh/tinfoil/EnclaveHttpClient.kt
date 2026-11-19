@@ -234,11 +234,15 @@ public class EnclaveHttpClient private constructor(
      *   that: the `[DONE]` event that ends a stream of events, or text that
      *   parses as the one JSON value that it should be. Look for that end
      *   before acting on a response whose beginning alone could mislead.
-     * - A request without a body, or with one that declares a length of
-     *   zero, is not sealed, and neither is its response: the protocol
-     *   cannot protect them. Nothing but the TLS connection to [baseUrl]'s
-     *   host authenticates such a response. A body that declared a length
-     *   of zero is sent as no bytes, whatever it writes.
+     * - A request without a body, or with an empty one, is not sealed, and
+     *   neither is its response: the protocol cannot protect them. Nothing
+     *   but the TLS connection to [baseUrl]'s host authenticates such a
+     *   response. A body is empty if it declares a length of zero; none of
+     *   its bytes are sent, and if it writes some after all, the request
+     *   fails. A body that does not declare its length is empty if it
+     *   writes nothing: it is asked to write before the request is sent,
+     *   on a thread of the sealing library's, and is sealed from its first
+     *   byte on.
      * - A response to a sealed request with a status below 400 that is
      *   not sealed fails with an [IOException], and so does a redirect,
      *   sealed or not. That a response is sealed has to show, whatever

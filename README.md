@@ -340,6 +340,8 @@ What this mode does not protect:
   for `localhost` or a loopback IP address. A base URL on this machine is
   reached directly, whatever HTTP proxy the system is configured with.
 - **A request without a body is not sealed, and neither is its response.**
+  The same goes for a body that is empty: one that declares a length of
+  zero, or one of undeclared length that writes nothing.
 - Connections are validated as any HTTPS connection is, and are not pinned to
   the enclave's key: whoever holds a valid certificate for the host that you
   named, the proxy's or the enclave's own, reads what is not sealed. The

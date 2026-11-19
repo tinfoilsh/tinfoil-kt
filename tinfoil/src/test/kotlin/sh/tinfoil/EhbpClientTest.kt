@@ -453,6 +453,41 @@ class EhbpClientTest {
     }
 
     @Test
+    fun aBodyOfUnknownLengthIsSealedIfAndOnlyIfItWritesSomething() = test {
+        val client = proxied()
+        val writes = AtomicInteger()
+        fun body(text: String) = object : RequestBody() {
+            override fun contentType(): MediaType = JSON
+
+            override fun writeTo(sink: BufferedSink) {
+                writes.incrementAndGet()
+                sink.writeUtf8(text)
+            }
+        }
+        fun post(text: String) = Request.Builder().url(client.baseUrl.resolve("v1/echo")!!).post(body(text)).build()
+        atProxy.answer = { it.reply(ANSWER) }
+
+        val full = client.executeRecoverable(post("""{"q":"$MARKER"}"""))
+        val empty = client.executeRecoverable(post(""))
+
+        assertEquals(ANSWER, full.response.text())
+        assertNotNull(full.recoveryToken)
+        // A body that turns out to be empty is sent like no body: nothing
+        // is sealed, and nothing authenticates the response.
+        assertEquals(ANSWER, empty.response.text())
+        assertNull(empty.recoveryToken)
+        assertNull(empty.response.header(RESPONSE_NONCE_HEADER))
+        val (sealed, bare) = atProxy.received
+        assertTrue(sealed.sealed)
+        assertEquals("""{"q":"$MARKER"}""", sealed.text)
+        assertFalse(sealed.wire.containsText(MARKER))
+        assertFalse(bare.sealed)
+        assertEquals(0, bare.wire.size)
+        assertEquals("0", bare.request.getHeader("Content-Length"))
+        assertEquals(2, writes.get(), "each body was asked to write once")
+    }
+
+    @Test
     fun theUserCacheSecretIsAddedBeforeTheBodyIsSealed() = test {
         val client = proxied(userCacheSecret = CACHE_SECRET)
 
