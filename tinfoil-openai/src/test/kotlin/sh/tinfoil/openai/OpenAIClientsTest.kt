@@ -33,21 +33,17 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import sh.tinfoil.AttestationException
-import sh.tinfoil.Client
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
-import sh.tinfoil.Tinfoil
-import sh.tinfoil.TinfoilEvent
 import sh.tinfoil.TransportMode
 import sh.tinfoil.VerificationLayer
-import sh.tinfoil.Verifier
-import sh.tinfoil.internal.SdkIdentity
-import sh.tinfoil.internal.TinfoilEvents
+import sh.tinfoil.openai.internal.TinfoilEvents
 import sh.tinfoil.testing.RawTlsServer
 import sh.tinfoil.testing.SealingDispatcher
 import sh.tinfoil.testing.SealingKey
 import sh.tinfoil.testing.TestEnclave
+import sh.tinfoil.testing.attestationFailure
 import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.fingerprint
@@ -72,7 +68,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** The OpenAI clients: everything that the OpenAI SDK sends goes through the attested client, and nowhere else. */
@@ -526,7 +521,7 @@ class OpenAIClientsTest {
 
     @Test
     fun aFailedCreationLeavesNothingOpen() = test {
-        enclave.verifyWith { _, _, _ -> throw AttestationException("not this enclave", layer = VerificationLayer.POLICY) }
+        enclave.verifyWith { _, _, _ -> throw attestationFailure("not this enclave", layer = VerificationLayer.POLICY) }
 
         val error = assertFailsWith<AttestationException> { enclaveClient() }
 
@@ -677,7 +672,7 @@ class OpenAIClientsTest {
     fun anEnclaveThatFailsItsVerificationIsNotTriedAgainByTheOpenAiSdk() = test {
         val sleeper = NoSleep()
         val client = enclaveClient(configure = { sleeper(sleeper) })
-        enclave.verifyWith { _, _, _ -> throw AttestationException("the quote is forged", layer = VerificationLayer.QUOTE) }
+        enclave.verifyWith { _, _, _ -> throw attestationFailure("the quote is forged", layer = VerificationLayer.QUOTE) }
         enclave.clock.advance(enclave.lifetimeSeconds + 1)
 
         // What one request costs when it is sent directly.
@@ -885,14 +880,6 @@ class OpenAIClientsTest {
         assertEquals(6, sealing.received.size, "each attempt was sent once to a key that was gone, and once more")
         assertEquals(3, sealing.received.count { it.plaintext != null }, "the enclave could read three")
         assertEquals(1 + 3, enclave.fetches)
-    }
-
-    // The SDK's identity.
-
-    @Test
-    fun theVersionIsTheBuildsAndIsNotARelease() {
-        assertEquals(SdkIdentity.VERSION, Tinfoil.VERSION)
-        assertTrue(Regex("[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?").matches(Tinfoil.VERSION), Tinfoil.VERSION)
     }
 
     private companion object {

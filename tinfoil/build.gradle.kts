@@ -1,14 +1,14 @@
 import groovy.json.JsonException
 import groovy.json.JsonSlurper
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 import java.util.zip.ZipFile
 
 plugins {
-    alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.serialization)
+    id("tinfoil.android-library")
 }
+// It comes with the convention plugin's own dependencies, at the Kotlin
+// version of the version catalog, so it is applied by name.
+apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
 
 // The Go verifier library, TinfoilGo.aar, is built from tinfoil-go with its
 // scripts/build-mobile-android.sh. TINFOIL_GO_AAR, or the tinfoilGoAar Gradle
@@ -43,22 +43,9 @@ val unpackTinfoilGo by tasks.registering(Sync::class) {
 }
 val tinfoilGoDir = layout.buildDirectory.dir("tinfoil-go").get().asFile
 
-// TINFOIL_CONFORMANCE=1, or the tinfoilConformance Gradle property, selects
-// the conformance build: TINFOIL_GO_AAR then names a verifier library built
-// with MOBILE_BUILD_TAGS=tinfoil_conformance, and the conformance tests are
-// compiled against it. That library has two test-only entry points, which
-// replace the trust anchors and set the clock, so nothing built in this mode
-// may be packaged or published.
-val isConformanceBuild: Boolean = providers.environmentVariable("TINFOIL_CONFORMANCE")
-    .orElse(providers.gradleProperty("tinfoilConformance"))
-    .orNull
-    .let { setting ->
-        when (setting) {
-            null, "", "0" -> false
-            "1" -> true
-            else -> throw GradleException("TINFOIL_CONFORMANCE must be 1 or 0, not \"$setting\"")
-        }
-    }
+// Whether this is the conformance build, which the convention plugin reads
+// from TINFOIL_CONFORMANCE and refuses to package.
+val isConformanceBuild: Boolean = extra["tinfoilConformanceBuild"] as Boolean
 
 // Fails the build when the unpacked verifier library is not the kind that
 // this build is for: a test-only entry point outside the conformance build,
@@ -131,26 +118,6 @@ val checkVerifierLibraryEntryPoints by tasks.registering(CheckVerifierLibraryEnt
 // Every variant's native-library, keep-rule and compile tasks read the
 // unpacked library, and each depends on preBuild.
 tasks.named("preBuild") { dependsOn(unpackTinfoilGo, checkVerifierLibraryEntryPoints) }
-
-// The conformance build exists to run instrumented tests. A task that
-// packages the library, belongs to the release variant or publishes anything
-// is refused before any task runs, so that the test-only verifier library
-// cannot reach an artifact of this SDK.
-if (isConformanceBuild) {
-    val projectPrefix = "${project.path}:"
-    val refusedNames = Regex("(?i).*release.*|publish.*|bundle.*Aar")
-    gradle.taskGraph.whenReady {
-        val refused = allTasks.map { it.path }
-            .filter { it.startsWith(projectPrefix) && refusedNames.matches(it.removePrefix(projectPrefix)) }
-        if (refused.isNotEmpty()) {
-            throw GradleException(
-                "TINFOIL_CONFORMANCE=1 builds against the test-only verifier library, which must never ship, " +
-                    "so it only runs the instrumented tests. Refused: ${refused.take(5).joinToString()}" +
-                    if (refused.size > 5) " and ${refused.size - 5} more" else "",
-            )
-        }
-    }
-}
 
 // The conformance tests run the full-verify vectors of the conformance suite
 // at the commit in tinfoil-conformance.properties. TINFOIL_CONFORMANCE_VECTORS,
@@ -263,6 +230,44 @@ val generateSdkVersion by tasks.registering(GenerateSdkVersion::class) {
     sdkVersion.set(providers.provider { project.version.toString() })
 }
 
+// This artifact is for apps that want the verifier and the attested HTTP
+// clients without the OpenAI SDK, which, with Jackson and kotlin-reflect,
+// adds megabytes that shrinking does not remove. So none of them may be
+// among what this artifact brings to an app, directly or through another
+// dependency: they belong to tinfoil-openai.
+abstract class CheckRuntimeDependencies : DefaultTask() {
+    /** The modules of the runtime classpath, as `group:name`. */
+    @get:Input
+    abstract val modules: SetProperty<String>
+
+    @TaskAction
+    fun check() {
+        val unwanted = modules.get().filter { module -> UNWANTED.any { module.startsWith(it) } }.sorted()
+        if (unwanted.isNotEmpty()) {
+            throw GradleException(
+                "The tinfoil artifact must not depend on the OpenAI SDK, Jackson or kotlin-reflect, and its release " +
+                    "runtime classpath has ${unwanted.joinToString()}. Such a dependency belongs to tinfoil-openai.",
+            )
+        }
+    }
+
+    private companion object {
+        val UNWANTED = listOf("com.openai:", "com.fasterxml.jackson", "org.jetbrains.kotlin:kotlin-reflect")
+    }
+}
+
+// The check has no outputs, so it runs in every build.
+val checkRuntimeDependencies by tasks.registering(CheckRuntimeDependencies::class) {
+    modules.set(
+        providers.provider {
+            configurations.getByName("releaseRuntimeClasspath").incoming.resolutionResult.allComponents
+                .mapNotNull { (it.id as? ModuleComponentIdentifier)?.let { id -> "${id.group}:${id.module}" } }
+                .toSet()
+        },
+    )
+}
+tasks.named("preBuild") { dependsOn(checkRuntimeDependencies) }
+
 androidComponents {
     onVariants { variant ->
         variant.sources.java?.addGeneratedSourceDirectory(generateSdkVersion, GenerateSdkVersion::outputDir)
@@ -277,11 +282,8 @@ androidComponents {
 
 android {
     namespace = "sh.tinfoil"
-    compileSdk = 35
 
     defaultConfig {
-        minSdk = 26
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles(tinfoilGoDir.resolve("proguard.txt"))
     }
 
@@ -299,28 +301,18 @@ android {
     testFixtures {
         enable = true
     }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    lint {
-        warningsAsErrors = true
-        abortOnError = true
-        // Versions are pinned and bumped deliberately, in their own changes.
-        disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "NewerVersionAvailable")
-    }
 }
 
 kotlin {
-    explicitApi()
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
-        allWarningsAsErrors.set(true)
         // This module owns what is marked for the SDK's other artifacts.
         optIn.add("sh.tinfoil.InternalTinfoilApi")
     }
+}
+
+// ExperimentalApiTest reads the committed API.
+tasks.withType<Test>().configureEach {
+    inputs.files("api/tinfoil.api").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {
@@ -335,14 +327,6 @@ dependencies {
     // The EHBP client and, through it, Bouncy Castle. No EHBP type is part of
     // the public API.
     implementation(libs.ehbp)
-    // The OpenAI SDK's client and model types are part of the public API.
-    // Only its core is used: the SDK's own HTTP client, the artifact
-    // openai-java-client-okhttp, must stay off the classpath, so that
-    // nothing but this SDK's attested clients can carry its requests. A
-    // test checks that.
-    api(libs.openai.java.core)
-    // The OpenAI SDK reflects on its models with kotlin-reflect at run time.
-    implementation(libs.kotlin.reflect)
 
     testFixturesApi(libs.okhttp.tls)
     testFixturesApi(libs.okhttp.mockwebserver)

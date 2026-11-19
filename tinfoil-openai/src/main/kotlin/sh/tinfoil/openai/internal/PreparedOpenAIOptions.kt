@@ -1,6 +1,6 @@
 @file:OptIn(InternalTinfoilApi::class)
 
-package sh.tinfoil.internal
+package sh.tinfoil.openai.internal
 
 import com.openai.client.OpenAIClient
 import com.openai.client.OpenAIClientImpl
@@ -10,6 +10,7 @@ import okhttp3.Call
 import okhttp3.HttpUrl
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.InternalTinfoilApi
+import sh.tinfoil.internal.CrossArtifact
 
 /**
  * The OpenAI SDK's options for a client of this SDK, checked and complete

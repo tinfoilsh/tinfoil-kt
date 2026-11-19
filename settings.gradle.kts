@@ -1,4 +1,6 @@
 pluginManagement {
+    // The convention plugin that the modules share.
+    includeBuild("build-logic")
     repositories {
         google()
         mavenCentral()
@@ -15,7 +17,10 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "tinfoil-kt"
+// tinfoil is the verifier and the attested HTTP clients; tinfoil-openai puts
+// the OpenAI SDK over them, and is the only module that depends on it.
 include(":tinfoil")
+include(":tinfoil-openai")
 
 // The EHBP client is not released yet, so it is built from source, as an
 // included build of a checkout of

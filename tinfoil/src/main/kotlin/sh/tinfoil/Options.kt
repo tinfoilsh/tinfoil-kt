@@ -5,9 +5,10 @@ import sh.tinfoil.internal.RouteSettings
 
 /**
  * Marks the receivers of the options blocks that the clients' `create`
- * functions take, so that a block that is nested in another, such as
- * `openAI { }`, sets only its own options: inside it, an option of the outer
- * block is a compile error unless it is named with its receiver.
+ * functions take, so that a block that is nested in another, such as the
+ * `openAI { }` of the OpenAI clients, sets only its own options: inside it,
+ * an option of the outer block is a compile error unless it is named with
+ * its receiver.
  */
 @DslMarker
 @Target(AnnotationTarget.CLASS, AnnotationTarget.TYPE)

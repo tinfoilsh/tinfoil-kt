@@ -1,12 +1,23 @@
 @file:OptIn(InternalTinfoilApi::class)
 
-package sh.tinfoil
+package sh.tinfoil.openai
 
 import com.openai.core.ClientOptions
+import sh.tinfoil.ConfigurationException
+import sh.tinfoil.EnclaveHttpClient
+import sh.tinfoil.EnclaveOptions
+import sh.tinfoil.ExperimentalTinfoilApi
+import sh.tinfoil.GatewayHttpClient
+import sh.tinfoil.GatewayOptions
+import sh.tinfoil.InternalTinfoilApi
+import sh.tinfoil.RouterHttpClient
+import sh.tinfoil.RouterOptions
+import sh.tinfoil.TinfoilOptionsDsl
+import sh.tinfoil.TransportMode
 import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.GatewaySettings
-import sh.tinfoil.internal.OpenAISettings
 import sh.tinfoil.internal.RouteSettings
+import sh.tinfoil.openai.internal.OpenAISettings
 
 /**
  * The options of the OpenAI client that this SDK puts over an attested
@@ -64,7 +75,7 @@ public sealed interface OpenAIOptions {
 }
 
 /**
- * The options of [sh.tinfoil.openai.EnclaveOpenAIClient.create]: those of
+ * The options of [EnclaveOpenAIClient.create]: those of
  * the [EnclaveHttpClient] that the client sends through, which
  * [EnclaveOptions] describes, and those of the OpenAI client, which
  * [OpenAIOptions] describes, all set in the one block that `create` takes:
@@ -88,7 +99,7 @@ public sealed interface OpenAIOptions {
 public sealed class EnclaveOpenAIOptions : EnclaveOptions(), OpenAIOptions
 
 /**
- * The options of [sh.tinfoil.openai.RouterOpenAIClient.create]: those of
+ * The options of [RouterOpenAIClient.create]: those of
  * the [RouterHttpClient] that the client sends through, which
  * [RouterOptions] describes, and those of the OpenAI client, which
  * [OpenAIOptions] describes, all set in the one block that `create` takes:
@@ -113,7 +124,7 @@ public sealed class EnclaveOpenAIOptions : EnclaveOptions(), OpenAIOptions
 public sealed class RouterOpenAIOptions : RouterOptions(), OpenAIOptions
 
 /**
- * The options of [sh.tinfoil.openai.GatewayOpenAIClient.create]: those of
+ * The options of [GatewayOpenAIClient.create]: those of
  * the [GatewayHttpClient] that the client sends through, which
  * [GatewayOptions] describes, and those of the OpenAI client, which
  * [OpenAIOptions] describes, all set in the one block that `create` takes:

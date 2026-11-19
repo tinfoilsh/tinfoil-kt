@@ -1,6 +1,6 @@
-package sh.tinfoil.internal
+package sh.tinfoil.openai.internal
 
-import sh.tinfoil.TinfoilEvent
+import sh.tinfoil.openai.TinfoilEvent
 
 /** How a set of [TinfoilEvent]s is asked for. */
 internal object TinfoilEvents {

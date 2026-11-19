@@ -102,12 +102,13 @@ jobs:
           # Pull requests read the cache and never write it.
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      # In both modules, tinfoil and tinfoil-openai.
       - name: Build, lint, run the unit tests and check the public API
-        run: ./gradlew --console=plain :tinfoil:assembleRelease :tinfoil:lintRelease :tinfoil:testDebugUnitTest :tinfoil:apiCheck
+        run: ./gradlew --console=plain assembleRelease lintRelease testDebugUnitTest apiCheck
 
       # The tests that reach the verifier library are instrumented tests, which
       # need an emulator; they are run locally for now
-      # (./gradlew :tinfoil:connectedDebugAndroidTest).
+      # (./gradlew connectedDebugAndroidTest).
       #
       # So are the conformance tests, which also need a verifier library built
       # with MOBILE_BUILD_TAGS=tinfoil_conformance and the vectors of

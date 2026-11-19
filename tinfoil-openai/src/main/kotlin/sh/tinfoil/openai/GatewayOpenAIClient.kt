@@ -8,14 +8,12 @@ import kotlinx.coroutines.CancellationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
-import sh.tinfoil.GatewayOpenAIOptions
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
-import sh.tinfoil.gatewayOpenAISettings
 import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.GatewaySettings
-import sh.tinfoil.internal.OpenAISettings
-import sh.tinfoil.internal.PreparedOpenAIOptions
+import sh.tinfoil.openai.internal.OpenAISettings
+import sh.tinfoil.openai.internal.PreparedOpenAIOptions
 import java.io.IOException
 
 /**

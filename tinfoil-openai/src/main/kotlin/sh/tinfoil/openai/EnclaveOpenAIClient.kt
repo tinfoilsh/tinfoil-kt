@@ -8,17 +8,15 @@ import kotlinx.coroutines.CancellationException
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.EnclaveHttpClient
-import sh.tinfoil.EnclaveOpenAIOptions
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.TransportMode
-import sh.tinfoil.enclaveOpenAISettings
 import sh.tinfoil.internal.CrossArtifact
-import sh.tinfoil.internal.OpenAISettings
-import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.tinfoilException
+import sh.tinfoil.openai.internal.OpenAISettings
+import sh.tinfoil.openai.internal.PreparedOpenAIOptions
 import java.io.IOException
 
 /**

@@ -1,4 +1,4 @@
-package sh.tinfoil.internal
+package sh.tinfoil.openai.internal
 
 import com.openai.core.RequestOptions
 import com.openai.core.Timeout
@@ -14,6 +14,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import sh.tinfoil.ConfigurationException
+import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.tinfoilException
 import java.io.OutputStream
@@ -201,7 +202,7 @@ class OpenAIHttpAdapterTest {
         assertIs<OpenAIIoException>(async?.cause, "port $port")
 
         val refused = OpenAIHttpAdapter(null).apply {
-            bind { throw ConfigurationException("refusing to send a request") }
+            bind { throw CrossArtifact.configurationException("refusing to send a request") }
         }
         val refusal = assertFailsWith<OpenAIException> { refused.execute(request()) }
         assertEquals(OpenAIException::class.java, refusal.javaClass)

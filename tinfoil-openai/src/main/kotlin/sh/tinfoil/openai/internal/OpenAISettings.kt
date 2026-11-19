@@ -1,7 +1,7 @@
-package sh.tinfoil.internal
+package sh.tinfoil.openai.internal
 
 import com.openai.core.ClientOptions
-import sh.tinfoil.TinfoilEvent
+import sh.tinfoil.openai.TinfoilEvent
 
 /** The options of the OpenAI client that is put over an attested client. */
 internal class OpenAISettings(

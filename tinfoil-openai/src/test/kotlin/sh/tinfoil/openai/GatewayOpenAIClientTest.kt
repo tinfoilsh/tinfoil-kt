@@ -20,8 +20,6 @@ import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.ModelPin
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
-import sh.tinfoil.TinfoilEvent
-import sh.tinfoil.Verifier
 import sh.tinfoil.testing.TestGateway
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.tinfoilException

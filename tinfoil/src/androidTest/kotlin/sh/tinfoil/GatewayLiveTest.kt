@@ -5,9 +5,6 @@ package sh.tinfoil
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.openai.errors.OpenAIServiceException
-import com.openai.models.chat.completions.ChatCompletionCreateParams
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,8 +13,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.runner.RunWith
-import sh.tinfoil.openai.GatewayOpenAIClient
-import sh.tinfoil.openai.asFlow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -166,38 +161,6 @@ class GatewayLiveTest {
                 GatewayHttpClient.create { modelPins = mapOf("m" to ModelPin(repo)) }
             }
             Log.i(TAG, "pin $repo: ${error.detail}")
-        }
-    }
-
-    @Test
-    fun theOpenAiSdkReachesAReplicaThroughTheGateway() = live {
-        val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        GatewayOpenAIClient.create(NOT_A_KEY) { openAI { maxRetries(0) } }.use { client ->
-            val params = ChatCompletionCreateParams.builder().model(model).addUserMessage("hello").maxCompletionTokens(8).build()
-            val error = assertFailsWith<OpenAIServiceException> { client.openAI.chat().completions().create(params) }
-            Log.i(TAG, "OpenAI SDK through the gateway under a key that is none: ${error.javaClass.simpleName} (${error.statusCode()})")
-            assertTrue(error.statusCode() in 400..499)
-            assertNull(error.tinfoilException, "the refusal is the API's, not this SDK's")
-            assertEquals(1, client.httpClient.current.size)
-        }
-    }
-
-    @Test
-    fun aChatIsCompletedAndStreamedThroughTheGateway() = live {
-        val key = apiKey()
-        val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        GatewayOpenAIClient.create(key).use { client ->
-            val params = ChatCompletionCreateParams.builder().model(model)
-                .addUserMessage("Reply with the single word: ready").maxCompletionTokens(64).build()
-            val answer = client.openAI.chat().completions().create(params)
-            val text = answer.choices().first().message().content().orElse("")
-            Log.i(TAG, "gateway: a chat completion of ${text.length} characters, model ${answer.model()}")
-            assertNotNull(answer.id())
-
-            val chunks = client.openAIAsync.chat().completions().createStreaming(params).asFlow().toList()
-            Log.i(TAG, "gateway: a streamed completion in ${chunks.size} chunks")
-            assertTrue(chunks.size > 1, "the completion arrived in ${chunks.size} chunk(s)")
-            assertTrue(client.httpClient.current.isNotEmpty())
         }
     }
 

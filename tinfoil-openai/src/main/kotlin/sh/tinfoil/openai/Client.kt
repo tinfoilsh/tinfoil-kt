@@ -1,17 +1,21 @@
 @file:OptIn(InternalTinfoilApi::class)
 
-package sh.tinfoil
+package sh.tinfoil.openai
 
 import com.openai.client.OpenAIClient
 import com.openai.client.OpenAIClientAsync
 import kotlinx.coroutines.CancellationException
 import okhttp3.Call
 import okhttp3.HttpUrl
+import sh.tinfoil.AttestationException
+import sh.tinfoil.ConfigurationException
+import sh.tinfoil.InternalTinfoilApi
+import sh.tinfoil.NetworkException
+import sh.tinfoil.RouterHttpClient
+import sh.tinfoil.Verifier
 import sh.tinfoil.internal.CrossArtifact
-import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
-import sh.tinfoil.openai.EnclaveOpenAIClient
-import sh.tinfoil.openai.RouterOpenAIClient
+import sh.tinfoil.openai.internal.PreparedOpenAIOptions
 import java.io.IOException
 
 /**
@@ -26,8 +30,8 @@ import java.io.IOException
  * the route, so that the route can change without breaking its callers. To
  * choose the enclave, pin what it runs, tighten the trust policy, send
  * through a proxy or observe verifications, use
- * [sh.tinfoil.openai.RouterOpenAIClient] or
- * [sh.tinfoil.openai.EnclaveOpenAIClient].
+ * [RouterOpenAIClient] or
+ * [EnclaveOpenAIClient].
  *
  * How failures of this SDK reach the caller of [openAI], how often a request
  * can be sent again, which timeouts and cancellations apply, and what a
@@ -56,7 +60,7 @@ public class Client private constructor(
     /**
      * The same client with calls that return a `CompletableFuture`, which a
      * coroutine awaits with `kotlinx.coroutines.future.await`, and streams
-     * that [sh.tinfoil.openai.asFlow] turns into flows.
+     * that [asFlow] turns into flows.
      */
     public val openAIAsync: OpenAIClientAsync get() = route.openAIAsync
 

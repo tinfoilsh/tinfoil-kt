@@ -1,7 +1,8 @@
 plugins {
-    alias(libs.plugins.android.library) apply false
-    alias(libs.plugins.kotlin.android) apply false
-    alias(libs.plugins.kotlin.serialization) apply false
+    // Loaded here, and applied by the modules, so that every project of the
+    // build, and the API validator below, sees one copy of the Android and
+    // Kotlin plugins that come with it.
+    id("tinfoil.android-library") apply false
     alias(libs.plugins.binary.compatibility.validator)
 }
 

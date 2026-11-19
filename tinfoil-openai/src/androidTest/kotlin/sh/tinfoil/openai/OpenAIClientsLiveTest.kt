@@ -14,7 +14,6 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.runner.RunWith
-import sh.tinfoil.Client
 import sh.tinfoil.Pin
 import sh.tinfoil.TransportMode
 import sh.tinfoil.tinfoilException

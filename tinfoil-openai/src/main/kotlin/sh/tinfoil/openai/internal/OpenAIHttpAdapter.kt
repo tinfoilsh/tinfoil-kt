@@ -1,6 +1,6 @@
 @file:OptIn(InternalTinfoilApi::class)
 
-package sh.tinfoil.internal
+package sh.tinfoil.openai.internal
 
 import com.openai.core.RequestOptions
 import com.openai.core.http.Headers
@@ -22,6 +22,7 @@ import okio.BufferedSink
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.InternalTinfoilApi
+import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.NetworkException
 import sh.tinfoil.TinfoilException
 import java.io.FilterInputStream

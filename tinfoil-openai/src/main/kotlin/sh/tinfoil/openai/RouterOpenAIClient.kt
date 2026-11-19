@@ -10,12 +10,10 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.RouterHttpClient
-import sh.tinfoil.RouterOpenAIOptions
 import sh.tinfoil.internal.CrossArtifact
-import sh.tinfoil.internal.OpenAISettings
-import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
-import sh.tinfoil.routerOpenAISettings
+import sh.tinfoil.openai.internal.OpenAISettings
+import sh.tinfoil.openai.internal.PreparedOpenAIOptions
 import java.io.IOException
 
 /**
@@ -38,7 +36,7 @@ import java.io.IOException
  * describes them.
  *
  * It exists for as long as a router is Tinfoil's route to its models. For
- * inference that does not depend on the route, use [sh.tinfoil.Client].
+ * inference that does not depend on the route, use [Client].
  *
  * A client holds threads and connections until it is [closed][close]. It is
  * safe to use from several threads and coroutines at once.

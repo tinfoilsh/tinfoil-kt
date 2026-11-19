@@ -1,4 +1,4 @@
-package sh.tinfoil
+package sh.tinfoil.openai
 
 /**
  * A kind of progress event that Tinfoil's router can report while it works
