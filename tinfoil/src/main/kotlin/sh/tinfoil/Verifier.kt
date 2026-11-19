@@ -88,7 +88,8 @@ public class Verifier private constructor(
          * registry as well as public ones, list both in `configRegistryIds`.
          */
         // A compile-time constant of the verifier library, so reading it
-        // does not load the library.
+        // does not load the library. It is a `const` here too: the ID is
+        // part of the protocol and does not change between versions.
         public const val PUBLIC_REGISTRY_ID: String = sh.tinfoil.go.mobile.Mobile.PublicRegistryID
     }
 }

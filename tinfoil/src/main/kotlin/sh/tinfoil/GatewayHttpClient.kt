@@ -252,7 +252,10 @@ public class GatewayHttpClient private constructor(
 
     public companion object {
         /** The base URL of Tinfoil's gateway, which a client uses unless it is given another. */
-        public const val DEFAULT_BASE_URL: String = GatewayRouter.DEFAULT_BASE_URL
+        // Not a `const`: the compiler would copy a constant's value into
+        // the code that reads it, which would then keep the URL that it was
+        // compiled against.
+        public val DEFAULT_BASE_URL: String = GatewayRouter.DEFAULT_BASE_URL
 
         /**
          * Creates a client for the gateway and fetches the gateway's

@@ -177,7 +177,6 @@ public abstract interface annotation class sh/tinfoil/ExperimentalTinfoilApi : j
 
 public final class sh/tinfoil/GatewayHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
 	public static final field Companion Lsh/tinfoil/GatewayHttpClient$Companion;
-	public static final field DEFAULT_BASE_URL Ljava/lang/String;
 	public synthetic fun <init> (Lsh/tinfoil/internal/gateway/GatewayRouter;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -194,6 +193,7 @@ public final class sh/tinfoil/GatewayHttpClient$Companion {
 	public final fun create (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun create$default (Lsh/tinfoil/GatewayHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun fetchCatalog (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getDEFAULT_BASE_URL ()Ljava/lang/String;
 }
 
 public abstract class sh/tinfoil/GatewayOpenAIOptions : sh/tinfoil/GatewayOptions, sh/tinfoil/OpenAIOptions {
@@ -370,7 +370,7 @@ public final class sh/tinfoil/SoftwareIdentity {
 
 public final class sh/tinfoil/Tinfoil {
 	public static final field INSTANCE Lsh/tinfoil/Tinfoil;
-	public static final field VERSION Ljava/lang/String;
+	public final fun getVERSION ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/TinfoilErrors {
