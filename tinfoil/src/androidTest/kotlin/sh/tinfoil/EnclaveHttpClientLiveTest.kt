@@ -53,12 +53,10 @@ class EnclaveHttpClientLiveTest {
         val seen = CopyOnWriteArrayList<Verification>()
         val results = CopyOnWriteArrayList<Result<Verification>>()
 
-        EnclaveHttpClient.create(
-            enclave = enclave,
-            pin = pin,
-            verificationCheck = { seen += it },
-            onVerificationResult = { results += it },
-        ).use { client ->
+        EnclaveHttpClient.create(enclave = enclave, pin = pin) {
+            verificationCheck = VerificationCheck { seen += it }
+            onVerificationResult = { results += it }
+        }.use { client ->
             val verified = assertNotNull(client.current, "a client is verified when it is returned")
             assertSame(verified, seen.single())
             assertSame(verified, awaitOne(results).getOrThrow())
@@ -98,11 +96,9 @@ class EnclaveHttpClientLiveTest {
         val results = CopyOnWriteArrayList<Result<Verification>>()
 
         val error = assertFailsWith<AttestationException> {
-            EnclaveHttpClient.create(
-                enclave = enclave,
-                pin = Pin(repo = "tinfoilsh/not-the-router"),
-                onVerificationResult = { results += it },
-            )
+            EnclaveHttpClient.create(enclave = enclave, pin = Pin(repo = "tinfoilsh/not-the-router")) {
+                onVerificationResult = { results += it }
+            }
         }
 
         assertNotNull(error.layer, error.message)

@@ -49,13 +49,18 @@ class GatewayOpenAIClientTest {
         pinnedModelsOnly: Boolean = false,
         baseUrl: String? = gateway.baseUrl,
         userCacheSecret: String? = "test-secret",
-        apiKey: String? = KEY,
+        apiKey: String = KEY,
         tinfoilEvents: Set<TinfoilEvent> = emptySet(),
         configure: (ClientOptions.Builder.() -> Unit)? = null,
-    ): GatewayOpenAIClient = GatewayOpenAIClient.create(
-        modelPins, pinnedModelsOnly, baseUrl, Verifier.appraisingWith(gateway.verifier), userCacheSecret, null, null,
-        null, apiKey, tinfoilEvents, configure, gateway.internals(),
-    ).also(gateway::track)
+    ): GatewayOpenAIClient = GatewayOpenAIClient.create(apiKey, gateway.internals()) {
+        this.modelPins = modelPins
+        this.pinnedModelsOnly = pinnedModelsOnly
+        this.baseUrl = baseUrl
+        verifier = Verifier.appraisingWith(gateway.verifier)
+        this.userCacheSecret = userCacheSecret
+        this.tinfoilEvents = tinfoilEvents
+        configure?.let { openAI(it) }
+    }.also(gateway::track)
 
     private fun params(prompt: String = "hello", model: String = "a-model"): ChatCompletionCreateParams =
         ChatCompletionCreateParams.builder().model(model).addUserMessage(prompt).build()
@@ -175,7 +180,7 @@ class GatewayOpenAIClientTest {
 
     @Test
     fun optionsAreCheckedBeforeAnyIoAndACatalogThatCannotBeFetchedFailsTheCreation() = test {
-        assertFailsWith<ConfigurationException> { client(apiKey = null) }
+        assertFailsWith<ConfigurationException> { client(apiKey = "") }
         assertFailsWith<ConfigurationException> { client(pinnedModelsOnly = true) }
         assertFailsWith<ConfigurationException> { client(baseUrl = "http://${gateway.host}/v1/") }
         assertEquals(0, gateway.server.requestCount)

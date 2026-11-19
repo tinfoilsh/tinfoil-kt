@@ -77,7 +77,7 @@ class GatewayLiveTest {
     @Test
     fun aReplicaIsVerifiedThroughTheGatewayAndAnswersASealedRequest() = live {
         val results = java.util.concurrent.CopyOnWriteArrayList<Result<Verification>>()
-        GatewayHttpClient.create(onVerificationResult = { results += it }).use { client ->
+        GatewayHttpClient.create { onVerificationResult = { results += it } }.use { client ->
             assertEquals(GatewayHttpClient.DEFAULT_BASE_URL, client.baseUrl.toString())
             val models = client.models()
             Log.i(TAG, "models: $models")
@@ -133,7 +133,10 @@ class GatewayLiveTest {
         val catalog = GatewayHttpClient.fetchCatalog(gateway)
         val (model, entry) = catalog.entries.entries.first()
         val other = catalog.entries.keys.firstOrNull { it != model }
-        GatewayHttpClient.create(modelPins = mapOf(model to ModelPin(entry.repo)), pinnedModelsOnly = true).use { client ->
+        GatewayHttpClient.create {
+            modelPins = mapOf(model to ModelPin(entry.repo))
+            pinnedModelsOnly = true
+        }.use { client ->
             assertEquals(listOf(model), client.models())
             val verification = client.ensureVerified(model)
             assertEquals(entry.repo, verification.configRepo ?: entry.repo)
@@ -143,13 +146,13 @@ class GatewayLiveTest {
             }
         }
         // A pin to another repository than the one that serves the model.
-        GatewayHttpClient.create(modelPins = mapOf(model to ModelPin("tinfoilsh/confidential-model-router"))).use { client ->
+        GatewayHttpClient.create { modelPins = mapOf(model to ModelPin("tinfoilsh/confidential-model-router")) }.use { client ->
             val error = assertFailsWith<AttestationException> { client.ensureVerified(model) }
             Log.i(TAG, "a pin to another repository: ${error.detail}")
             assertEquals(emptyList(), client.current)
         }
         // A pin to a release that the replicas do not run.
-        GatewayHttpClient.create(modelPins = mapOf(model to ModelPin("${entry.repo}@v0.0.0-no-such-release"))).use { client ->
+        GatewayHttpClient.create { modelPins = mapOf(model to ModelPin("${entry.repo}@v0.0.0-no-such-release")) }.use { client ->
             val error = assertFailsWith<TinfoilException> { client.ensureVerified(model) }
             Log.i(TAG, "a pin to a release that is not running: ${error.message}")
             assertTrue(error is AttestationException, "$error")
@@ -161,7 +164,7 @@ class GatewayLiveTest {
     fun aPinThatIsNotAReferenceIsRefusedByTheVerifier() = live {
         for (repo in listOf("tinfoilsh/bad@@", "tinfoilsh/a b", "tinfoilsh/a@sha256:zz", "tinfoilsh/")) {
             val error = assertFailsWith<ConfigurationException>(repo) {
-                GatewayHttpClient.create(modelPins = mapOf("m" to ModelPin(repo)))
+                GatewayHttpClient.create { modelPins = mapOf("m" to ModelPin(repo)) }
             }
             Log.i(TAG, "pin $repo: ${error.detail}")
         }
@@ -170,7 +173,7 @@ class GatewayLiveTest {
     @Test
     fun theOpenAiSdkReachesAReplicaThroughTheGateway() = live {
         val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        GatewayOpenAIClient.create(apiKey = NOT_A_KEY, configure = { maxRetries(0) }).use { client ->
+        GatewayOpenAIClient.create(NOT_A_KEY) { openAI { maxRetries(0) } }.use { client ->
             val params = ChatCompletionCreateParams.builder().model(model).addUserMessage("hello").maxCompletionTokens(8).build()
             val error = assertFailsWith<OpenAIServiceException> { client.openAI.chat().completions().create(params) }
             Log.i(TAG, "OpenAI SDK through the gateway under a key that is none: ${error.javaClass.simpleName} (${error.statusCode()})")
@@ -184,7 +187,7 @@ class GatewayLiveTest {
     fun aChatIsCompletedAndStreamedThroughTheGateway() = live {
         val key = apiKey()
         val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        GatewayOpenAIClient.create(apiKey = key).use { client ->
+        GatewayOpenAIClient.create(key).use { client ->
             val params = ChatCompletionCreateParams.builder().model(model)
                 .addUserMessage("Reply with the single word: ready").maxCompletionTokens(64).build()
             val answer = client.openAI.chat().completions().create(params)

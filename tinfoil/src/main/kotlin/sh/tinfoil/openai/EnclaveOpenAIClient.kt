@@ -2,21 +2,20 @@ package sh.tinfoil.openai
 
 import com.openai.client.OpenAIClient
 import com.openai.client.OpenAIClientAsync
-import com.openai.core.ClientOptions
 import kotlinx.coroutines.CancellationException
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.EnclaveHttpClient
+import sh.tinfoil.EnclaveOpenAIOptions
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
-import sh.tinfoil.TinfoilEvent
 import sh.tinfoil.TransportMode
-import sh.tinfoil.Verification
-import sh.tinfoil.VerificationCheck
-import sh.tinfoil.Verifier
+import sh.tinfoil.enclaveOpenAISettings
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
-import sh.tinfoil.internal.OpenAIOptions
+import sh.tinfoil.internal.OpenAISettings
+import sh.tinfoil.internal.PreparedOpenAIOptions
+import sh.tinfoil.internal.RouteSettings
 import java.io.IOException
 
 /**
@@ -133,42 +132,40 @@ public class EnclaveOpenAIClient private constructor(
          * Creates an [EnclaveHttpClient] for [enclave], verified against
          * [pin] before this returns, and an OpenAI client over it.
          *
-         * Every argument is checked before any network I/O, the OpenAI
-         * options included.
+         * Everything else is an option, set in the one block that [options]
+         * is and described by [EnclaveOpenAIOptions]:
          *
-         * It is safe to call from the main thread: the OpenAI options are
-         * prepared, the other options are checked, which loads the native
-         * verifier library the first time, and everything is fetched and
-         * verified on background threads.
+         * ```
+         * val client = EnclaveOpenAIClient.create("enclave.example.com", pin, apiKey) {
+         *     transportMode = TransportMode.Ehbp
+         *     openAI { maxRetries(0) }
+         * }
+         * ```
          *
-         * The parameters from [enclave] to [onVerificationResult] are those
-         * of [EnclaveHttpClient.create], which describes them. Its
-         * `userCacheSecret` is added to the chat, completions and responses
-         * requests that the OpenAI client sends; a request that sets
-         * `user_cache_secret` itself, as an additional body property, keeps
-         * its own.
+         * Every argument and option is checked before any network I/O, the
+         * OpenAI options included.
          *
-         * @param baseUrl Where the OpenAI client's requests are sent, used
-         *   as it is given: the OpenAI API's paths, such as
-         *   `chat/completions`, are joined under it. Null selects
-         *   `https://<enclave>/v1/`.
+         * It is safe to call from the main thread. [options] runs once, on
+         * the calling thread, before anything else, and what it set is
+         * copied as it returns; what it throws is thrown from here as it
+         * is, and nothing is contacted. The block that it gave to
+         * `openAI { }` runs later, once, on a background thread, where the
+         * OpenAI options are prepared and the other options are checked,
+         * which loads the native verifier library the first time, and
+         * where everything is fetched and verified.
+         *
+         * @param enclave The enclave's host, with an optional port, such as
+         *   `inference.tinfoil.sh`. Not a URL.
+         * @param pin What the enclave must be running; see
+         *   [EnclaveHttpClient.create].
          * @param apiKey The API key, sent as a bearer token with every
-         *   request, to the enclave only. It is required, unless [configure]
-         *   sets a credential. It is never read from the environment.
-         * @param tinfoilEvents The progress events to ask Tinfoil's router
-         *   for, with the `X-Tinfoil-Events` header of every request; see
-         *   [TinfoilEvent]. None by default, which sends no header. A
-         *   request, or [configure], that sets that header itself keeps its
-         *   own value.
-         * @param configure Sets any other option of the OpenAI client, such
-         *   as `maxRetries`, `timeout` or default headers, on the OpenAI
-         *   SDK's own options builder. It runs once, here, before any
-         *   network I/O, on a background thread. An HTTP client or a base
-         *   URL that it sets is replaced by this client's. Logging is off
-         *   unless it is turned on here; the builder's `fromEnv()`, if
-         *   called here, reads the environment as the OpenAI SDK documents.
-         * @throws ConfigurationException if an argument is invalid, or the
-         *   OpenAI options name no credential.
+         *   request, to the enclave only. It must not be empty or blank. It
+         *   is never read from the environment.
+         * @param options Sets the options; see [EnclaveOpenAIOptions].
+         *   Without it, every option has its default.
+         * @throws ConfigurationException if an argument or an option is
+         *   invalid: [apiKey] is empty or blank, or the OpenAI options do
+         *   not make a client. Its message never repeats the key.
          * @throws NetworkException if the attestation document cannot be
          *   fetched.
          * @throws AttestationException if the enclave is not to be trusted.
@@ -177,55 +174,47 @@ public class EnclaveOpenAIClient private constructor(
         public suspend fun create(
             enclave: String,
             pin: Pin,
-            transportMode: TransportMode = TransportMode.Tls,
-            baseUrl: String? = null,
-            attestationRelay: String? = null,
-            verifier: Verifier? = null,
-            userCacheSecret: String? = null,
-            verificationCheck: VerificationCheck? = null,
-            onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-            apiKey: String? = null,
-            tinfoilEvents: Set<TinfoilEvent> = emptySet(),
-            configure: (ClientOptions.Builder.() -> Unit)? = null,
-        ): EnclaveOpenAIClient = create(
-            enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
-            onVerificationResult, apiKey, tinfoilEvents, configure, Internals(),
-        )
+            apiKey: String,
+            options: EnclaveOpenAIOptions.() -> Unit = {},
+        ): EnclaveOpenAIClient = create(enclave, pin, apiKey, Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
             pin: Pin,
-            transportMode: TransportMode,
-            baseUrl: String?,
-            attestationRelay: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
-            apiKey: String?,
-            tinfoilEvents: Set<TinfoilEvent>,
-            configure: (ClientOptions.Builder.() -> Unit)?,
+            apiKey: String,
+            internals: Internals,
+            options: EnclaveOpenAIOptions.() -> Unit,
+        ): EnclaveOpenAIClient {
+            val (route, openAISettings) = enclaveOpenAISettings(options)
+            return create(enclave, pin, apiKey, route, openAISettings, internals)
+        }
+
+        /** [create] with options that were read already. */
+        @JvmSynthetic
+        internal suspend fun create(
+            enclave: String,
+            pin: Pin,
+            apiKey: String,
+            route: RouteSettings,
+            openAISettings: OpenAISettings,
             internals: Internals,
         ): EnclaveOpenAIClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val options = OpenAIOptions.prepare(apiKey, tinfoilEvents, configure)
+            val prepared = PreparedOpenAIOptions.prepare(apiKey, openAISettings)
             val httpClient = try {
-                EnclaveHttpClient.create(
-                    enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret,
-                    verificationCheck, onVerificationResult, internals,
-                )
+                EnclaveHttpClient.create(enclave, pin, route, internals)
             } catch (e: Throwable) {
-                options.discard()
+                prepared.discard()
                 throw e
             }
             val openAI = try {
-                options.bind(httpClient, OpenAIOptions.apiUrl(httpClient.baseUrl, baseUrl))
+                prepared.bind(httpClient, PreparedOpenAIOptions.apiUrl(httpClient.baseUrl, route.baseUrl))
             } catch (e: Throwable) {
-                options.discard()
+                prepared.discard()
                 httpClient.close()
                 throw e
             }

@@ -7,6 +7,7 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.internal.Background
+import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.gateway.GatewayCatalog
 import sh.tinfoil.internal.gateway.GatewayRouter
@@ -258,107 +259,52 @@ public class GatewayHttpClient private constructor(
          * catalog before this returns, so that a gateway that cannot be
          * reached fails here and not at the first request.
          *
-         * Every argument is checked before any network I/O. No replica is
+         * Everything is an option, set in the block that [options] is and
+         * described by [GatewayOptions]:
+         *
+         * ```
+         * val client = GatewayHttpClient.create {
+         *     modelPins = mapOf("a-model" to ModelPin("tinfoilsh/a-model"))
+         *     pinnedModelsOnly = true
+         * }
+         * ```
+         *
+         * Every option is checked before any network I/O. No replica is
          * verified here: a model's replicas are verified when a request
          * first needs them, so the pins may name models that the catalog
          * does not list, and a request for such a model fails.
          *
-         * It is safe to call from the main thread: the options are checked,
-         * which loads the native verifier library the first time, and
-         * everything is fetched on background threads. A caller that is
-         * cancelled just as the client is made does not receive it, and
-         * the client is closed.
+         * It is safe to call from the main thread. [options] runs once, on
+         * the calling thread, before anything else, and what it set is
+         * copied as it returns; what it throws is thrown from here as it
+         * is, and nothing is contacted. The options are then checked, which
+         * loads the native verifier library the first time, and everything
+         * is fetched on background threads. A caller that is cancelled just
+         * as the client is made does not receive it, and the client is
+         * closed.
          *
-         * @param modelPins The repository that each of these models must
-         *   run, by the model's name as requests give it, and optionally a
-         *   trust policy for the model. The map is copied.
-         * @param pinnedModelsOnly Whether to serve only the models in
-         *   [modelPins], which must then name at least one.
-         * @param baseUrl The gateway's base URL. Null selects Tinfoil's
-         *   gateway, [DEFAULT_BASE_URL]. It must be an absolute `https` URL
-         *   without user information, a query or a fragment. Attestation
-         *   documents and the catalog are fetched from its host.
-         * @param verifier The trust policy for the models that are not
-         *   pinned, and for the pins without a policy of their own. Null
-         *   selects the defaults. A verifier that supplies or authorizes
-         *   configs by itself, with an embedded config or a config
-         *   authorizer, is refused: replicas are verified against
-         *   repositories, so use [EnclaveHttpClient] for an enclave that
-         *   needs one.
-         * @param userCacheSecret The prompt-cache scope of the client's
-         *   requests; see [execute]. Requests with the same secret, under
-         *   the same API key, share cached prompt prefixes. A non-empty
-         *   `user_cache_secret` string in a request's body is used in its
-         *   place, so a server can give each of its users a cache of their
-         *   own. Null or empty selects a random secret that is generated
-         *   once in each process, kept only in memory, and shared by every
-         *   client in the process that is given none. Pass one to keep the
-         *   scope across processes or devices. Use an opaque random value,
-         *   not a user ID or an API key: the gateway sees a cache prefix
-         *   that is keyed on it, and could test guesses of a secret that
-         *   can be guessed, and then of the prompt.
-         * @param verificationCheck Called with each replica's verification
-         *   that passes its trust policy, for pinned models and others,
-         *   before the replica's key is used, and whenever a replica is
-         *   verified again. It throws to reject the replica, and the next
-         *   replica of the model is then tried. It must not call back into
-         *   the client.
-         * @param onVerificationResult Called with the outcome of every
-         *   verification of a replica: the verification, or the
-         *   [TinfoilException] that it failed with. It only observes, so
-         *   anything that it throws is ignored. It is called once the
-         *   verification is over, on a thread of the client's, and may be
-         *   called from several threads.
-         * @param catalog Called for every request, and by [models] and
-         *   [ensureVerified], in place of the gateway's catalog, which is
-         *   then never fetched. It is called on the thread that makes the
-         *   request, so it must be fast, and safe to call from several
-         *   threads. Its entries are held to the same rule as the
-         *   gateway's: a model whose repository is not `tinfoilsh/<name>`,
-         *   or that has no replicas, is not served. Null fetches the
-         *   gateway's catalog here, and again whenever the client is used
-         *   and the last fetch is more than 10 seconds old; a fetch that
-         *   fails keeps the last catalog. Nothing is fetched while the
-         *   client is idle.
-         * @throws ConfigurationException if an argument is invalid.
+         * @param options Sets the options; see [GatewayOptions]. Without
+         *   it, every option has its default.
+         * @throws ConfigurationException if an option is invalid.
          * @throws NetworkException if the catalog cannot be fetched or
          *   read.
          */
         @Throws(IOException::class, CancellationException::class)
-        public suspend fun create(
-            modelPins: Map<String, ModelPin> = emptyMap(),
-            pinnedModelsOnly: Boolean = false,
-            baseUrl: String? = null,
-            verifier: Verifier? = null,
-            userCacheSecret: String? = null,
-            verificationCheck: VerificationCheck? = null,
-            onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-            catalog: (() -> Catalog)? = null,
-        ): GatewayHttpClient = create(
-            modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck, onVerificationResult,
-            catalog, Internals(),
-        )
+        public suspend fun create(options: GatewayOptions.() -> Unit = {}): GatewayHttpClient =
+            create(Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
-        internal suspend fun create(
-            modelPins: Map<String, ModelPin>,
-            pinnedModelsOnly: Boolean,
-            baseUrl: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
-            catalog: (() -> Catalog)?,
-            internals: Internals,
-        ): GatewayHttpClient = Background.creating {
+        internal suspend fun create(internals: Internals, options: GatewayOptions.() -> Unit): GatewayHttpClient =
+            create(gatewaySettings(options), internals)
+
+        /** [create] with options that were read already. */
+        @JvmSynthetic
+        internal suspend fun create(settings: GatewaySettings, internals: Internals): GatewayHttpClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val client = unverified(
-                modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck,
-                onVerificationResult, catalog, internals,
-            )
+            val client = unverified(settings, internals)
             try {
                 // Reads the catalog, which is the fetch of it when the
                 // caller supplied none.
@@ -372,23 +318,14 @@ public class GatewayHttpClient private constructor(
 
         /**
          * A client that is checked but has fetched no catalog. Every
-         * argument is checked here, and nothing here performs I/O.
+         * option is checked here, and nothing here performs I/O.
          */
         @JvmSynthetic
-        internal fun unverified(
-            modelPins: Map<String, ModelPin>,
-            pinnedModelsOnly: Boolean,
-            baseUrl: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
-            catalog: (() -> Catalog)?,
-            internals: Internals,
-        ): GatewayHttpClient = GatewayHttpClient(
+        internal fun unverified(settings: GatewaySettings, internals: Internals): GatewayHttpClient = GatewayHttpClient(
             GatewayRouter.create(
-                modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck,
-                onVerificationResult, catalog, internals,
+                settings.modelPins, settings.pinnedModelsOnly, settings.baseUrl, settings.verifier,
+                settings.userCacheSecret, settings.verificationCheck, settings.onVerificationResult, settings.catalog,
+                internals,
             ),
         )
 

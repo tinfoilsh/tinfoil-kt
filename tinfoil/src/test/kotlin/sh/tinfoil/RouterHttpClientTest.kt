@@ -177,10 +177,15 @@ class RouterHttpClientTest {
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         internals: Internals = internals(),
-    ): RouterHttpClient = RouterHttpClient.create(
-        transportMode, baseUrl, attestationRelay, Verifier.appraisingWith(verifier), userCacheSecret, verificationCheck,
-        onVerificationResult, internals,
-    ).also { closeables += it }
+    ): RouterHttpClient = RouterHttpClient.create(internals) {
+        this.transportMode = transportMode
+        this.baseUrl = baseUrl
+        this.attestationRelay = attestationRelay
+        this.verifier = Verifier.appraisingWith(verifier)
+        this.userCacheSecret = userCacheSecret
+        this.verificationCheck = verificationCheck
+        this.onVerificationResult = onVerificationResult
+    }.also { closeables += it }
 
     @AfterTest
     fun shutDown() {

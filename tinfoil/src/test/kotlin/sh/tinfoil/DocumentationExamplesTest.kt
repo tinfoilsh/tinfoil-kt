@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
 @Suppress("unused")
 class DocumentationExamplesTest {
     private suspend fun chatCompletion(apiKey: String) {
-        val client = Client.create(apiKey = apiKey)
+        val client = Client.create(apiKey)
 
         val params = ChatCompletionCreateParams.builder()
             .model("gpt-oss-120b")
@@ -40,21 +40,22 @@ class DocumentationExamplesTest {
     }
 
     private suspend fun options(apiKey: String): Client {
-        val client = Client.create(apiKey = apiKey) {
-            maxRetries(1)
-            timeout(Duration.ofMinutes(2))
+        val client = Client.create(apiKey) {
+            openAI {
+                maxRetries(1)
+                timeout(Duration.ofMinutes(2))
+            }
         }
         return client
     }
 
     private suspend fun router(apiKey: String, cacheSecret: String): RouterOpenAIClient {
-        val client = RouterOpenAIClient.create(
-            transportMode = TransportMode.Ehbp,
-            baseUrl = "https://proxy.example.com/v1/",
-            userCacheSecret = cacheSecret,
-            apiKey = apiKey,
-            tinfoilEvents = setOf(TinfoilEvent.WebSearch),
-        )
+        val client = RouterOpenAIClient.create(apiKey) {
+            transportMode = TransportMode.Ehbp
+            baseUrl = "https://proxy.example.com/v1/"
+            userCacheSecret = cacheSecret
+            tinfoilEvents = setOf(TinfoilEvent.WebSearch)
+        }
         return client
     }
 
@@ -69,12 +70,22 @@ class DocumentationExamplesTest {
 
     @OptIn(ExperimentalTinfoilApi::class)
     private suspend fun gateway(apiKey: String): GatewayOpenAIClient {
-        val client = GatewayOpenAIClient.create(
-            modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash")),
-            pinnedModelsOnly = true,
-            apiKey = apiKey,
-        )
+        val client = GatewayOpenAIClient.create(apiKey) {
+            modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
+            pinnedModelsOnly = true
+        }
         println(client.httpClient.models())
+        return client
+    }
+
+    private suspend fun sealedBodies(): EnclaveHttpClient {
+        val client = EnclaveHttpClient.create(
+            enclave = "inference.tinfoil.sh",
+            pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+        ) {
+            transportMode = TransportMode.Ehbp
+            baseUrl = "https://proxy.example.com/"
+        }
         return client
     }
 
