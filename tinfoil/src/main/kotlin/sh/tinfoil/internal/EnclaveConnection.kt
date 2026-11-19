@@ -15,6 +15,7 @@ import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
+import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.TransportMode
@@ -29,6 +30,7 @@ import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.Origin
 import sh.tinfoil.internal.transport.PinnedTls
 import sh.tinfoil.internal.transport.RecoverableCall
+import sh.tinfoil.internal.transport.SettledBody
 import sh.tinfoil.internal.transport.TransportProtocol
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
@@ -134,6 +136,32 @@ internal class EnclaveConnection(
     suspend fun reverify(): Verification = verified(force = true).verification
 
     /**
+     * Finds out, without sending any of a request, whether the enclave's
+     * host presents the key that connections are pinned to, under a
+     * verification that is valid now. It is for an enclave that is one of
+     * several candidates: an attestation document is not tied to the host
+     * that served it, so a host can verify and still not be the enclave.
+     * A transport that pins nothing has nothing to find out.
+     *
+     * @throws AttestationException if the host does not present the key.
+     * @throws NetworkException if no connection to it can be opened.
+     */
+    @Throws(TinfoilException::class)
+    suspend fun probe() {
+        val state = verified(force = false)
+        try {
+            state.transport.probe(baseUrl)
+        } catch (e: TinfoilException) {
+            throw e
+        } catch (e: IOException) {
+            val reason = state.transport.keyRejection(e)
+                ?: throw NetworkException("connecting to $enclave: ${e.message ?: e.javaClass.simpleName}", cause = e)
+            synchronized(lock) { state.rejected = true }
+            throw AttestationException(reason, cause = e)
+        }
+    }
+
+    /**
      * Sends [request] over a transport that is bound to a verification that
      * is valid now, and returns the response with its body still to be read.
      * [onCall] is handed each call that goes out for it, at most two.
@@ -150,8 +178,11 @@ internal class EnclaveConnection(
     @Throws(IOException::class)
     override suspend fun send(request: Request, onCall: (Call) -> Unit): Response {
         checkOpen()
-        checkRequest(request)
-        val outgoing = cacheSecret?.provision(request) ?: request
+        // What the body says about itself is taken once, so that the body
+        // that is judged here is the body that is sent.
+        val settled = SettledBody.settle(request)
+        checkRequest(settled)
+        val outgoing = cacheSecret?.provision(settled) ?: settled
         var rejection: AttestationException? = null
         while (true) {
             val state = verified(force = false)
@@ -206,6 +237,11 @@ internal class EnclaveConnection(
     /**
      * Refuses later requests and verifications, cancels a verification in
      * progress and the requests in flight, and closes every connection.
+     *
+     * The refusals hold when this returns. Whatever reaches a socket, which
+     * is the cancelling and the closing, is done on a background thread
+     * right afterwards, so that any thread may call this: one that must not
+     * touch the network, as Android's main thread, included.
      */
     fun close() {
         val (transport, refreshing) = synchronized(lock) {
@@ -216,12 +252,16 @@ internal class EnclaveConnection(
             Pair(state?.transport, refresh.also { refresh = null })
         }
         refreshing?.failure?.complete(closedError())
-        refreshing?.job?.cancel()
-        // Requests in flight end here, under whichever verification they
-        // were sent; then the connections that are left idle are closed.
-        protocol.close()
-        transport?.retire()
-        onClose()
+        protocol.refuse()
+        Background.run {
+            refreshing?.job?.cancel()
+            // Requests in flight end here, under whichever verification
+            // they were sent; then the connections that are left idle are
+            // closed.
+            protocol.close()
+            transport?.retire()
+            onClose()
+        }
     }
 
     private fun checkOpen() {
@@ -381,6 +421,13 @@ internal class EnclaveConnection(
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
+            /**
+             * Whether [enclave] was proposed by something that is not
+             * trusted, such as a list of routers, and not named by the
+             * caller. A direct connection to such a host is pinned to the
+             * attested TLS key in every transport mode.
+             */
+            proposed: Boolean = false,
         ): EnclaveConnection {
             val enclaveUrl = Urls.enclaveUrl(enclave)
             val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
@@ -430,6 +477,13 @@ internal class EnclaveConnection(
                         // A proxy is told which enclave the client verified,
                         // as the caller named it.
                         enclaveUrl = if (proxied) "https://$enclave" else null,
+                        // Bodies are sealed to the enclave whatever host
+                        // the connection reaches; headers are not. A host
+                        // that the caller named is trusted with them. One
+                        // that was only proposed has to show the attested
+                        // TLS key first, as it does with TransportMode.Tls.
+                        pinned = proposed && !proxied,
+                        local = Urls.isLoopback(base ?: enclaveUrl),
                         settings = internals.http,
                     )
                 },

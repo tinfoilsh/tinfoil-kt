@@ -18,9 +18,12 @@ public enum class TransportMode {
      * without a body or the response to it: a proxy, or anything else on the
      * way that ends the TLS connection, reads them and can change them.
      * Connections are validated as the platform validates any HTTPS
-     * connection, and are not pinned to the enclave's key. Protocol
-     * upgrades, such as WebSockets, and `CONNECT` tunnels are refused,
-     * because nothing after the handshake would be sealed.
+     * connection, and are not pinned to the enclave's key, so the host
+     * that the client was created with is trusted with all of that. A
+     * client that chooses its enclave's host by itself, [RouterHttpClient],
+     * pins its direct connections to the attested key in this mode too.
+     * Protocol upgrades, such as WebSockets, and `CONNECT` tunnels are
+     * refused, because nothing after the handshake would be sealed.
      */
     Ehbp,
 }

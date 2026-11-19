@@ -433,14 +433,41 @@ class UserCacheSecretTest {
     }
 
     @Test
-    fun aBodyThatIsLeftAloneIsTheCallersOwn() {
+    fun aBodyThatNeedsNoSecretIsSentFromWhatWasExamined() {
         for (text in listOf("not json", "[]", """{"user_cache_secret":"mine"}""", """{"user_cache_secret":"","user_cache_secret":""}""", "")) {
-            val body = CountingBody(text)
+            val body = CountingBody(text, type = json)
             val request = post("/v1/responses", body)
 
-            assertSame(request, provision(request), text)
-            assertEquals(1, body.writes.get(), "read once to decide")
+            val sent = provision(request)
+
+            assertEquals(text, sent.text(), text)
+            assertEquals(text, sent.text(), "it can be written again")
+            assertEquals(text.toByteArray().size.toLong(), sent.body!!.contentLength())
+            assertEquals(json, sent.body!!.contentType())
+            assertFalse(sent.body!!.isOneShot())
+            assertEquals(1, body.writes.get(), "read once to decide, and never written again")
         }
+    }
+
+    @Test
+    fun aBodyThatWritesSomethingElseTheSecondTimeIsSentAsItWasExamined() {
+        // The first text carries its own scope, so it is left alone; the
+        // second would land in the cache that every client shares.
+        val texts = ArrayDeque(listOf("""{"user_cache_secret":"mine","n":1}""", """{"prompt":"unscoped-marker","n":1}"""))
+        val changing = object : RequestBody() {
+            override fun contentType(): MediaType? = json
+
+            override fun contentLength(): Long = texts.first().length.toLong()
+
+            override fun writeTo(sink: BufferedSink) {
+                sink.writeUtf8(if (texts.size > 1) texts.removeFirst() else texts.first())
+            }
+        }
+
+        val sent = provision(post("/v1/chat/completions", changing))
+
+        assertEquals("""{"user_cache_secret":"mine","n":1}""", sent.text())
+        assertEquals("""{"user_cache_secret":"mine","n":1}""", sent.text())
     }
 
     @Test
@@ -582,6 +609,39 @@ class UserCacheSecretTest {
             val error = assertFailsWith<ProtocolException> { provision(post("/v1/responses", once)) }
             assertFalse(error.message!!.contains("s3cret"))
             assertEquals(1, once.writes.get())
+        }
+    }
+
+    @Test
+    fun aBodyThatGoesOnWritingAfterItPassedTheBoundIsNotHeldInPart() {
+        val bounded = UserCacheSecret.of("s3cret", maxBodyBytes = 64)!!
+        // It swallows the failure of the write that passed the bound, drops
+        // what it had written, and goes on with something shorter.
+        class Stubborn(private val declared: Long, private val oneShot: Boolean) : RequestBody() {
+            override fun contentType(): MediaType? = json
+
+            override fun contentLength(): Long = declared
+
+            override fun isOneShot(): Boolean = oneShot
+
+            override fun writeTo(sink: BufferedSink) {
+                try {
+                    sink.writeUtf8("""{"prompt":"${"x".repeat(100_000)}"}""")
+                    sink.flush()
+                } catch (_: IOException) {
+                    sink.buffer.clear()
+                }
+                sink.writeUtf8("""{"tail":1}""")
+            }
+        }
+
+        assertFailsWith<ConfigurationException> { provision(post("/v1/responses", Stubborn(-1, oneShot = true)), bounded) }
+        assertFailsWith<ProtocolException> { provision(post("/v1/responses", Stubborn(10, oneShot = true)), bounded) }
+        // One that can be written again is left to the HTTP client, as any
+        // body is that is longer than is read.
+        for (declared in listOf(-1L, 10L)) {
+            val again = post("/v1/responses", Stubborn(declared, oneShot = false))
+            assertSame(again, provision(again, bounded))
         }
     }
 

@@ -77,7 +77,8 @@ class RouterHttpClientTest {
     /** A router: one HTTPS server that serves its attestation document and takes requests. */
     private inner class Router {
         val certificate = authority.issue()
-        val server: MockWebServer = httpsServer(certificate)
+        var server: MockWebServer = httpsServer(certificate)
+            private set
         val host = "localhost:${server.port}"
         val fetches = AtomicInteger()
         val requests = CopyOnWriteArrayList<RecordedRequest>()
@@ -90,22 +91,35 @@ class RouterHttpClientTest {
         @Volatile
         var attestation: () -> MockResponse = { MockResponse().setBody(certificate.fingerprint) }
 
+        private val dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (request.path!!.startsWith("/.well-known/tinfoil-attestation?nonce=")) {
+                    fetches.incrementAndGet()
+                    attestation()
+                } else if (request.getHeader(ENCAPSULATED_KEY_HEADER) != null) {
+                    requests += request
+                    sealing.dispatch(request)
+                } else {
+                    requests += request
+                    MockResponse().setBody("from $host")
+                }
+        }
+
         init {
             closeables += AutoCloseable { server.shutdown() }
             hpkeKeys[certificate.fingerprint] = key
-            server.dispatcher = object : Dispatcher() {
-                override fun dispatch(request: RecordedRequest): MockResponse =
-                    if (request.path!!.startsWith("/.well-known/tinfoil-attestation?nonce=")) {
-                        fetches.incrementAndGet()
-                        attestation()
-                    } else if (request.getHeader(ENCAPSULATED_KEY_HEADER) != null) {
-                        requests += request
-                        sealing.dispatch(request)
-                    } else {
-                        requests += request
-                        MockResponse().setBody("from $host")
-                    }
-            }
+            server.dispatcher = dispatcher
+        }
+
+        /**
+         * Replaces the server with one at the same address that holds a
+         * certificate with another key, which the test authority issued
+         * too, and that still serves the first attestation document: what
+         * a host does that passes on an attestation that is not its own.
+         */
+        fun presentAnotherKey() {
+            server.shutdown()
+            server = httpsServer(authority.issue(), server.port).also { it.dispatcher = dispatcher }
         }
 
         fun unreachable() = apply { attestation = { MockResponse().setResponseCode(503) } }
@@ -547,8 +561,13 @@ class RouterHttpClientTest {
         assertNull(RouterDiscovery(settings.discovery) { "[\"${bad.host}\"]".toByteArray() }.discover(open))
         assertEquals(listOf(true), opened.map { it.isClosed })
         assertNull(RouterDiscovery(settings.discovery) { throw NetworkException("no list") }.discover(open))
-        assertNull(RouterDiscovery(settings.discovery) { throw IllegalStateException("broken") }.discover(open))
         assertEquals(1, opened.size, "a list that cannot be fetched proposes nothing")
+        // Only what a failed fetch throws is taken for that. Anything else
+        // is a fault, and is not passed over as a list that proposes nothing.
+        assertFailsWith<IllegalStateException> {
+            RouterDiscovery(settings.discovery) { throw IllegalStateException("broken") }.discover(open)
+        }
+        assertEquals(1, opened.size)
     }
 
     // After creation.
@@ -627,10 +646,10 @@ class RouterHttpClientTest {
     }
 
     @Test
-    fun aRouterClientSendsThroughAProxyThatIsToldWhichRouterWasChosen() = test {
-        val router = Router()
-        serveList(router.host)
-        val atProxy = SealingDispatcher({ router.key }) { it.reply("through the proxy") }
+    fun aRouterClientSendsThroughAProxyOnlyToTheFallbackRouterAndNeverReadsTheList() = test {
+        val listed = Router()
+        serveList(listed.host)
+        val atProxy = SealingDispatcher({ fallback.key }) { it.reply("through the proxy") }
         val proxy = MockWebServer().apply {
             dispatcher = atProxy
             start()
@@ -639,9 +658,13 @@ class RouterHttpClientTest {
 
         val client = client(transportMode = TransportMode.Ehbp, baseUrl = "http://localhost:${proxy.port}/v1/")
 
-        assertEquals(router.host, client.enclave, "the router is verified directly, and not through the proxy")
+        // The proxy forwards a request, headers and all, to the host that
+        // the request names, so that host is never one that a list proposed.
+        assertEquals(fallback.host, client.enclave)
+        assertEquals(0, listServer.requestCount, "the list is not fetched")
+        assertEquals(0, listed.fetches.get(), "no listed router is contacted")
         assertEquals("http://localhost:${proxy.port}/v1/", client.baseUrl.toString())
-        assertEquals(1, router.fetches.get())
+        assertEquals(1, fallback.fetches.get(), "the router is verified directly, and not through the proxy")
         assertEquals(0, proxy.requestCount, "creating the client sends the proxy nothing")
         val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
             .post("""{"prompt":"plaintext-marker-0c77d1"}""".toRequestBody()).build()
@@ -654,12 +677,30 @@ class RouterHttpClientTest {
         assertEquals("/v1/chat/completions", sealed.request.path)
         assertFalse(bodyless.sealed)
         for (received in atProxy.received) {
-            assertEquals("https://${router.host}", received.request.getHeader(ENCLAVE_URL_HEADER))
+            assertEquals("https://${fallback.host}", received.request.getHeader(ENCLAVE_URL_HEADER))
         }
-        assertEquals(0, router.requests.size, "requests go to the proxy only")
+        assertEquals(0, fallback.requests.size + listed.requests.size, "requests go to the proxy only")
         assertFailsWith<ConfigurationException> {
-            client.execute(Request.Builder().url("https://${router.host}/v1/models").build())
+            client.execute(Request.Builder().url("https://${fallback.host}/v1/models").build())
         }
+    }
+
+    @Test
+    fun aBaseUrlOnTheFallbackRoutersOwnOriginIsADirectConnectionThatIsPinned() = test {
+        serveList(Router().host)
+
+        val client = client(transportMode = TransportMode.Ehbp, baseUrl = "https://${fallback.host}/v1/")
+
+        assertEquals(fallback.host, client.enclave)
+        assertEquals(0, listServer.requestCount)
+        client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build()).use {
+            assertNull(it.request.header(ENCLAVE_URL_HEADER))
+        }
+        fallback.presentAnotherKey()
+        assertFailsWith<AttestationException> {
+            client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build())
+        }
+        assertEquals(1, fallback.requests.size)
     }
 
     @Test
@@ -673,6 +714,78 @@ class RouterHttpClientTest {
         assertEquals(good.host, client.enclave)
         assertEquals(1, keyless.fetches.get())
         assertEquals(0, keyless.requests.size)
+    }
+
+    // The attested TLS key.
+
+    /** A host with a valid certificate of its own that passes on [genuine]'s attestation document. */
+    private fun relaying(genuine: Router): Router = Router().apply { attestation = genuine.attestation }
+
+    private fun RouterHttpClient.chatRequest(): Request =
+        Request.Builder().url(baseUrl.resolve("v1/chat/completions")!!).post("""{"prompt":"hello"}""".toRequestBody(json)).build()
+
+    @Test
+    fun aListedHostThatDoesNotHoldTheAttestedTlsKeyIsPassedOverAndReceivesNothing() = test {
+        for (mode in TransportMode.entries) {
+            val genuine = Router()
+            val impostor = relaying(genuine)
+            val next = Router()
+            serveList(impostor.host, next.host)
+
+            val client = client(transportMode = mode)
+
+            assertEquals(next.host, client.enclave, "$mode: the host that presented another key was not chosen")
+            assertEquals(1, impostor.fetches.get(), "$mode")
+            client.execute(client.chatRequest()).close()
+            client.execute(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build()).close()
+            assertEquals(2, next.requests.size, "$mode")
+            assertEquals(0, impostor.requests.size, "$mode: the impostor was sent a request")
+            assertEquals(1, impostor.server.requestCount, "$mode: only its attestation document was fetched")
+            assertEquals(0, genuine.requests.size + fallback.requests.size, "$mode")
+        }
+    }
+
+    @Test
+    fun aHostThatIsPassedOverForItsKeyLeavesTheFallback() = test {
+        val impostor = relaying(Router())
+        serveList(impostor.host)
+
+        val client = client(transportMode = TransportMode.Ehbp)
+
+        assertEquals(fallback.host, client.enclave)
+        assertEquals(0, impostor.requests.size)
+    }
+
+    @Test
+    fun aRouterThatStopsPresentingItsAttestedKeyReceivesNothingWhenBodiesAreSealed() = test {
+        val router = Router()
+        serveList(router.host)
+        val client = client(transportMode = TransportMode.Ehbp)
+        client.execute(client.chatRequest()).close()
+        assertEquals(1, router.requests.size)
+
+        router.presentAnotherKey()
+
+        val sealed = assertFailsWith<AttestationException> { client.execute(client.chatRequest()) }
+        assertTrue(sealed.message!!.contains("does not carry the attested TLS key"), sealed.message)
+        // A request without a body is all headers, an API key among them.
+        assertFailsWith<AttestationException> {
+            client.execute(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).header("Authorization", "Bearer k").build())
+        }
+        assertEquals(1, router.requests.size, "nothing was sent to the server with the other key")
+        assertEquals(router.fetches.get() - 1, router.server.requestCount, "it was asked only for attestation documents")
+    }
+
+    @Test
+    fun theFallbackRouterIsHeldToItsAttestedKeyWhenBodiesAreSealed() = test {
+        serveList()
+        fallback.attestation = Router().attestation
+
+        val client = client(transportMode = TransportMode.Ehbp)
+
+        assertEquals(fallback.host, client.enclave)
+        assertFailsWith<AttestationException> { client.execute(client.chatRequest()) }
+        assertEquals(0, fallback.requests.size)
     }
 
     // Options.

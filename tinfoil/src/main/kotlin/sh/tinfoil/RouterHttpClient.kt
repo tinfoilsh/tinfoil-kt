@@ -7,6 +7,7 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.nullIfEmpty
@@ -70,7 +71,8 @@ public class RouterHttpClient private constructor(
      * Returns a verification of the router that is valid now, verifying
      * first only if the last one has reached its freshness deadline or the
      * router has rejected its key. It behaves as
-     * [EnclaveHttpClient.ensureVerified] does.
+     * [EnclaveHttpClient.ensureVerified] does, and is safe to call from the
+     * main thread.
      *
      * @throws ConfigurationException if the client is closed.
      * @throws NetworkException if the attestation document cannot be fetched.
@@ -84,7 +86,7 @@ public class RouterHttpClient private constructor(
      * valid, and returns the new verification. It behaves as
      * [EnclaveHttpClient.reverify] does: a failure does not withdraw a
      * verification that is still valid, and does not make the client choose
-     * another router.
+     * another router. It is safe to call from the main thread.
      */
     @Throws(IOException::class, CancellationException::class)
     public suspend fun reverify(): Verification = connection.reverify()
@@ -92,7 +94,8 @@ public class RouterHttpClient private constructor(
     /**
      * Sends [request] to the router and returns the response as soon as its
      * headers arrive. The body streams as it is read, and the caller closes
-     * the response.
+     * the response. It is safe to call from the main thread; reading the
+     * response's body, or closing it unread, is not.
      *
      * The rules are those of [EnclaveHttpClient.execute]: the request must be
      * on [baseUrl]'s origin, without credentials in its URL or a `Host`
@@ -103,13 +106,21 @@ public class RouterHttpClient private constructor(
      * [TransportMode.Ehbp] only its body is sealed, to the attested HPKE
      * key: its method, URL and headers are not, nor is a request without a
      * body or the response to it; see [EnclaveHttpClient.execute] for all
-     * that this mode changes.
+     * that this mode changes. One thing is stricter here than there: the
+     * caller did not choose the router's host, so a connection that goes
+     * to the router itself, and not to a proxy, must present the attested
+     * TLS key in this mode too, and a router that presents another key is
+     * verified again and then refused, exactly as with [TransportMode.Tls].
+     * Through a proxy, the connection is the proxy's, and is validated as
+     * any HTTPS connection is.
      *
      * The client's user cache secret is added to the body of a `POST` whose
      * path ends in `/chat/completions`, `/completions` or `/responses`, as
      * the member `user_cache_secret`, if the body is one JSON object in
      * which that member is absent or the empty string. The rest of the body
-     * is sent byte for byte as it was given. A non-empty `user_cache_secret`
+     * is sent byte for byte as it was given. A member whose name differs
+     * from `user_cache_secret` only by case is left as it was written, and
+     * the client's member, with exactly that name, is added beside it. A non-empty `user_cache_secret`
      * string in the body is the request's own scope and is kept, so a server
      * can give each of its users a cache of their own. Any other body that
      * can be examined is sent unchanged, without the client's secret. A
@@ -144,7 +155,8 @@ public class RouterHttpClient private constructor(
      * Prepares [request] as a call that follows the rules of [execute], for
      * code that is written against OkHttp. Nothing is checked or sent until
      * the call is executed or enqueued. It behaves as
-     * [EnclaveHttpClient.newCall] does.
+     * [EnclaveHttpClient.newCall] does: a blocking [Call.execute] is never
+     * for the main thread.
      */
     override fun newCall(request: Request): Call = AttestedCall(connection, request)
 
@@ -153,6 +165,11 @@ public class RouterHttpClient private constructor(
      * [ConfigurationException], a verification in progress and the requests
      * in flight are cancelled, and every connection is closed. Closing again
      * does nothing.
+     *
+     * It is safe to call from any thread, the main thread included, and
+     * returns at once: the client refuses requests from then on, and the
+     * cancelling and the closing of connections follow on a background
+     * thread.
      */
     override fun close() {
         connection.close()
@@ -163,22 +180,42 @@ public class RouterHttpClient private constructor(
          * Creates a client for one of Tinfoil's routers, verified before
          * this returns.
          *
-         * The router is the first on Tinfoil's router list that verifies.
-         * The list is only a proposal: each router on it is verified against
-         * Tinfoil's router by name, exactly as an enclave that the caller
-         * names would be, and nothing is sent to one that does not verify.
+         * The router is the first on Tinfoil's router list that verifies
+         * and holds its attested TLS key. The list is only a proposal, and
+         * is not trusted. Each router on it is verified against Tinfoil's
+         * router by name, exactly as an enclave that the caller names would
+         * be. A host could pass that by handing on a genuine router's
+         * attestation document, so it must also present the TLS key that
+         * the document endorses, on a connection that is opened to check
+         * that and carries no request. The client's later connections to
+         * the router are pinned to that key in both transport modes. So
+         * whatever the list says, no request, header or body is written to
+         * a host that does not hold a verified router's TLS key; a forged
+         * list can only cost time, or decide which genuine router is
+         * chosen.
+         *
          * Routers are tried in the order of the list, one at a time and
          * once each, for at most 30 seconds in all, the fetch of the list
-         * included. A router that cannot be reached, does not verify or is
-         * rejected by [verificationCheck] is passed over. If no router is
-         * chosen, because the list could not be fetched or is empty, none
-         * verified or the time ran out, the client uses
-         * `inference.tinfoil.sh`, which is verified in the same way, with
-         * one more attempt if the first fails; if that fails too, this
-         * fails with its error.
+         * included. A router that cannot be reached, does not verify, does
+         * not present its attested key or is rejected by
+         * [verificationCheck] is passed over. If no router is chosen,
+         * because the list could not be fetched or is empty, none passed
+         * or the time ran out, the client uses `inference.tinfoil.sh`,
+         * which is verified in the same way, with one more attempt if the
+         * first fails; if that fails too, this fails with its error. Its
+         * connections are pinned to its attested key like any router's.
+         *
+         * With a [baseUrl], which is a proxy, or an [attestationRelay], the
+         * list is not fetched and the client uses `inference.tinfoil.sh`.
          *
          * Every argument is checked before any network I/O. Each call
          * chooses anew.
+         *
+         * It is safe to call from the main thread: the options are checked,
+         * which loads the native verifier library the first time, and
+         * everything is fetched and verified on background threads. A
+         * caller that is cancelled just as the client is made does not
+         * receive it, and the client is closed.
          *
          * @param transportMode How requests are protected.
          *   [TransportMode.Tls], the default, protects the whole exchange on
@@ -192,9 +229,18 @@ public class RouterHttpClient private constructor(
          *   requires [TransportMode.Ehbp]. It is an absolute URL without
          *   user information, a query or a fragment. A proxy reads
          *   everything that is not sealed, so it must use HTTPS; `http://`
-         *   is accepted only for `localhost` or a loopback IP address. The
-         *   routers are still verified directly, or through
-         *   [attestationRelay], and not through the proxy.
+         *   is accepted only for `localhost` or a loopback IP address, and
+         *   a base URL on this machine is reached directly, whatever HTTP
+         *   proxy the system is configured with. With a base URL the
+         *   router list is not consulted, and the router is
+         *   always `inference.tinfoil.sh`: the proxy opens the connection
+         *   to the host that the header names and passes it every header,
+         *   the API key included, and this SDK cannot hold that connection
+         *   to the attested key, so the header never names a host that an
+         *   untrusted list proposed. The router is still verified directly,
+         *   or through [attestationRelay], and not through the proxy. The
+         *   proxy itself is trusted with everything that is not sealed; see
+         *   [EnclaveHttpClient.execute].
          * @param attestationRelay A host, with an optional port, that fetches
          *   attestation documents on the client's behalf. It is not trusted:
          *   a document is verified whoever delivers it. With a relay the
@@ -259,7 +305,10 @@ public class RouterHttpClient private constructor(
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
-        ): RouterHttpClient {
+        ): RouterHttpClient = Background.creating {
+            // Checking the options, which calls into the verifier library,
+            // and everything after it run on a background thread, so that
+            // any thread may call this.
             // Everything down to the fallback's connection is checked
             // before any I/O.
             val base = baseUrl.nullIfEmpty()
@@ -283,12 +332,19 @@ public class RouterHttpClient private constructor(
                 EnclaveConnection.create(
                     host, RouterDiscovery.ROUTER_PIN, transportMode, base, relay, policy, secret, verificationCheck,
                     onVerificationResult, internals,
+                    // The caller named no host, so a direct connection to
+                    // the router is pinned in both transport modes.
+                    proposed = true,
                 )
             }
             val fallback = open(internals.discovery.fallback)
 
+            // A proxy forwards each request, with its headers, to the host
+            // that the request names, over a connection that only the proxy
+            // sees. A listed host could not be held to its attested key
+            // there, so none is used.
             val discovered = try {
-                if (relay == null) discover(open, internals) else null
+                if (relay == null && base == null) discover(open, internals) else null
             } catch (e: Throwable) {
                 fallback.close()
                 throw e
@@ -309,7 +365,7 @@ public class RouterHttpClient private constructor(
                 connection.close()
                 throw e
             }
-            return RouterHttpClient(connection)
+            return@creating RouterHttpClient(connection)
         }
 
         private suspend fun discover(open: (String) -> EnclaveConnection, internals: Internals): EnclaveConnection? {

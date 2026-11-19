@@ -1,6 +1,7 @@
 package sh.tinfoil.internal.transport
 
 import okhttp3.Call
+import okhttp3.HttpUrl
 import okhttp3.Request
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
@@ -32,10 +33,16 @@ internal interface TransportProtocol {
     fun bind(verification: Verification): BoundTransport
 
     /**
+     * Refuses new requests on every transport of this protocol, from now
+     * on. It touches no connection, so any thread may call it.
+     */
+    fun refuse()
+
+    /**
      * Ends everything that this protocol's transports are doing, whichever
      * verification they were bound to: new requests are refused, and
      * requests in flight are cancelled, a response body that is still being
-     * read included.
+     * read included. It closes sockets, so it is for a background thread.
      */
     fun close()
 }
@@ -62,9 +69,22 @@ internal interface BoundTransport {
     fun keyRejection(failure: IOException): String?
 
     /**
+     * Opens a connection to [url]'s host as a request would, and closes it
+     * without writing any of a request to it. A transport that pins its
+     * connections to an attested key thereby finds out whether the host
+     * presents that key; one that pins nothing does nothing here.
+     *
+     * @throws IOException if no connection that would carry a request can
+     *   be opened; [keyRejection] says whether the key is why.
+     */
+    @Throws(IOException::class)
+    suspend fun probe(url: HttpUrl)
+
+    /**
      * Stops keeping connections for later requests, because a newer
      * verification has replaced this one or the client has closed. Requests
-     * in flight finish, unless the protocol's close cancels them.
+     * in flight finish, unless the protocol's close cancels them. It closes
+     * sockets, so it is for a background thread.
      */
     fun retire()
 }

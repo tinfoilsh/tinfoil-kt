@@ -8,15 +8,16 @@ import okhttp3.ConnectionSpec
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
 import okhttp3.EventListener
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.Response
-import okhttp3.ResponseBody
 import okio.Buffer
-import okio.BufferedSource
-import okio.ForwardingSource
+import okio.BufferedSink
+import okio.Sink
 import okio.Timeout
 import okio.buffer
 import sh.tinfoil.AttestationException
@@ -24,6 +25,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.SessionRecoveryToken
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
+import sh.tinfoil.internal.Background
 import sh.tinfoil.ehbp.client.Transport
 import sh.tinfoil.ehbp.client.newTransportWithIdentity
 import sh.tinfoil.ehbp.identity.Identity
@@ -34,6 +36,7 @@ import sh.tinfoil.ehbp.protocol.ResponseNonceHeader
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ProtocolException
+import java.net.Proxy
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
@@ -45,9 +48,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * Seals request and response bodies to the HPKE key that a verification
  * endorses, with the EHBP client library, which owns the cryptography and
  * the framing. The connections that carry the sealed bodies are validated as
- * the platform validates any HTTPS connection, and are not pinned: they may
- * end at a proxy, which sees the method, the URL and the headers of every
- * request, and the whole of a request that has no body.
+ * the platform validates any HTTPS connection. Whatever they end at sees the
+ * method, the URL and the headers of every request, and the whole of a
+ * request that has no body, so where they end matters:
+ * - Unpinned, they end at the base URL's host, whoever holds a certificate
+ *   for it: a proxy, or an enclave that the caller named. That host is the
+ *   caller's choice, and is trusted with the headers.
+ * - Pinned, they must also present the TLS key that the verification
+ *   endorses, as with [PinnedTls]. That is for a direct connection to an
+ *   enclave whose host the caller did not choose: an attestation document
+ *   is not tied to the host that served it, so without the pin a host with
+ *   a certificate of its own could pass on a genuine enclave's document and
+ *   then be sent the headers.
  *
  * Its transports each have connections of their own and share the threads
  * that calls run on.
@@ -63,6 +75,20 @@ internal class EhbpSealing(
      * origin, when the base URL is on another origin; otherwise null.
      */
     private val enclaveUrl: String?,
+    /**
+     * Whether connections must present the attested TLS key as well. It is
+     * for connections that go to the enclave itself, never to a proxy.
+     */
+    private val pinned: Boolean,
+    /**
+     * Whether requests go to this machine: to a base URL on `localhost` or
+     * a loopback IP address. They are then sent there directly, whatever
+     * proxy the system is set to use: a proxy would be handed the request
+     * to forward, and with cleartext HTTP that is all of it, the API key
+     * included, when the point of such a base URL is that nothing leaves
+     * the machine.
+     */
+    private val local: Boolean = false,
     private val settings: HttpSettings = HttpSettings(),
 ) : TransportProtocol {
     override val mode: TransportMode = TransportMode.Ehbp
@@ -85,7 +111,13 @@ internal class EhbpSealing(
     override fun checkRequest(request: Request) = checkRequest(request, cleartext)
 
     override fun bind(verification: Verification): EhbpTransport =
-        EhbpTransport(identityOf(verification.hpkePublicKey), enclaveUrl, cleartext, dispatcher, executor, calls, settings)
+        EhbpTransport(
+            identityOf(verification.hpkePublicKey),
+            if (pinned) LeafKeyPin.of(verification.tlsPublicKeyFingerprint) else null,
+            enclaveUrl, cleartext, local, dispatcher, executor, calls, settings,
+        )
+
+    override fun refuse() = calls.refuse()
 
     override fun close() {
         calls.close()
@@ -174,11 +206,17 @@ internal class EhbpSealing(
  * another's and each request can be cancelled and timed by itself. A request
  * with a body leaves sealed or not at all. A request without a body, and its
  * response, are not sealed: the protocol cannot protect them.
+ *
+ * With a [pin], every connection must also present that TLS key, checked as
+ * [PinnedTlsTransport] checks it, so that nothing of a request, its headers
+ * included, is written to a host that does not hold the key.
  */
 internal class EhbpTransport(
     private val identity: Identity,
+    private val pin: LeafKeyPin?,
     private val enclaveUrl: String?,
     private val cleartext: Boolean,
+    local: Boolean,
     dispatcher: Dispatcher,
     private val executor: ThreadPoolExecutor,
     private val calls: ActiveCalls,
@@ -209,8 +247,11 @@ internal class EhbpTransport(
         .retryOnConnectionFailure(true)
         .readTimeout(READ_TIMEOUT_MINUTES, TimeUnit.MINUTES)
         .apply {
+            pin?.let { pinnedTo(it) }
             settings.trust?.let { sslSocketFactory(it.socketFactory, it.trustManager) }
-            settings.proxy?.let { proxy(it) }
+            // A destination on this machine is reached directly, never
+            // through a proxy, whichever is configured.
+            if (local) proxy(Proxy.NO_PROXY) else settings.proxy?.let { proxy(it) }
         }
         .build()
 
@@ -223,8 +264,28 @@ internal class EhbpTransport(
         return call
     }
 
-    override fun keyRejection(failure: IOException): String? =
-        if (isKeyConfigError(failure)) "the enclave does not hold the attested HPKE key" else null
+    override fun keyRejection(failure: IOException): String? = when {
+        isKeyConfigError(failure) -> "the enclave does not hold the attested HPKE key"
+        // Without a pin, a certificate that is refused says nothing about
+        // the enclave's keys: the connection may be a proxy's.
+        pin != null -> pinRejection(failure)
+        else -> null
+    }
+
+    override suspend fun probe(url: HttpUrl) {
+        if (pin == null) {
+            return
+        }
+        var probing: Call? = null
+        try {
+            client.probePin(url) { call ->
+                calls.add(call)
+                probing = call
+            }
+        } finally {
+            probing?.let(::finished)
+        }
+    }
 
     override fun retire() {
         retired = true
@@ -234,7 +295,9 @@ internal class EhbpTransport(
     private fun finished(call: Call) {
         calls.remove(call)
         if (retired || calls.isClosed) {
-            pool.evictAll()
+            // A call ends on the thread that closes its response, which is
+            // the caller's, and sockets are not closed there.
+            Background.run { pool.evictAll() }
         }
     }
 
@@ -377,9 +440,10 @@ internal class EhbpTransport(
                 response = returned
                 if (sealed) {
                     refuseUnusable(returned)
-                    val body = returned.body
-                    if (returned.code < REDIRECTS.first && body != null) {
-                        returned = returned.newBuilder().body(ProvenBody(body)).build()
+                    // The sealing client has opened this response if and
+                    // only if it carries the header, whatever its status.
+                    if (returned.header(ResponseNonceHeader) != null) {
+                        returned = returned.proven()
                         response = returned
                     }
                 }
@@ -396,18 +460,22 @@ internal class EhbpTransport(
         }
 
         /**
-         * Sees the request as it is about to be sent. A request with a body
-         * must have been sealed by now: one that was not is stopped here,
-         * before any of it is written.
+         * Sees the request as it is about to be sent. A body that was not
+         * sealed by now is one that said that it was empty, which is when
+         * the sealing client leaves a request as it is. The body is not
+         * asked again whether that is still so, here or by the HTTP client:
+         * it is replaced with a body that is empty whatever it is asked and
+         * that passes nothing on, so that nothing of a body is ever written
+         * unsealed.
          */
         private fun guard(chain: Interceptor.Chain): Response {
             val outgoing = chain.request()
             sealed = outgoing.header(EncapsulatedKeyHeader) != null
             val body = outgoing.body
-            if (!sealed && body != null && body.contentLength() != 0L) {
-                throw IOException("refusing to send a request body that is not sealed")
+            if (sealed || body == null) {
+                return chain.proceed(outgoing)
             }
-            return chain.proceed(outgoing)
+            return chain.proceed(outgoing.newBuilder().method(outgoing.method, DeclaredEmpty(body)).build())
         }
 
         /**
@@ -449,33 +517,36 @@ internal class EhbpTransport(
     }
 
     /**
-     * The body of a sealed response that reports success. The header that
-     * marks a response as sealed proves nothing by itself: any value passes
-     * for one, and a body without a sealed piece leaves nothing to check it
-     * against. So the body has to yield at least one byte, which the sealing
-     * client releases only once the piece that carries it has authenticated;
-     * a body that ends before that fails the read.
+     * What is sent for a [body] that said that it was empty: no bytes,
+     * whatever the body says or writes later. The body still gets its turn
+     * to write, to a sink that keeps nothing and is not the connection, so
+     * that one that does write after all fails its request and is not
+     * taken for an empty one.
      */
-    private class ProvenBody(private val sealed: ResponseBody) : ResponseBody() {
-        private val source: BufferedSource = object : ForwardingSource(sealed.source()) {
-            private var proven = false
+    private class DeclaredEmpty(private val body: RequestBody) : RequestBody() {
+        private val type: MediaType? = body.contentType()
 
-            override fun read(sink: Buffer, byteCount: Long): Long {
-                val read = super.read(sink, byteCount)
-                if (read > 0) {
-                    proven = true
-                } else if (read == -1L && !proven) {
-                    throw ProtocolException("FRAMING_TRUNCATED: the response ended before any of it authenticated")
+        override fun contentType(): MediaType? = type
+
+        override fun contentLength(): Long = 0L
+
+        override fun writeTo(sink: BufferedSink) {
+            val nothing = object : Sink {
+                override fun write(source: Buffer, byteCount: Long) {
+                    if (byteCount > 0) {
+                        throw ProtocolException("the request body declared no bytes and wrote some, which are not sent")
+                    }
                 }
-                return read
-            }
-        }.buffer()
 
-        override fun contentType(): MediaType? = sealed.contentType()
+                override fun flush() = Unit
 
-        override fun contentLength(): Long = -1L
+                override fun timeout(): Timeout = Timeout.NONE
 
-        override fun source(): BufferedSource = source
+                override fun close() = Unit
+            }.buffer()
+            body.writeTo(nothing)
+            nothing.emit()
+        }
     }
 
     private companion object {

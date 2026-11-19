@@ -8,6 +8,8 @@ import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
+import sh.tinfoil.internal.Background
 import java.util.Optional
 import java.util.concurrent.CompletionException
 
@@ -22,7 +24,9 @@ import java.util.concurrent.CompletionException
  * ```
  *
  * Events are delivered as they arrive, and the response is read only as fast
- * as the flow is collected. When the collector stops, because it is
+ * as the flow is collected. The flow is safe to collect on the main thread:
+ * the events are handed to the collector there, and the response is read
+ * and closed on background threads. When the collector stops, because it is
  * cancelled, fails or takes only the first events, the response is closed
  * and its request is cancelled; if the response has not started by then, it
  * is closed as soon as it does. A failure of the stream is thrown to the
@@ -50,4 +54,8 @@ public fun <T : Any> AsyncStreamResponse<T>.asFlow(): Flow<T> = callbackFlow {
         },
     )
     awaitClose { this@asFlow.close() }
-}.buffer(Channel.RENDEZVOUS)
+    // Closing a response that is still open closes its connection, which
+    // the collector's thread may not be allowed to do; so the subscription
+    // and the closing run on a background thread, and only the events are
+    // handed to the collector.
+}.buffer(Channel.RENDEZVOUS).flowOn(Background.dispatcher)
