@@ -34,7 +34,7 @@ class EnclaveHttpClientBindingTest {
         val results = CopyOnWriteArrayList<Result<Verification>>()
         val refused: List<Pair<String, suspend () -> Unit>> = listOf(
             "a pin that names nothing, under the default trust" to {
-                EnclaveHttpClient.create(nowhere, Pin()) { onVerificationResult = { results += it } }
+                EnclaveHttpClient.create(nowhere, Pin.NONE) { onVerificationResult = { results += it } }
             },
             "a malformed pin" to { EnclaveHttpClient.create(nowhere, Pin(repo = "not a repository")) },
             "a relay that is a URL" to {
@@ -75,7 +75,7 @@ class EnclaveHttpClientBindingTest {
     fun aVerifierThatAuthorizesConfigsItselfNeedsNoPin() = runBlocking<Unit> {
         // Accepted as an option; it then fails on the network, not on the pin.
         assertFailsWith<NetworkException> {
-            EnclaveHttpClient.create(nowhere, Pin()) { verifier = Verifier(configAuthorizer = { }) }
+            EnclaveHttpClient.create(nowhere, Pin.NONE) { verifier = Verifier(configAuthorizer = { }) }
         }
     }
 }

@@ -238,7 +238,7 @@ class AttestorTest {
     @Test
     fun theOptionsAreCheckedWithoutFetching() = runTest {
         attestor().checkOptions("enclave.example", "relay.example", pin)
-        assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example", null, Pin()) }
+        assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example", null, Pin.NONE) }
         assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example", "https://relay/", pin) }
         assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example/x", null, pin) }
 

@@ -51,7 +51,7 @@ class VerifierBindingTest {
     )
 
     private fun verifyFixture(verifier: Verifier): AttestationException =
-        assertFailsWith<AttestationException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin()) }
+        assertFailsWith<AttestationException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin.NONE) }
 
     @Test
     fun thePublicRegistryIsAccepted() {
@@ -190,7 +190,7 @@ class VerifierBindingTest {
     @Test
     fun aPinIsCheckedAgainstThePolicy() {
         val authorized = Verifier(configAuthorizer = { })
-        authorized.backend.checkPinVerifiability(Pin())
+        authorized.backend.checkPinVerifiability(Pin.NONE)
         val unauthenticated = assertFailsWith<ConfigurationException> {
             authorized.backend.checkPinVerifiability(Pin(project = "org/repo"))
         }
@@ -268,7 +268,7 @@ class VerifierBindingTest {
         val verifier = Verifier(
             embeddedReferences = EmbeddedReferences(runtime = fixture.runtime, platform = fixture.platform),
         )
-        assertFailsWith<TinfoilException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin()) }
+        assertFailsWith<TinfoilException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin.NONE) }
     }
 
     /**

@@ -48,7 +48,7 @@ public class Verifier private constructor(
      *   endorsements. At least one component must be set.
      * @param configAuthorizer Decides which configs are authorized, replacing
      *   their endorsements. A client with one needs an explicit enclave, and
-     *   a [Pin] that names nothing.
+     *   the pin that names nothing, [Pin.NONE].
      * @throws ConfigurationException if an option is invalid or two trust
      *   sources conflict.
      */

@@ -75,7 +75,7 @@ public sealed class EnclaveOptions {
     /**
      * The trust policy. Null selects the defaults. A [Verifier] that
      * authorizes configs by itself, with an embedded config or a config
-     * authorizer, is what allows a [Pin] that names nothing.
+     * authorizer, is what allows the pin that names nothing, [Pin.NONE].
      */
     public var verifier: Verifier? = null
 

@@ -376,8 +376,8 @@ public class EnclaveHttpClient private constructor(
          *
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
-         * @param pin What the enclave must be running. A pin that names
-         *   nothing is refused unless the [verifier][EnclaveOptions.verifier]
+         * @param pin What the enclave must be running. The pin that names
+         *   nothing, [Pin.NONE], is refused unless the [verifier][EnclaveOptions.verifier]
          *   authorizes configs by itself, with an embedded config or a
          *   config authorizer.
          * @param options Sets the options; see [EnclaveOptions]. Without

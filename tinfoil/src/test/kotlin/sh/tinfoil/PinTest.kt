@@ -9,10 +9,21 @@ import kotlin.test.assertTrue
 
 class PinTest {
     @Test
-    fun aPinNamesNothingByDefault() {
-        val pin = Pin()
-        assertNull(pin.repo)
-        assertNull(pin.project)
+    fun aPinMustNameSomething() {
+        for (make in listOf({ Pin() }, { Pin(repo = null, project = null) })) {
+            val error = assertFailsWith<ConfigurationException> { make() }
+            assertTrue(error.detail.contains("Pin.NONE"), error.detail)
+        }
+    }
+
+    @Test
+    fun thePinThatNamesNothingIsAskedForByName() {
+        assertNull(Pin.NONE.repo)
+        assertNull(Pin.NONE.project)
+        assertEquals(Pin.NONE, Pin.NONE)
+        assertNotEquals(Pin.NONE, Pin(repo = "org/repo"))
+        assertNotEquals(Pin(project = "org/project"), Pin.NONE)
+        assertEquals("Pin(repo=null, project=null)", Pin.NONE.toString())
     }
 
     @Test
@@ -27,9 +38,8 @@ class PinTest {
 
     @Test
     fun onlyNullMeansNotSet() {
-        assertEquals(Pin(), Pin(repo = null, project = null))
-        assertEquals(Pin().hashCode(), Pin(repo = null, project = null).hashCode())
         assertNull(Pin(project = "org/project").repo)
+        assertNull(Pin(repo = "org/repo", project = null).project)
     }
 
     @Test

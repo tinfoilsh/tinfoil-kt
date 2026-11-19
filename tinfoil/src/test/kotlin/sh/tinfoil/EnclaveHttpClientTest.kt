@@ -18,6 +18,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import okio.BufferedSink
+import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.testing.RawTlsServer
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.awaitUntil
@@ -106,7 +107,7 @@ class EnclaveHttpClientTest {
             "an enclave with a query" to { enclave.client(enclave = "${enclave.host}?x") },
             "an enclave with an empty port" to { enclave.client(enclave = "localhost:") },
             "an enclave with a backslash" to { enclave.client(enclave = "localhost\\x") },
-            "a pin that names nothing" to { enclave.client(pin = Pin()) },
+            "a pin that names nothing" to { enclave.client(pin = Pin.NONE) },
             "a pin of empty strings" to { enclave.client(pin = Pin(repo = "", project = "")) },
             "an empty base URL" to { enclave.client(baseUrl = "") },
             "an empty base URL for a proxy" to { enclave.client(transportMode = TransportMode.EHBP, baseUrl = "") },
@@ -172,6 +173,30 @@ class EnclaveHttpClientTest {
         // Null is how an option is left unset.
         val client = enclave.client(baseUrl = null, userCacheSecret = null)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
+    }
+
+    @Test
+    fun thePinThatNamesNothingIsRefusedUnderTheDefaultTrustAndAcceptedWithAVerifierThatAuthorizesConfigs() = test {
+        val refused = assertFailsWith<ConfigurationException> { enclave.client(pin = Pin.NONE) }
+        assertEquals("configuration error", refused.category)
+        assertNothingWasSent()
+
+        val pins = CopyOnWriteArrayList<Pin>()
+        val inner = enclave.verifier.verify
+        enclave.verifier.verify = { document, nonce, pin -> inner(document, nonce, pin.also { pins += it }) }
+        val authorizing = object : AttestationVerifier by enclave.verifier {
+            override val callerAuthorizesConfig: Boolean = true
+
+            override fun checkPinVerifiability(pin: Pin) = Unit
+        }
+        val client = EnclaveHttpClient.create(enclave.host, Pin.NONE, enclave.internals()) {
+            attestationRelay = enclave.relayHost
+            verifier = Verifier.appraisingWith(authorizing)
+        }
+        client.use {
+            assertSame(Pin.NONE, it.pin)
+            assertEquals(listOf(Pin.NONE), pins.toList())
+        }
     }
 
     @Test
