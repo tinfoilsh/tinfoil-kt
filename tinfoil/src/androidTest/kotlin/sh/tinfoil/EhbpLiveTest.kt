@@ -79,11 +79,9 @@ class EhbpLiveTest {
 
     @Test
     fun theRouterVerifiesAndAnswersSealedRequests() = live {
-        EnclaveHttpClient.create(
-            enclave = enclave,
-            pin = Pin(repo = router),
-            transportMode = TransportMode.Ehbp,
-        ).use { client ->
+        EnclaveHttpClient.create(enclave = enclave, pin = Pin(repo = router)) {
+            transportMode = TransportMode.Ehbp
+        }.use { client ->
             val verified = assertNotNull(client.current)
             assertEquals(TransportMode.Ehbp, client.transportMode)
             assertTrue(Regex("[0-9a-f]{64}").matches(verified.hpkePublicKey.orEmpty()), "$verified")
@@ -115,7 +113,7 @@ class EhbpLiveTest {
 
     @Test
     fun aDiscoveredRouterAnswersSealedRequests() = live {
-        RouterHttpClient.create(transportMode = TransportMode.Ehbp).use { client ->
+        RouterHttpClient.create { transportMode = TransportMode.Ehbp }.use { client ->
             val verified = assertNotNull(client.current)
             Log.i(TAG, "discovered ${client.enclave} for sealed requests")
             assertEquals(TransportMode.Ehbp, client.transportMode)

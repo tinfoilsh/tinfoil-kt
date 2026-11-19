@@ -34,20 +34,23 @@ class EnclaveHttpClientBindingTest {
         val results = CopyOnWriteArrayList<Result<Verification>>()
         val refused: List<Pair<String, suspend () -> Unit>> = listOf(
             "a pin that names nothing, under the default trust" to {
-                EnclaveHttpClient.create(nowhere, Pin(), onVerificationResult = { results += it })
+                EnclaveHttpClient.create(nowhere, Pin()) { onVerificationResult = { results += it } }
             },
             "a malformed pin" to { EnclaveHttpClient.create(nowhere, Pin(repo = "not a repository")) },
             "a relay that is a URL" to {
-                EnclaveHttpClient.create(nowhere, pin, attestationRelay = "https://relay.invalid/path")
+                EnclaveHttpClient.create(nowhere, pin) { attestationRelay = "https://relay.invalid/path" }
             },
             "an enclave that is a URL" to { EnclaveHttpClient.create("https://$nowhere/", pin) },
             "a pin for a verifier that authorizes configs itself" to {
-                EnclaveHttpClient.create(nowhere, pin, verifier = Verifier(configAuthorizer = { }))
+                EnclaveHttpClient.create(nowhere, pin) { verifier = Verifier(configAuthorizer = { }) }
             },
             "a proxy over HTTP that is not on this machine" to {
-                EnclaveHttpClient.create(nowhere, pin, transportMode = TransportMode.Ehbp, baseUrl = "http://proxy.invalid/")
+                EnclaveHttpClient.create(nowhere, pin) {
+                    transportMode = TransportMode.Ehbp
+                    baseUrl = "http://proxy.invalid/"
+                }
             },
-            "a proxy" to { EnclaveHttpClient.create(nowhere, pin, baseUrl = "https://proxy.invalid/") },
+            "a proxy" to { EnclaveHttpClient.create(nowhere, pin) { baseUrl = "https://proxy.invalid/" } },
         )
         for ((name, create) in refused) {
             assertFailsWith<ConfigurationException>(name) { create() }
@@ -60,7 +63,7 @@ class EnclaveHttpClientBindingTest {
         val results = CopyOnWriteArrayList<Result<Verification>>()
 
         val error = assertFailsWith<NetworkException> {
-            EnclaveHttpClient.create(nowhere, pin, onVerificationResult = { results += it })
+            EnclaveHttpClient.create(nowhere, pin) { onVerificationResult = { results += it } }
         }
 
         assertTrue(error.cause != null, "the cause is kept")
@@ -72,7 +75,7 @@ class EnclaveHttpClientBindingTest {
     fun aVerifierThatAuthorizesConfigsItselfNeedsNoPin() = runBlocking<Unit> {
         // Accepted as an option; it then fails on the network, not on the pin.
         assertFailsWith<NetworkException> {
-            EnclaveHttpClient.create(nowhere, Pin(), verifier = Verifier(configAuthorizer = { }))
+            EnclaveHttpClient.create(nowhere, Pin()) { verifier = Verifier(configAuthorizer = { }) }
         }
     }
 }

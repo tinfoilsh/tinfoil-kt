@@ -7,7 +7,6 @@ import com.openai.core.LogLevel
 import okhttp3.Call
 import okhttp3.HttpUrl
 import sh.tinfoil.ConfigurationException
-import sh.tinfoil.TinfoilEvent
 
 /**
  * The OpenAI SDK's options for a client of this SDK, checked and complete
@@ -18,7 +17,7 @@ import sh.tinfoil.TinfoilEvent
  * reported before anything is contacted. [bind] then ties the options to the
  * attested client; [discard] releases them if there will be none.
  */
-internal class OpenAIOptions private constructor(
+internal class PreparedOpenAIOptions private constructor(
     private val adapter: OpenAIHttpAdapter,
     private val options: ClientOptions,
 ) {
@@ -40,16 +39,17 @@ internal class OpenAIOptions private constructor(
         private const val UNBOUND_URL = "https://unverified.invalid/v1/"
 
         /**
-         * @throws ConfigurationException if the options do not make a
-         *   client: there is no credential, or they select a destination of
-         *   their own that cannot be overridden.
+         * @throws ConfigurationException if [apiKey] is empty or blank, or
+         *   the options do not make a client: they select a destination of
+         *   their own that cannot be overridden, or credentials that cannot
+         *   be used together.
          */
-        fun prepare(
-            apiKey: String?,
-            tinfoilEvents: Set<TinfoilEvent>,
-            configure: (ClientOptions.Builder.() -> Unit)?,
-        ): OpenAIOptions {
-            val adapter = OpenAIHttpAdapter(TinfoilEvents.headerValue(tinfoilEvents))
+        fun prepare(apiKey: String, settings: OpenAISettings): PreparedOpenAIOptions {
+            // The message never repeats the key, whatever it holds.
+            if (apiKey.isBlank()) {
+                throw ConfigurationException("the API key is empty or blank")
+            }
+            val adapter = OpenAIHttpAdapter(TinfoilEvents.headerValue(settings.tinfoilEvents))
             val builder = ClientOptions.builder()
             // Left alone, the OpenAI SDK takes its log level from the
             // environment and its telemetry switch from a system property.
@@ -57,8 +57,10 @@ internal class OpenAIOptions private constructor(
             // defaults, and the caller's options can still change them.
             builder.logLevel(LogLevel.OFF)
             builder.disableTelemetry(false)
-            apiKey.nullIfEmpty()?.let { builder.apiKey(it) }
-            configure?.invoke(builder)
+            // Set first, so that a credential in the caller's options
+            // replaces it, as the builder defines.
+            builder.apiKey(apiKey)
+            settings.configure.forEach { it(builder) }
             // Set last, so that nothing in the caller's options replaces
             // them: the OpenAI client can reach the network only through
             // the adapter.
@@ -71,7 +73,7 @@ internal class OpenAIOptions private constructor(
             } catch (e: IllegalStateException) {
                 throw invalid(e)
             }
-            return OpenAIOptions(adapter, options)
+            return PreparedOpenAIOptions(adapter, options)
         }
 
         /**

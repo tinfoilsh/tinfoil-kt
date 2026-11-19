@@ -24,6 +24,7 @@ import okio.Buffer
 import okio.BufferedSink
 import okio.buffer
 import okio.source
+import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.testing.ENCAPSULATED_KEY_HEADER
 import sh.tinfoil.testing.ENCLAVE_URL_HEADER
 import sh.tinfoil.testing.RESPONSE_NONCE_HEADER
@@ -111,8 +112,9 @@ class EhbpClientTest {
     /** A client that is checked but has verified nothing, so that any I/O shows. */
     private fun unverified(baseUrl: String? = proxyUrl, transportMode: TransportMode = TransportMode.Ehbp): EnclaveHttpClient =
         EnclaveHttpClient.unverified(
-            enclave.host, Pin(repo = "tinfoilsh/example"), transportMode, baseUrl, enclave.relayHost,
-            Verifier.appraisingWith(enclave.verifier), null, null, null, enclave.internals(),
+            enclave.host, Pin(repo = "tinfoilsh/example"),
+            RouteSettings(transportMode, baseUrl, enclave.relayHost, Verifier.appraisingWith(enclave.verifier)),
+            enclave.internals(),
         )
 
     // Options.

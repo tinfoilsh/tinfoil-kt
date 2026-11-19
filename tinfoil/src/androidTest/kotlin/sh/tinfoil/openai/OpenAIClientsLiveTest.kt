@@ -92,7 +92,7 @@ class OpenAIClientsLiveTest {
 
     @Test
     fun theDropInClientReachesTheRouterThroughTheOpenAiSdk() = live {
-        Client.create(apiKey = NOT_A_KEY, configure = { maxRetries(0) }).use { client ->
+        Client.create(NOT_A_KEY) { openAI { maxRetries(0) } }.use { client ->
             assertTrue(client.baseUrl.toString().endsWith(".tinfoil.sh/v1/"), client.baseUrl.toString())
             assertModelsListed("drop-in", client.openAIAsync)
             assertRefused("drop-in", client.openAI, client.openAIAsync)
@@ -101,17 +101,19 @@ class OpenAIClientsLiveTest {
 
     @Test
     fun theRouterClientSealsWhatTheOpenAiSdkSends() = live {
-        RouterOpenAIClient.create(transportMode = TransportMode.Ehbp, apiKey = NOT_A_KEY, configure = { maxRetries(0) })
-            .use { client ->
-                assertEquals(TransportMode.Ehbp, client.httpClient.transportMode)
-                assertModelsListed("router, sealed", client.openAIAsync)
-                assertRefused("router, sealed", client.openAI, client.openAIAsync)
-            }
+        RouterOpenAIClient.create(NOT_A_KEY) {
+            transportMode = TransportMode.Ehbp
+            openAI { maxRetries(0) }
+        }.use { client ->
+            assertEquals(TransportMode.Ehbp, client.httpClient.transportMode)
+            assertModelsListed("router, sealed", client.openAIAsync)
+            assertRefused("router, sealed", client.openAI, client.openAIAsync)
+        }
     }
 
     @Test
     fun theEnclaveClientReachesANamedEnclaveThroughTheOpenAiSdk() = live {
-        EnclaveOpenAIClient.create(enclave, Pin(repo = router), apiKey = NOT_A_KEY, configure = { maxRetries(0) })
+        EnclaveOpenAIClient.create(enclave, Pin(repo = router), NOT_A_KEY) { openAI { maxRetries(0) } }
             .use { client ->
                 assertEquals("https://$enclave/", client.httpClient.baseUrl.toString())
                 assertModelsListed("enclave", client.openAIAsync)
@@ -122,13 +124,13 @@ class OpenAIClientsLiveTest {
     @Test
     fun aChatIsCompletedAndStreamedOverPinnedConnections() = live {
         val key = apiKey()
-        Client.create(apiKey = key).use { client -> assertChats("drop-in", client.openAI, client.openAIAsync) }
+        Client.create(key).use { client -> assertChats("drop-in", client.openAI, client.openAIAsync) }
     }
 
     @Test
     fun aChatIsCompletedAndStreamedWithSealedBodies() = live {
         val key = apiKey()
-        RouterOpenAIClient.create(transportMode = TransportMode.Ehbp, apiKey = key).use { client ->
+        RouterOpenAIClient.create(key) { transportMode = TransportMode.Ehbp }.use { client ->
             assertChats("router, sealed", client.openAI, client.openAIAsync)
         }
     }

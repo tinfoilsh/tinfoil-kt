@@ -2,13 +2,13 @@ package sh.tinfoil
 
 import com.openai.client.OpenAIClient
 import com.openai.client.OpenAIClientAsync
-import com.openai.core.ClientOptions
 import kotlinx.coroutines.CancellationException
 import okhttp3.Call
 import okhttp3.HttpUrl
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
-import sh.tinfoil.internal.OpenAIOptions
+import sh.tinfoil.internal.PreparedOpenAIOptions
+import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.openai.EnclaveOpenAIClient
 import sh.tinfoil.openai.RouterOpenAIClient
 import java.io.IOException
@@ -87,59 +87,62 @@ public class Client private constructor(
          * Creates a client on Tinfoil's recommended route, verified before
          * this returns.
          *
-         * Every argument is checked before any network I/O.
+         * The options are those of the OpenAI client, set in the block that
+         * [options] is and described by [OpenAIOptions]:
          *
-         * It is safe to call from the main thread: the OpenAI options are
-         * prepared, the other options are checked, which loads the native
-         * verifier library the first time, and everything is fetched and
-         * verified on background threads.
+         * ```
+         * val client = Client.create(apiKey) {
+         *     openAI { maxRetries(1) }
+         * }
+         * ```
+         *
+         * Every argument and option is checked before any network I/O.
+         *
+         * It is safe to call from the main thread. [options] runs once, on
+         * the calling thread, before anything else, and what it set is
+         * copied as it returns; what it throws is thrown from here as it
+         * is, and nothing is contacted. The block that it gave to
+         * `openAI { }` runs later, once, on a background thread, where the
+         * OpenAI options are prepared and the other options are checked,
+         * which loads the native verifier library the first time, and
+         * where everything is fetched and verified.
          *
          * @param apiKey The API key, sent as a bearer token with every
-         *   request, to the verified service only. It is required: null is
-         *   for a credential that [configure] sets instead. It is never read
-         *   from the environment.
-         * @param tinfoilEvents The progress events to ask for, with the
-         *   `X-Tinfoil-Events` header of every request; see [TinfoilEvent].
-         *   None by default, which sends no header. A request, or
-         *   [configure], that sets that header itself keeps its own value.
-         * @param configure Sets any other option of the OpenAI client, such
-         *   as `maxRetries`, `timeout` or default headers, on the OpenAI
-         *   SDK's own options builder. It runs once, here, before any
-         *   network I/O, on a background thread. An HTTP client or a base
-         *   URL that it sets is replaced by this client's. Logging is off
-         *   unless it is turned on here; the builder's `fromEnv()`, if
-         *   called here, reads the environment as the OpenAI SDK documents.
-         * @throws ConfigurationException if the OpenAI options name no
-         *   credential.
+         *   request, to the verified service only. It must not be empty or
+         *   blank. It is never read from the environment.
+         * @param options Sets the options; see [OpenAIOptions]. Without it,
+         *   every option has its default.
+         * @throws ConfigurationException if [apiKey] is empty or blank, or
+         *   the OpenAI options do not make a client. Its message never
+         *   repeats the key.
          * @throws NetworkException if the service's attestation document
          *   cannot be fetched.
          * @throws AttestationException if the service is not to be trusted.
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
-            apiKey: String?,
-            tinfoilEvents: Set<TinfoilEvent> = emptySet(),
-            configure: (ClientOptions.Builder.() -> Unit)? = null,
-        ): Client = create(apiKey, tinfoilEvents, configure, null, Internals())
+            apiKey: String,
+            options: OpenAIOptions.() -> Unit = {},
+        ): Client = create(apiKey, null, Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun create(
-            apiKey: String?,
-            tinfoilEvents: Set<TinfoilEvent>,
-            configure: (ClientOptions.Builder.() -> Unit)?,
+            apiKey: String,
             verifier: Verifier?,
             internals: Internals,
-        ): Client = Background.creating {
-            // Checking the options, which calls into the verifier library,
-            // and everything after it run on a background thread, so that
-            // any thread may call this.
-            // Today the recommended route is one of Tinfoil's routers, over
-            // connections that are pinned to its attested key.
-            val route = RouterOpenAIClient.create(
-                TransportMode.Tls, null, null, verifier, null, null, null, apiKey, tinfoilEvents, configure, internals,
-            )
-            return@creating Client(route, OpenAIOptions.apiUrl(route.httpClient.baseUrl, null))
+            options: OpenAIOptions.() -> Unit,
+        ): Client {
+            val openAISettings = openAISettings(options)
+            return Background.creating {
+                // Checking the options, which calls into the verifier
+                // library, and everything after it run on a background
+                // thread, so that any thread may call this.
+                // Today the recommended route is one of Tinfoil's routers,
+                // over connections that are pinned to its attested key.
+                val route = RouterOpenAIClient.create(apiKey, RouteSettings(verifier = verifier), openAISettings, internals)
+                return@creating Client(route, PreparedOpenAIOptions.apiUrl(route.httpClient.baseUrl, null))
+            }
         }
     }
 }

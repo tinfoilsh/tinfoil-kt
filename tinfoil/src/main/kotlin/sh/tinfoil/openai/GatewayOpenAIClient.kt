@@ -2,21 +2,18 @@ package sh.tinfoil.openai
 
 import com.openai.client.OpenAIClient
 import com.openai.client.OpenAIClientAsync
-import com.openai.core.ClientOptions
 import kotlinx.coroutines.CancellationException
-import sh.tinfoil.Catalog
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
-import sh.tinfoil.ModelPin
+import sh.tinfoil.GatewayOpenAIOptions
 import sh.tinfoil.NetworkException
-import sh.tinfoil.TinfoilEvent
-import sh.tinfoil.Verification
-import sh.tinfoil.VerificationCheck
-import sh.tinfoil.Verifier
+import sh.tinfoil.gatewayOpenAISettings
 import sh.tinfoil.internal.Background
+import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.Internals
-import sh.tinfoil.internal.OpenAIOptions
+import sh.tinfoil.internal.OpenAISettings
+import sh.tinfoil.internal.PreparedOpenAIOptions
 import java.io.IOException
 
 /**
@@ -87,98 +84,79 @@ public class GatewayOpenAIClient private constructor(
          * Creates a [GatewayHttpClient], which fetches the gateway's
          * catalog before this returns, and an OpenAI client over it.
          *
-         * Every argument is checked before any network I/O, the OpenAI
-         * options included.
+         * Everything but the API key is an option, set in the one block
+         * that [options] is and described by [GatewayOpenAIOptions]:
          *
-         * It is safe to call from the main thread: the OpenAI options are
-         * prepared, the other options are checked, which loads the native
-         * verifier library the first time, and everything is fetched on
-         * background threads.
+         * ```
+         * val client = GatewayOpenAIClient.create(apiKey) {
+         *     modelPins = mapOf("a-model" to ModelPin("tinfoilsh/a-model"))
+         *     openAI { maxRetries(0) }
+         * }
+         * ```
          *
-         * The parameters from [modelPins] to [catalog] are those of
-         * [GatewayHttpClient.create], which describes them. Its
-         * `userCacheSecret` scopes the prompt cache of the chat,
-         * completions and responses requests that the OpenAI client sends;
-         * a request that sets `user_cache_secret` itself, as an additional
-         * body property, is scoped by its own, so a server can give each of
-         * its users a prompt cache of their own.
+         * Every argument and option is checked before any network I/O, the
+         * OpenAI options included.
          *
-         * @param baseUrl The gateway's base URL, which the OpenAI client
-         *   uses as it is given: the OpenAI API's paths, such as
-         *   `chat/completions`, are joined under it. Null selects Tinfoil's
-         *   gateway.
+         * It is safe to call from the main thread. [options] runs once, on
+         * the calling thread, before anything else, and what it set is
+         * copied as it returns; what it throws is thrown from here as it
+         * is, and nothing is contacted. The block that it gave to
+         * `openAI { }` runs later, once, on a background thread, where the
+         * OpenAI options are prepared and the other options are checked,
+         * which loads the native verifier library the first time, and
+         * where everything is fetched.
+         *
          * @param apiKey The API key, sent as a bearer token with every
-         *   request. The gateway reads it. It is required, unless
-         *   [configure] sets a credential. It is never read from the
-         *   environment.
-         * @param tinfoilEvents The progress events to ask for, with the
-         *   `X-Tinfoil-Events` header of every request; see [TinfoilEvent].
-         *   None by default, which sends no header. A request, or
-         *   [configure], that sets that header itself keeps its own value.
-         * @param configure Sets any other option of the OpenAI client, such
-         *   as `maxRetries`, `timeout` or default headers, on the OpenAI
-         *   SDK's own options builder. It runs once, here, before any
-         *   network I/O, on a background thread. An HTTP client or a base
-         *   URL that it sets is replaced by this client's. Logging is off
-         *   unless it is turned on here; the builder's `fromEnv()`, if
-         *   called here, reads the environment as the OpenAI SDK documents.
-         * @throws ConfigurationException if an argument is invalid, or the
-         *   OpenAI options name no credential.
+         *   request. The gateway reads it. It must not be empty or blank.
+         *   It is never read from the environment.
+         * @param options Sets the options; see [GatewayOpenAIOptions].
+         *   Without it, every option has its default.
+         * @throws ConfigurationException if an argument or an option is
+         *   invalid: [apiKey] is empty or blank, or the OpenAI options do
+         *   not make a client. Its message never repeats the key.
          * @throws NetworkException if the catalog cannot be fetched or
          *   read.
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
-            modelPins: Map<String, ModelPin> = emptyMap(),
-            pinnedModelsOnly: Boolean = false,
-            baseUrl: String? = null,
-            verifier: Verifier? = null,
-            userCacheSecret: String? = null,
-            verificationCheck: VerificationCheck? = null,
-            onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-            catalog: (() -> Catalog)? = null,
-            apiKey: String? = null,
-            tinfoilEvents: Set<TinfoilEvent> = emptySet(),
-            configure: (ClientOptions.Builder.() -> Unit)? = null,
-        ): GatewayOpenAIClient = create(
-            modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck, onVerificationResult,
-            catalog, apiKey, tinfoilEvents, configure, Internals(),
-        )
+            apiKey: String,
+            options: GatewayOpenAIOptions.() -> Unit = {},
+        ): GatewayOpenAIClient = create(apiKey, Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun create(
-            modelPins: Map<String, ModelPin>,
-            pinnedModelsOnly: Boolean,
-            baseUrl: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
-            catalog: (() -> Catalog)?,
-            apiKey: String?,
-            tinfoilEvents: Set<TinfoilEvent>,
-            configure: (ClientOptions.Builder.() -> Unit)?,
+            apiKey: String,
+            internals: Internals,
+            options: GatewayOpenAIOptions.() -> Unit,
+        ): GatewayOpenAIClient {
+            val (route, openAISettings) = gatewayOpenAISettings(options)
+            return create(apiKey, route, openAISettings, internals)
+        }
+
+        /** [create] with options that were read already. */
+        @JvmSynthetic
+        internal suspend fun create(
+            apiKey: String,
+            route: GatewaySettings,
+            openAISettings: OpenAISettings,
             internals: Internals,
         ): GatewayOpenAIClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val options = OpenAIOptions.prepare(apiKey, tinfoilEvents, configure)
+            val prepared = PreparedOpenAIOptions.prepare(apiKey, openAISettings)
             val httpClient = try {
-                GatewayHttpClient.create(
-                    modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck,
-                    onVerificationResult, catalog, internals,
-                )
+                GatewayHttpClient.create(route, internals)
             } catch (e: Throwable) {
-                options.discard()
+                prepared.discard()
                 throw e
             }
             val openAI = try {
                 // The gateway's base URL is the API's, as it is.
-                options.bind(httpClient, httpClient.baseUrl)
+                prepared.bind(httpClient, httpClient.baseUrl)
             } catch (e: Throwable) {
-                options.discard()
+                prepared.discard()
                 httpClient.close()
                 throw e
             }

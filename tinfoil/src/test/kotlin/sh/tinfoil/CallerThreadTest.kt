@@ -136,10 +136,11 @@ class CallerThreadTest {
         val verifier = Verifier.appraisingWith(Noting(enclave.verifier))
 
         fromCaller {
-            val client = EnclaveHttpClient.create(
-                enclave.host, Pin(repo = "tinfoilsh/example"), TransportMode.Tls, null, enclave.relayHost, verifier,
-                "a-cache-secret", null, null, enclave.internals(),
-            )
+            val client = EnclaveHttpClient.create(enclave.host, Pin(repo = "tinfoilsh/example"), enclave.internals()) {
+                attestationRelay = enclave.relayHost
+                this.verifier = verifier
+                userCacheSecret = "a-cache-secret"
+            }
             client.ensureVerified()
             client.reverify()
             for (path in listOf("/v1/chat/completions", "/v1/embeddings")) {
@@ -176,11 +177,11 @@ class CallerThreadTest {
         val enclave = TestEnclave().also { closeables += it }
 
         fromCaller {
-            EnclaveOpenAIClient.create(
-                enclave.host, Pin(repo = "tinfoilsh/example"), TransportMode.Tls, null, enclave.relayHost,
-                Verifier.appraisingWith(Noting(enclave.verifier)), null, null, null, "a-key", emptySet(),
-                { note("configure") }, enclave.internals(),
-            ).close()
+            EnclaveOpenAIClient.create(enclave.host, Pin(repo = "tinfoilsh/example"), "a-key", enclave.internals()) {
+                attestationRelay = enclave.relayHost
+                verifier = Verifier.appraisingWith(Noting(enclave.verifier))
+                openAI { note("configure") }
+            }.close()
         }
 
         assertNothingOnTheCallersThread("configure", "checkPinVerifiability", "verify")

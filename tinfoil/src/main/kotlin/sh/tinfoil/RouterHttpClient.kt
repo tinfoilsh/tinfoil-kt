@@ -9,6 +9,7 @@ import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
+import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.nullIfEmpty
 import sh.tinfoil.internal.transport.AttestedCall
@@ -198,82 +199,40 @@ public class RouterHttpClient private constructor(
          * once each, for at most 30 seconds in all, the fetch of the list
          * included. A router that cannot be reached, does not verify, does
          * not present its attested key or is rejected by
-         * [verificationCheck] is passed over. If no router is chosen,
+         * the [verification check][RouterOptions.verificationCheck] is
+         * passed over. If no router is chosen,
          * because the list could not be fetched or is empty, none passed
          * or the time ran out, the client uses `inference.tinfoil.sh`,
          * which is verified in the same way, with one more attempt if the
          * first fails; if that fails too, this fails with its error. Its
          * connections are pinned to its attested key like any router's.
          *
-         * With a [baseUrl], which is a proxy, or an [attestationRelay], the
-         * list is not fetched and the client uses `inference.tinfoil.sh`.
+         * With a [base URL][RouterOptions.baseUrl], which is a proxy, or an
+         * [attestation relay][RouterOptions.attestationRelay], the list is
+         * not fetched and the client uses `inference.tinfoil.sh`.
          *
-         * Every argument is checked before any network I/O. Each call
+         * Everything is an option, set in the block that [options] is and
+         * described by [RouterOptions]:
+         *
+         * ```
+         * val client = RouterHttpClient.create { userCacheSecret = secret }
+         * ```
+         *
+         * Every option is checked before any network I/O. Each call
          * chooses anew.
          *
-         * It is safe to call from the main thread: the options are checked,
-         * which loads the native verifier library the first time, and
-         * everything is fetched and verified on background threads. A
-         * caller that is cancelled just as the client is made does not
-         * receive it, and the client is closed.
+         * It is safe to call from the main thread. [options] runs once, on
+         * the calling thread, before anything else, and what it set is
+         * copied as it returns; what it throws is thrown from here as it
+         * is, and nothing is contacted. The options are then checked, which
+         * loads the native verifier library the first time, and everything
+         * is fetched and verified on background threads. A caller that is
+         * cancelled just as the client is made does not receive it, and
+         * the client is closed.
          *
-         * @param transportMode How requests are protected.
-         *   [TransportMode.Tls], the default, protects the whole exchange on
-         *   a direct connection; [TransportMode.Ehbp] protects only bodies,
-         *   and works through a proxy.
-         * @param baseUrl A proxy to send requests through, which forwards
-         *   each request to the router that the request's
-         *   `X-Tinfoil-Enclave-Url` header names. The router is not known
-         *   before it is chosen, so a base URL cannot name its origin, and
-         *   a pinned TLS connection cannot pass through a proxy: a base URL
-         *   requires [TransportMode.Ehbp]. It is an absolute URL without
-         *   user information, a query or a fragment. A proxy reads
-         *   everything that is not sealed, so it must use HTTPS; `http://`
-         *   is accepted only for `localhost` or a loopback IP address, and
-         *   a base URL on this machine is reached directly, whatever HTTP
-         *   proxy the system is configured with. With a base URL the
-         *   router list is not consulted, and the router is
-         *   always `inference.tinfoil.sh`: the proxy opens the connection
-         *   to the host that the header names and passes it every header,
-         *   the API key included, and this SDK cannot hold that connection
-         *   to the attested key, so the header never names a host that an
-         *   untrusted list proposed. The router is still verified directly,
-         *   or through [attestationRelay], and not through the proxy. The
-         *   proxy itself is trusted with everything that is not sealed; see
-         *   [EnclaveHttpClient.execute].
-         * @param attestationRelay A host, with an optional port, that fetches
-         *   attestation documents on the client's behalf. It is not trusted:
-         *   a document is verified whoever delivers it. With a relay the
-         *   router list is not consulted: the client uses
-         *   `inference.tinfoil.sh`, verified through the relay.
-         * @param verifier The trust policy. Null selects the defaults. A
-         *   verifier that supplies or authorizes configs by itself, with an
-         *   embedded config or a config authorizer, is refused: it needs an
-         *   enclave that the caller names, so use [EnclaveHttpClient].
-         * @param userCacheSecret The prompt-cache scope of the client's
-         *   requests. It is added to the JSON body of a `POST` to a chat,
-         *   completions or responses path, and such a request is refused if
-         *   its body cannot be examined; see [execute]. Requests with the
-         *   same secret, under the same API key, share cached prompt
-         *   prefixes. Null or empty selects
-         *   a random secret that is generated once in each process, kept
-         *   only in memory, and shared by every client in the process that
-         *   is given none. Pass one to keep the scope across processes or
-         *   devices. Use an opaque random value, not a user ID or an API
-         *   key.
-         * @param verificationCheck Called with each verification that passes
-         *   [verifier], before the router's keys are used: for each router
-         *   that is tried here, and whenever the client verifies again. It
-         *   throws to reject the router; here, the next router is then
-         *   tried. It must not call back into the client.
-         * @param onVerificationResult Called with the outcome of every
-         *   verification of the router that the client uses, here and later:
-         *   the verification, or the [TinfoilException] that it failed with.
-         *   The routers that were tried and passed over are not reported. It
-         *   only observes, so anything that it throws is ignored. It is
-         *   called once the verification is over, on a thread of the
-         *   client's, and may be called from several threads.
-         * @throws ConfigurationException if an argument is invalid.
+         * @param options Sets the options; see [RouterOptions]. Without it,
+         *   every option has its default.
+         * @throws ConfigurationException if an option is invalid.
          * @throws NetworkException if no router on the list was chosen and
          *   the attestation document of `inference.tinfoil.sh` cannot be
          *   fetched.
@@ -281,37 +240,26 @@ public class RouterHttpClient private constructor(
          *   and `inference.tinfoil.sh` is not to be trusted.
          */
         @Throws(IOException::class, CancellationException::class)
-        public suspend fun create(
-            transportMode: TransportMode = TransportMode.Tls,
-            baseUrl: String? = null,
-            attestationRelay: String? = null,
-            verifier: Verifier? = null,
-            userCacheSecret: String? = null,
-            verificationCheck: VerificationCheck? = null,
-            onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-        ): RouterHttpClient = create(
-            transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
-            onVerificationResult, Internals(),
-        )
+        public suspend fun create(options: RouterOptions.() -> Unit = {}): RouterHttpClient =
+            create(Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
-        internal suspend fun create(
-            transportMode: TransportMode,
-            baseUrl: String?,
-            attestationRelay: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
-            internals: Internals,
-        ): RouterHttpClient = Background.creating {
+        internal suspend fun create(internals: Internals, options: RouterOptions.() -> Unit): RouterHttpClient =
+            create(routerSettings(options), internals)
+
+        /** [create] with options that were read already. */
+        @JvmSynthetic
+        internal suspend fun create(settings: RouteSettings, internals: Internals): RouterHttpClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
+            val transportMode = settings.transportMode
+            val verificationCheck = settings.verificationCheck
+            val onVerificationResult = settings.onVerificationResult
             // Everything down to the fallback's connection is checked
             // before any I/O.
-            val base = baseUrl.nullIfEmpty()
+            val base = settings.baseUrl.nullIfEmpty()
             if (base != null) {
                 Urls.baseUrl(base)
                 if (transportMode == TransportMode.Tls) {
@@ -320,14 +268,14 @@ public class RouterHttpClient private constructor(
                     )
                 }
             }
-            val policy = verifier ?: Verifier()
+            val policy = settings.verifier ?: Verifier()
             if (policy.backend.callerAuthorizesConfig) {
                 throw ConfigurationException(
                     "a verifier that authorizes configs itself needs an explicit enclave: use EnclaveHttpClient",
                 )
             }
-            val relay = attestationRelay.nullIfEmpty()
-            val secret = UserCacheSecret.orProcessDefault(userCacheSecret)
+            val relay = settings.attestationRelay.nullIfEmpty()
+            val secret = UserCacheSecret.orProcessDefault(settings.userCacheSecret)
             val open = { host: String ->
                 EnclaveConnection.create(
                     host, RouterDiscovery.ROUTER_PIN, transportMode, base, relay, policy, secret, verificationCheck,

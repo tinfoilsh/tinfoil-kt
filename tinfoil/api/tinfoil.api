@@ -46,8 +46,8 @@ public final class sh/tinfoil/Client : java/lang/AutoCloseable {
 }
 
 public final class sh/tinfoil/Client$Companion {
-	public final fun create (Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/Client$Companion;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/Client$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public abstract interface class sh/tinfoil/ConfigAuthorizer {
@@ -146,8 +146,28 @@ public final class sh/tinfoil/EnclaveHttpClient : java/lang/AutoCloseable, okhtt
 }
 
 public final class sh/tinfoil/EnclaveHttpClient$Companion {
-	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract class sh/tinfoil/EnclaveOpenAIOptions : sh/tinfoil/EnclaveOptions, sh/tinfoil/OpenAIOptions {
+}
+
+public abstract class sh/tinfoil/EnclaveOptions {
+	public final fun getAttestationRelay ()Ljava/lang/String;
+	public final fun getBaseUrl ()Ljava/lang/String;
+	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
+	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getUserCacheSecret ()Ljava/lang/String;
+	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
+	public final fun getVerifier ()Lsh/tinfoil/Verifier;
+	public final fun setAttestationRelay (Ljava/lang/String;)V
+	public final fun setBaseUrl (Ljava/lang/String;)V
+	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
+	public final fun setTransportMode (Lsh/tinfoil/TransportMode;)V
+	public final fun setUserCacheSecret (Ljava/lang/String;)V
+	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
+	public final fun setVerifier (Lsh/tinfoil/Verifier;)V
 }
 
 public abstract interface annotation class sh/tinfoil/ExperimentalTinfoilApi : java/lang/annotation/Annotation {
@@ -169,9 +189,31 @@ public final class sh/tinfoil/GatewayHttpClient : java/lang/AutoCloseable, okhtt
 }
 
 public final class sh/tinfoil/GatewayHttpClient$Companion {
-	public final fun create (Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/GatewayHttpClient$Companion;Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/GatewayHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun fetchCatalog (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract class sh/tinfoil/GatewayOpenAIOptions : sh/tinfoil/GatewayOptions, sh/tinfoil/OpenAIOptions {
+}
+
+public abstract class sh/tinfoil/GatewayOptions {
+	public final fun getBaseUrl ()Ljava/lang/String;
+	public final fun getCatalog ()Lkotlin/jvm/functions/Function0;
+	public final fun getModelPins ()Ljava/util/Map;
+	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
+	public final fun getPinnedModelsOnly ()Z
+	public final fun getUserCacheSecret ()Ljava/lang/String;
+	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
+	public final fun getVerifier ()Lsh/tinfoil/Verifier;
+	public final fun setBaseUrl (Ljava/lang/String;)V
+	public final fun setCatalog (Lkotlin/jvm/functions/Function0;)V
+	public final fun setModelPins (Ljava/util/Map;)V
+	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
+	public final fun setPinnedModelsOnly (Z)V
+	public final fun setUserCacheSecret (Ljava/lang/String;)V
+	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
+	public final fun setVerifier (Lsh/tinfoil/Verifier;)V
 }
 
 public final class sh/tinfoil/Measurement {
@@ -193,6 +235,12 @@ public final class sh/tinfoil/ModelPin {
 
 public final class sh/tinfoil/NetworkException : sh/tinfoil/TinfoilException {
 	public final fun getStatus ()Ljava/lang/Integer;
+}
+
+public abstract interface class sh/tinfoil/OpenAIOptions {
+	public abstract fun getTinfoilEvents ()Ljava/util/Set;
+	public abstract fun openAI (Lkotlin/jvm/functions/Function1;)V
+	public abstract fun setTinfoilEvents (Ljava/util/Set;)V
 }
 
 public final class sh/tinfoil/Pin {
@@ -262,8 +310,28 @@ public final class sh/tinfoil/RouterHttpClient : java/lang/AutoCloseable, okhttp
 }
 
 public final class sh/tinfoil/RouterHttpClient$Companion {
-	public final fun create (Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/RouterHttpClient$Companion;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/RouterHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract class sh/tinfoil/RouterOpenAIOptions : sh/tinfoil/RouterOptions, sh/tinfoil/OpenAIOptions {
+}
+
+public abstract class sh/tinfoil/RouterOptions {
+	public final fun getAttestationRelay ()Ljava/lang/String;
+	public final fun getBaseUrl ()Ljava/lang/String;
+	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
+	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getUserCacheSecret ()Ljava/lang/String;
+	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
+	public final fun getVerifier ()Lsh/tinfoil/Verifier;
+	public final fun setAttestationRelay (Ljava/lang/String;)V
+	public final fun setBaseUrl (Ljava/lang/String;)V
+	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
+	public final fun setTransportMode (Lsh/tinfoil/TransportMode;)V
+	public final fun setUserCacheSecret (Ljava/lang/String;)V
+	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
+	public final fun setVerifier (Lsh/tinfoil/Verifier;)V
 }
 
 public final class sh/tinfoil/RuntimeReference {
@@ -314,6 +382,9 @@ public abstract class sh/tinfoil/TinfoilException : java/io/IOException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getCategory ()Ljava/lang/String;
 	public final fun getDetail ()Ljava/lang/String;
+}
+
+public abstract interface annotation class sh/tinfoil/TinfoilOptionsDsl : java/lang/annotation/Annotation {
 }
 
 public final class sh/tinfoil/TransportMode : java/lang/Enum {
@@ -399,8 +470,8 @@ public final class sh/tinfoil/openai/EnclaveOpenAIClient : java/lang/AutoCloseab
 }
 
 public final class sh/tinfoil/openai/EnclaveOpenAIClient$Companion {
-	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/openai/EnclaveOpenAIClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/EnclaveOpenAIClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class sh/tinfoil/openai/ErrorsKt {
@@ -418,8 +489,8 @@ public final class sh/tinfoil/openai/GatewayOpenAIClient : java/lang/AutoCloseab
 }
 
 public final class sh/tinfoil/openai/GatewayOpenAIClient$Companion {
-	public final fun create (Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;Ljava/util/Map;ZLjava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class sh/tinfoil/openai/RouterOpenAIClient : java/lang/AutoCloseable {
@@ -433,8 +504,8 @@ public final class sh/tinfoil/openai/RouterOpenAIClient : java/lang/AutoCloseabl
 }
 
 public final class sh/tinfoil/openai/RouterOpenAIClient$Companion {
-	public final fun create (Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/openai/RouterOpenAIClient$Companion;Lsh/tinfoil/TransportMode;Ljava/lang/String;Ljava/lang/String;Lsh/tinfoil/Verifier;Ljava/lang/String;Lsh/tinfoil/VerificationCheck;Lkotlin/jvm/functions/Function1;Ljava/lang/String;Ljava/util/Set;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/RouterOpenAIClient$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class sh/tinfoil/openai/StreamsKt {
