@@ -108,6 +108,10 @@ class EnclaveHttpClientTest {
             "an enclave with a backslash" to { enclave.client(enclave = "localhost\\x") },
             "a pin that names nothing" to { enclave.client(pin = Pin()) },
             "a pin of empty strings" to { enclave.client(pin = Pin(repo = "", project = "")) },
+            "an empty base URL" to { enclave.client(baseUrl = "") },
+            "an empty base URL for a proxy" to { enclave.client(transportMode = TransportMode.EHBP, baseUrl = "") },
+            "an empty relay" to { enclave.client(attestationRelay = "") },
+            "an empty cache secret" to { enclave.client(userCacheSecret = "") },
             "a proxy over HTTP that is not on this machine" to {
                 enclave.client(transportMode = TransportMode.EHBP, baseUrl = "http://proxy.example/")
             },
@@ -148,6 +152,26 @@ class EnclaveHttpClientTest {
             assertFalse(error.message!!.contains("hunter2"), "$name: the message echoes a secret: ${error.message}")
             assertNothingWasSent()
         }
+    }
+
+    @Test
+    fun anEmptyStringOptionIsRefusedByNameAndNotReadAsNotSet() = test {
+        val refused: Map<String, suspend () -> Unit> = mapOf(
+            "baseUrl" to { enclave.client(baseUrl = "") },
+            "attestationRelay" to { enclave.client(attestationRelay = "") },
+            "userCacheSecret" to { enclave.client(userCacheSecret = "") },
+            "Pin.repo" to { enclave.client(pin = Pin(repo = "")) },
+            "Pin.project" to { enclave.client(pin = Pin(project = "")) },
+            "enclave" to { enclave.client(enclave = "") },
+        )
+        for ((option, create) in refused) {
+            val error = assertFailsWith<ConfigurationException>(option) { create() }
+            assertTrue(error.detail.startsWith(option), "$option: ${error.detail}")
+            assertNothingWasSent()
+        }
+        // Null is how an option is left unset.
+        val client = enclave.client(baseUrl = null, userCacheSecret = null)
+        assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
     }
 
     @Test

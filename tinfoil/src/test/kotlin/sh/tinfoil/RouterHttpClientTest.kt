@@ -818,6 +818,10 @@ class RouterHttpClientTest {
             "a relay with user information" to { client(attestationRelay = "hunter2@relay.example") },
             "a verifier that authorizes configs itself" to { client(verifier = authorizing) },
             "a cache secret that is not well-formed text" to { client(userCacheSecret = "hunter2\ud800") },
+            "baseUrl must not be empty" to { client(baseUrl = "") },
+            "baseUrl must not be empty under EHBP" to { client(transportMode = TransportMode.EHBP, baseUrl = "") },
+            "attestationRelay must not be empty" to { client(attestationRelay = "") },
+            "userCacheSecret must not be empty" to { client(userCacheSecret = "") },
         )
         for ((name, create) in refused) {
             val error = try {
@@ -830,12 +834,15 @@ class RouterHttpClientTest {
             }
             assertNotNull(error, "$name was accepted")
             assertFalse(error.message!!.contains("hunter2"), "$name: ${error.message}")
+            if (name.contains("must not be empty")) {
+                assertTrue(error.detail.startsWith(name.substringBefore(" under")), "$name: ${error.detail}")
+            }
             assertEquals(0, listServer.requestCount, "$name: the list was fetched")
             assertEquals(0, router.fetches.get() + fallback.fetches.get(), "$name: a router was contacted")
             assertEquals(0, verifier.verifications.get(), name)
         }
-        // An empty string is an option that was not given.
-        assertEquals(router.host, client(baseUrl = "", attestationRelay = "", userCacheSecret = "").enclave)
+        // Null is how an option is left unset.
+        assertEquals(router.host, client(baseUrl = null, attestationRelay = null, userCacheSecret = null).enclave)
     }
 
     @Test
@@ -883,7 +890,7 @@ class RouterHttpClientTest {
         val router = Router()
         serveList(router.host)
         val first = client()
-        val second = client(userCacheSecret = "")
+        val second = client(userCacheSecret = null)
         val failures = mutableListOf<Throwable>()
 
         first.chat("""{"model":"m","n":9007199254740993}""")

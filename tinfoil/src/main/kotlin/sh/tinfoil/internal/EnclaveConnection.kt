@@ -430,7 +430,7 @@ internal class EnclaveConnection(
             proposed: Boolean = false,
         ): EnclaveConnection {
             val enclaveUrl = Urls.enclaveUrl(enclave)
-            val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
+            val base = requireNotEmpty(baseUrl, "baseUrl")?.let(Urls::baseUrl)
             val proxied = base != null && Origin.of(base) != Origin.of(enclaveUrl)
             when (transportMode) {
                 TransportMode.TLS -> if (base != null) {
@@ -453,7 +453,7 @@ internal class EnclaveConnection(
                     )
                 }
             }
-            val relay = attestationRelay.nullIfEmpty()?.also(Urls::requireRelay)
+            val relay = requireNotEmpty(attestationRelay, "attestationRelay")?.also(Urls::requireRelay)
             val fetcher = lazy { AttestationFetcher(internals.http) }
             val attestor = Attestor(
                 verifier = verifier.backend,

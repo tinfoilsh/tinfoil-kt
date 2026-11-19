@@ -7,6 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ValueTypesTest {
     @Test
@@ -73,16 +74,28 @@ class ValueTypesTest {
     }
 
     @Test
-    fun anEmbeddedConfigCopiesItsBytesAndNormalisesItsName() {
+    fun anEmptyNameOfAnEmbeddedConfigIsRefusedAndNotReadAsNotSet() {
+        val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")
+        val errors = listOf(
+            assertFailsWith<ConfigurationException> { EmbeddedConfig.Bytes(byteArrayOf(1), name = "") },
+            assertFailsWith<ConfigurationException> { EmbeddedConfig.Reference("cd", runtime, name = "") },
+        )
+        for (error in errors) {
+            assertTrue(error.detail.contains("embedded config's name must not be empty"), error.detail)
+        }
+    }
+
+    @Test
+    fun anEmbeddedConfigCopiesItsBytesAndHasNoNameByDefault() {
         val bytes = byteArrayOf(1, 2)
-        val config = EmbeddedConfig.Bytes(bytes, name = "")
+        val config = EmbeddedConfig.Bytes(bytes, name = null)
         bytes[0] = 9
         config.bytes[1] = 9
         assertContentEquals(byteArrayOf(1, 2), config.bytes)
         assertNull(config.name)
 
         val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")
-        val reference = EmbeddedConfig.Reference("cd", runtime, name = "")
+        val reference = EmbeddedConfig.Reference("cd", runtime, name = null)
         assertNull(reference.name)
         assertEquals(reference, EmbeddedConfig.Reference("cd", RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")))
         assertEquals(reference.hashCode(), EmbeddedConfig.Reference("cd", runtime).hashCode())

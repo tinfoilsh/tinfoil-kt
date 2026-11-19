@@ -1,6 +1,7 @@
 package sh.tinfoil
 
 import sh.tinfoil.internal.nullIfEmpty
+import sh.tinfoil.internal.requireNotEmpty
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.internal.verification.GoAttestationVerifier
 import sh.tinfoil.internal.verification.VerifierOptions
@@ -217,7 +218,8 @@ public class EmbeddedReferences(
 public sealed interface EmbeddedConfig {
     /**
      * The config's `/org/project/revision` identity, which a client's [Pin]
-     * is then checked against, or null.
+     * is then checked against, or null. An empty name is refused with a
+     * [ConfigurationException] by the constructors of both kinds.
      */
     public val name: String?
 
@@ -234,7 +236,7 @@ public sealed interface EmbeddedConfig {
         /** The config's exact bytes. */
         public val bytes: ByteArray get() = content.copyOf()
 
-        override val name: String? = name.nullIfEmpty()
+        override val name: String? = requireNotEmpty(name, "the embedded config's name")
 
         override fun equals(other: Any?): Boolean =
             this === other || (other is Bytes && content.contentEquals(other.content) && name == other.name)
@@ -252,7 +254,7 @@ public sealed interface EmbeddedConfig {
         public val runtime: RuntimeReference,
         name: String? = null,
     ) : EmbeddedConfig {
-        override val name: String? = name.nullIfEmpty()
+        override val name: String? = requireNotEmpty(name, "the embedded config's name")
 
         override fun equals(other: Any?): Boolean =
             this === other ||

@@ -11,7 +11,7 @@ import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.RouterDiscovery
-import sh.tinfoil.internal.nullIfEmpty
+import sh.tinfoil.internal.requireNotEmpty
 import sh.tinfoil.internal.transport.AttestedCall
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
@@ -259,7 +259,7 @@ public class RouterHttpClient private constructor(
             val onVerificationResult = settings.onVerificationResult
             // Everything down to the fallback's connection is checked
             // before any I/O.
-            val base = settings.baseUrl.nullIfEmpty()
+            val base = requireNotEmpty(settings.baseUrl, "baseUrl")
             if (base != null) {
                 Urls.baseUrl(base)
                 if (transportMode == TransportMode.TLS) {
@@ -274,7 +274,7 @@ public class RouterHttpClient private constructor(
                     "a verifier that authorizes configs itself needs an explicit enclave: use EnclaveHttpClient",
                 )
             }
-            val relay = settings.attestationRelay.nullIfEmpty()
+            val relay = requireNotEmpty(settings.attestationRelay, "attestationRelay")
             val secret = UserCacheSecret.orProcessDefault(settings.userCacheSecret)
             val open = { host: String ->
                 EnclaveConnection.create(

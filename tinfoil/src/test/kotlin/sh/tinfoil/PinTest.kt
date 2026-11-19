@@ -2,8 +2,10 @@ package sh.tinfoil
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PinTest {
     @Test
@@ -14,12 +16,20 @@ class PinTest {
     }
 
     @Test
-    fun anEmptyStringIsStoredAsNull() {
-        val pin = Pin(repo = "", project = "")
-        assertNull(pin.repo)
-        assertNull(pin.project)
-        assertEquals(Pin(), pin)
-        assertEquals(Pin().hashCode(), pin.hashCode())
+    fun anEmptyOrBlankPartIsRefusedAndNotReadAsNotSet() {
+        for (text in listOf("", " ", "\t\n")) {
+            val repo = assertFailsWith<ConfigurationException> { Pin(repo = text) }
+            assertTrue(repo.detail.contains("Pin.repo"), repo.detail)
+            val project = assertFailsWith<ConfigurationException> { Pin(repo = "org/repo", project = text) }
+            assertTrue(project.detail.contains("Pin.project"), project.detail)
+        }
+    }
+
+    @Test
+    fun onlyNullMeansNotSet() {
+        assertEquals(Pin(), Pin(repo = null, project = null))
+        assertEquals(Pin().hashCode(), Pin(repo = null, project = null).hashCode())
+        assertNull(Pin(project = "org/project").repo)
     }
 
     @Test
@@ -27,8 +37,8 @@ class PinTest {
         val pin = Pin(repo = "org/repo@v1", project = "org/project@sha256:ab")
         assertEquals("org/repo@v1", pin.repo)
         assertEquals("org/project@sha256:ab", pin.project)
-        // Only the empty string means "not set"; nothing is trimmed.
-        assertEquals(" ", Pin(repo = " ").repo)
+        // Nothing is trimmed.
+        assertEquals(" org/repo ", Pin(repo = " org/repo ").repo)
     }
 
     @Test

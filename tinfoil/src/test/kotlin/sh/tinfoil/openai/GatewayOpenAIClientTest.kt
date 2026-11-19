@@ -183,6 +183,8 @@ class GatewayOpenAIClientTest {
         assertFailsWith<ConfigurationException> { client(apiKey = "") }
         assertFailsWith<ConfigurationException> { client(pinnedModelsOnly = true) }
         assertFailsWith<ConfigurationException> { client(baseUrl = "http://${gateway.host}/v1/") }
+        assertFailsWith<ConfigurationException> { client(baseUrl = "") }
+        assertFailsWith<ConfigurationException> { client(userCacheSecret = "") }
         assertEquals(0, gateway.server.requestCount)
         gateway.catalog = { MockResponse().setResponseCode(500) }
         assertFailsWith<NetworkException> { client() }

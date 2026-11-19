@@ -319,9 +319,12 @@ class UserCacheSecretTest {
     }
 
     @Test
-    fun noSecretMeansNone() {
+    fun onlyNullMeansNoSecret() {
         assertNull(UserCacheSecret.of(null))
-        assertNull(UserCacheSecret.of(""))
+        for (given in listOf<() -> Any?>({ UserCacheSecret.of("") }, { UserCacheSecret.orProcessDefault("") })) {
+            val error = assertFailsWith<ConfigurationException> { given() }
+            assertTrue(error.detail.contains("userCacheSecret must not be empty"), error.detail)
+        }
     }
 
     @Test
@@ -336,7 +339,7 @@ class UserCacheSecretTest {
     @Test
     fun theProcessSecretIsRandomStableAndNeverPrinted() {
         val first = spliced("{}".toByteArray(), UserCacheSecret.orProcessDefault(null))!!
-        val second = spliced("{}".toByteArray(), UserCacheSecret.orProcessDefault(""))!!
+        val second = spliced("{}".toByteArray(), UserCacheSecret.orProcessDefault(null))!!
 
         assertEquals(first, second, "one secret for the process")
         val value = assertNotNull(Regex("""\{"user_cache_secret":"([0-9a-f]{64})"}""").matchEntire(first)).groupValues[1]

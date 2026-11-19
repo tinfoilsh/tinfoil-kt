@@ -37,7 +37,7 @@ import sh.tinfoil.Verifier
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Internals
-import sh.tinfoil.internal.nullIfEmpty
+import sh.tinfoil.internal.requireNotEmpty
 import sh.tinfoil.internal.transport.AttestedSender
 import sh.tinfoil.internal.transport.EhbpSealing
 import sh.tinfoil.internal.transport.Origin
@@ -653,7 +653,7 @@ internal class GatewayRouter private constructor(
             catalog: (() -> Catalog)?,
             internals: Internals,
         ): GatewayRouter {
-            val base = Urls.baseUrl(baseUrl.nullIfEmpty() ?: DEFAULT_BASE_URL)
+            val base = Urls.baseUrl(requireNotEmpty(baseUrl, "baseUrl") ?: DEFAULT_BASE_URL)
             if (!base.isHttps) {
                 throw ConfigurationException("invalid base URL: the gateway base URL must use HTTPS")
             }

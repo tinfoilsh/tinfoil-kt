@@ -33,8 +33,9 @@ public annotation class TinfoilOptionsDsl
  * changes nothing. The object is for the block alone and is not safe to
  * share between threads.
  *
- * For the string options, null and the empty string both mean that the
- * option is not set.
+ * For the string options, only null means that the option is not set: an
+ * empty string is refused by `create`, with a [ConfigurationException],
+ * before anything is contacted.
  */
 @TinfoilOptionsDsl
 public sealed class EnclaveOptions {
@@ -80,8 +81,8 @@ public sealed class EnclaveOptions {
 
     /**
      * The prompt-cache scope of the client's requests, for an enclave that
-     * is one of Tinfoil's routers; other enclaves do not read it. Null or
-     * empty sends none. It is added to the JSON body of a `POST` to a chat,
+     * is one of Tinfoil's routers; other enclaves do not read it. Null
+     * sends none. It is added to the JSON body of a `POST` to a chat,
      * completions or responses path, and such a request is refused if its
      * body cannot be examined; see [EnclaveHttpClient.execute]. Use an
      * opaque random value, not a user ID or an API key.
@@ -128,8 +129,9 @@ public sealed class EnclaveOptions {
  * changes nothing. The object is for the block alone and is not safe to
  * share between threads.
  *
- * For the string options, null and the empty string both mean that the
- * option is not set.
+ * For the string options, only null means that the option is not set: an
+ * empty string is refused by `create`, with a [ConfigurationException],
+ * before anything is contacted.
  */
 @TinfoilOptionsDsl
 public sealed class RouterOptions {
@@ -183,7 +185,7 @@ public sealed class RouterOptions {
      * JSON body of a `POST` to a chat, completions or responses path, and
      * such a request is refused if its body cannot be examined; see
      * [RouterHttpClient.execute]. Requests with the same secret, under the
-     * same API key, share cached prompt prefixes. Null or empty selects a
+     * same API key, share cached prompt prefixes. Null selects a
      * random secret that is generated once in each process, kept only in
      * memory, and shared by every client in the process that is given none.
      * Set one to keep the scope across processes or devices. Use an opaque
@@ -238,8 +240,9 @@ public sealed class RouterOptions {
  * given, after the block has returned changes nothing. The object is for
  * the block alone and is not safe to share between threads.
  *
- * For the string options, null and the empty string both mean that the
- * option is not set.
+ * For the string options, only null means that the option is not set: an
+ * empty string is refused by `create`, with a [ConfigurationException],
+ * before anything is contacted.
  */
 @ExperimentalTinfoilApi
 @TinfoilOptionsDsl
@@ -280,8 +283,8 @@ public sealed class GatewayOptions {
      * [GatewayHttpClient.execute]. Requests with the same secret, under the
      * same API key, share cached prompt prefixes. A non-empty
      * `user_cache_secret` string in a request's body is used in its place,
-     * so a server can give each of its users a cache of their own. Null or
-     * empty selects a random secret that is generated once in each process,
+     * so a server can give each of its users a cache of their own. Null
+     * selects a random secret that is generated once in each process,
      * kept only in memory, and shared by every client in the process that
      * is given none. Set one to keep the scope across processes or devices.
      * Use an opaque random value, not a user ID or an API key: the gateway
