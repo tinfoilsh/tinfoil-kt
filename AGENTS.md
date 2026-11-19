@@ -28,8 +28,11 @@ version. A class's package names its artifact.
   holds what the two modules' builds have in common.
 - `tinfoil-go.properties`: the tinfoil-go commit that the attestation verifier
   library is built from.
-- `ehbp.properties`: the encrypted-http-body-protocol commit that the EHBP
-  client is built from, as an included build of a checkout; see the README.
+- `gradle/verification-metadata.xml`: the SHA-256 of the released EHBP
+  client, which JitPack serves. `settings.gradle.kts` lets JitPack serve
+  that one module and nothing else. Never widen that filter, and change the
+  checksums only together with the version in `gradle/libs.versions.toml`,
+  after comparing the jar with a build of the release tag; see the README.
 - `tinfoil-conformance.properties`: the tinfoil-conformance commit whose
   full-verify vectors the conformance tests run, and their number.
 - `tinfoil/src/androidTestConformance`: the conformance tests, compiled only
@@ -44,9 +47,7 @@ to what is verified belongs in tinfoil-go.
 
 ## Building and testing
 
-`TINFOIL_GO_AAR` must name a `TinfoilGo.aar`, and a checkout of the EHBP
-client must be next to this repository or named by `EHBP_KOTLIN_DIR`; see the
-README.
+`TINFOIL_GO_AAR` must name a `TinfoilGo.aar`; see the README.
 
 A task that is named without a module runs in both modules; `:tinfoil:` or
 `:tinfoil-openai:` before it runs it in one.

@@ -32,6 +32,25 @@ dependencies {
 
 Both need Android 8.0 (API level 26) or later.
 
+`tinfoil` depends on the
+[EHBP client](https://github.com/tinfoilsh/encrypted-http-body-protocol),
+which is published only through JitPack, so the app's build must also name
+that repository, and should use it for that one module and nothing else:
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        exclusiveContent {
+            forRepository { maven("https://jitpack.io") }
+            filter { includeModule("com.github.tinfoilsh", "encrypted-http-body-protocol") }
+        }
+    }
+}
+```
+
 ## Usage
 
 `Client` is an OpenAI client for inference on Tinfoil's recommended route.
@@ -392,18 +411,17 @@ it in one, as in `./gradlew :tinfoil:testDebugUnitTest` or
 depend on the OpenAI SDK, and its build fails if a dependency ever brings
 that in.
 
-The EHBP client, which seals request bodies in `TransportMode.EHBP`, is not
-released yet. It is built from source, as a Gradle included build, out of the
-`kotlin/` directory of a checkout of
-[encrypted-http-body-protocol](https://github.com/tinfoilsh/encrypted-http-body-protocol)
-at the commit in `ehbp.properties`. The build looks for the checkout next to
-this repository, in `../encrypted-http-body-protocol`; set `EHBP_KOTLIN_DIR`
-to the `kotlin/` directory of a checkout that is somewhere else:
-
-```bash
-git clone https://github.com/tinfoilsh/encrypted-http-body-protocol ../encrypted-http-body-protocol
-git -C ../encrypted-http-body-protocol checkout "$(sed -n 's/^commit=//p' ehbp.properties)"
-```
+The EHBP client, which seals request bodies in `TransportMode.EHBP`, is the
+released artifact `com.github.tinfoilsh:encrypted-http-body-protocol`, which
+JitPack builds from the release tag of
+[encrypted-http-body-protocol](https://github.com/tinfoilsh/encrypted-http-body-protocol).
+JitPack builds an artifact for any GitHub repository that it is asked for,
+so `settings.gradle.kts` uses it for this one module only, and
+`gradle/verification-metadata.xml` pins the SHA-256 of the files that it
+serves: a build fails if they ever change. To move to another release, change
+the version in `gradle/libs.versions.toml` and the checksums together, after
+comparing JitPack's jar with a build of the tag. Every other dependency is
+trusted as its repository serves it for now.
 
 The verifier library is native code for Android, so the tests that reach it
 are instrumented tests; the unit tests run on the JVM without it.

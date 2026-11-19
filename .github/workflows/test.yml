@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 30
     env:
       TINFOIL_GO_AAR: ${{ github.workspace }}/build/tinfoil-go/TinfoilGo.aar
-      EHBP_KOTLIN_DIR: ${{ github.workspace }}/build/ehbp/kotlin
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -69,26 +68,6 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$version"
           bash scripts/setup-mobile.sh
           bash scripts/build-mobile-android.sh "$TINFOIL_GO_AAR"
-
-      # The EHBP client is built from source at the pinned commit, as an
-      # included build.
-      - name: Find the pinned EHBP commit
-        id: ehbp
-        run: |
-          commit="$(sed -n 's/^commit=\([0-9a-f]\{40\}\)$/\1/p' ehbp.properties)"
-          if [[ -z "$commit" ]]; then
-            echo "::error::ehbp.properties names no full commit"
-            exit 1
-          fi
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-
-      - name: Check out the EHBP client
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: tinfoilsh/encrypted-http-body-protocol
-          ref: ${{ steps.ehbp.outputs.commit }}
-          path: build/ehbp
-          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
