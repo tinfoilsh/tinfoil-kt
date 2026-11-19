@@ -67,6 +67,11 @@ README.
 - The router list is untrusted: it only proposes hosts, and each is verified
   against the router's pin like any enclave. Nothing read from it may relax
   a check, choose a pin, or be parsed with code that recurses on its input.
+  An attestation document is not tied to the host that served it, so a
+  listed host is only ever reached over connections that are pinned to its
+  attested TLS key, in both transport modes, and is never named to a proxy:
+  with a proxy base URL the router client uses the fallback router and does
+  not fetch the list.
 - A request body is changed only to add the user cache secret or, on the
   gateway route, to replace it with the cache salt, by rewriting those
   members in the text of a body that a strict JSON scanner accepts as one
@@ -92,8 +97,12 @@ README.
   clients. Depend on `openai-java-core` alone: the artifacts `openai-java`
   and `openai-java-client-okhttp` bring an HTTP client of their own and must
   stay off the classpath. The OpenAI clients set their HTTP client and base
-  URL after the caller's options, and read nothing from the environment or
-  from system properties; `OpenAIHttpAdapter` opens no connection.
+  URL after the caller's options, and take no credential, URL or option from
+  the environment or from system properties; `OpenAIHttpAdapter` opens no
+  connection. What the OpenAI SDK reads there by itself is known and
+  harmless: `OPENAI_LOG` when its options builder is made, which is then
+  overridden with logging off, and `os.*` and `java.version` for its
+  `X-Stainless-*` headers.
 - A failure that must not be retried, an `AttestationException` or a
   `ConfigurationException`, leaves the adapter wrapped in a plain
   `OpenAIException`, never as an `IOException` or an `OpenAIIoException`:
@@ -102,6 +111,14 @@ README.
   re-declare its calls.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
+- The suspending functions and `close()` of every client are safe to call
+  from Android's main thread, where the platform refuses network work, the
+  closing of a TLS socket included. Nothing that they do on the caller's
+  thread may reach a socket, read a request body, or call into the verifier
+  library, whose first use loads it: such work runs through
+  `sh.tinfoil.internal.Background`. `MainThreadSafetyTest` runs the clients
+  from the main thread of a device; `CallerThreadTest` checks the same on
+  the JVM.
 - The verifier library's test-only entry points, whose names contain
   `DangerousTestOnly`, replace the trust anchors and the clock. Only the
   conformance tests in `tinfoil/src/androidTestConformance` call them; code

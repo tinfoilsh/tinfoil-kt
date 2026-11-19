@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.Request
@@ -33,6 +34,7 @@ import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.Verifier
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.nullIfEmpty
@@ -40,6 +42,7 @@ import sh.tinfoil.internal.transport.AttestedSender
 import sh.tinfoil.internal.transport.EhbpSealing
 import sh.tinfoil.internal.transport.Origin
 import sh.tinfoil.internal.transport.RecoverableCall
+import sh.tinfoil.internal.transport.SettledBody
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.transport.closeQuietly
@@ -315,11 +318,15 @@ internal class GatewayRouter private constructor(
     @Throws(IOException::class)
     override suspend fun send(request: Request, onCall: (Call) -> Unit): Response {
         checkOpen()
+        // What the body says about itself is taken once, so that the body
+        // that is examined here is the body that is sealed.
+        val settled = SettledBody.settle(request)
         // Each replica makes these checks too; here they refuse a request
         // before its body is read, the catalog is, or a replica is verified.
-        origin.requireDestinationOf(request, "the gateway")
-        EhbpSealing.checkRequest(request, cleartext = false)
-        val prepared = GatewayRequest.prepare(request, secret.value)
+        origin.requireDestinationOf(settled, "the gateway")
+        EhbpSealing.checkRequest(settled, cleartext = false)
+        // Reading and scanning a body is work for a background thread.
+        val prepared = withContext(Background.dispatcher) { GatewayRequest.prepare(settled, secret.value) }
         checkOpen()
         val model = prepared.model
         // Before the catalog is read, which could otherwise serve it.
@@ -443,9 +450,14 @@ internal class GatewayRouter private constructor(
             closed = true
             replicas.values.toList()
         }
-        catalogScope.cancel()
+        // Each refuses its requests now, and closes its connections on a
+        // background thread; so does the fetch of the catalog, since any
+        // thread may call this.
         open.forEach { it.connection.close() }
-        catalogFetcher?.close()
+        Background.run {
+            catalogScope.cancel()
+            catalogFetcher?.close()
+        }
     }
 
     val isClosed: Boolean get() = synchronized(lock) { closed }
@@ -503,7 +515,9 @@ internal class GatewayRouter private constructor(
     private suspend fun verified(key: ReplicaKey): Pair<Replica, Verification> {
         var attempts = 0
         while (true) {
-            val replica = replica(key)
+            // A new replica's options are checked by the verifier library,
+            // which is not called on the caller's thread.
+            val replica = Background.making(::release) { replica(key) }
             try {
                 val verification = replica.connection.ensureVerified()
                 checkOpen()

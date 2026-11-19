@@ -32,8 +32,12 @@ client.close()
 [OpenAI Java SDK](https://github.com/openai/openai-java), with blocking
 calls, and `client.openAIAsync` is the same client with calls that return a
 `CompletableFuture`, which a coroutine awaits with `await()`. Use them as
-that SDK documents. The API key is passed in: nothing is read from the
-environment or from system properties.
+that SDK documents. The API key is passed in: no credential, URL or option
+is taken from the environment or from system properties. (The OpenAI SDK
+reads the variable `OPENAI_LOG` when its options are made, which this SDK
+overrides with logging off, and it describes the platform in its
+`X-Stainless-*` request headers, from the system properties `os.name`,
+`os.arch`, `os.version` and `java.version`.)
 
 A streamed response becomes a `Flow` with `asFlow()`. Events arrive as the
 service sends them, and cancelling the collection cancels the request:
@@ -188,6 +192,14 @@ try {
 The OpenAI SDK sends a request again after a failure of the network and
 after some error statuses, twice by default (`maxRetries`). It does not send
 one again after an `AttestationException` or a `ConfigurationException`.
+Each of its attempts can itself send the request more than once, when an
+enclave has changed its key and is verified again, so how often one call can
+send a request depends on the route. With the default options it is up to 6
+times with `Client`, `RouterOpenAIClient` and `EnclaveOpenAIClient`: 3
+attempts of up to 2 sends. With `GatewayOpenAIClient` it is up to 24 times:
+3 attempts of up to 8 sends, because the gateway can also route a request to
+another replica up to 3 times. A request whose body the OpenAI SDK can write
+only once, such as an upload that it streams, is sent once.
 
 ### App size
 
@@ -222,16 +234,29 @@ What this mode does not protect:
 - **Only bodies are sealed.** The method, the URL and the headers of every
   request, an API key among them, are not: the proxy reads them and can
   change them. The proxy must therefore use HTTPS; `http://` is accepted only
-  for `localhost` or a loopback IP address.
+  for `localhost` or a loopback IP address. A base URL on this machine is
+  reached directly, whatever HTTP proxy the system is configured with.
 - **A request without a body is not sealed, and neither is its response.**
 - Connections are validated as any HTTPS connection is, and are not pinned to
-  the enclave's key.
+  the enclave's key: whoever holds a valid certificate for the host that you
+  named, the proxy's or the enclave's own, reads what is not sealed. The
+  router clients are the exception, because you do not name the router's
+  host. Without a proxy, their connections are pinned to the router's
+  attested key in this mode too. With a proxy, which makes the connection to
+  the router itself, they always use `inference.tinfoil.sh` and do not
+  consult Tinfoil's router list, which is not trusted.
 - A response with an error status of 400 or above may come from the proxy and
   not from the enclave. A response that the enclave did not seal is
   authenticated by nothing.
+- **A sealed response can be cut short without an error.** Every piece of a
+  sealed body is authenticated, and a body that ends inside a piece fails the
+  read. A body that ends between two pieces does not: the protocol does not
+  mark the last piece, so a proxy can end a response early. What you read is
+  the enclave's, but only its content shows that it is complete, such as the
+  `[DONE]` event at the end of a stream, or JSON that parses.
 - Protocol upgrades, such as WebSockets, and `CONNECT` are refused. So is a
-  response to a sealed request that reports success with an empty body:
-  nothing in it shows that the enclave sent it.
+  response that is marked as sealed and has an empty body, whatever its
+  status: nothing in it shows that the enclave sent it.
 
 Requests to a proxy carry `X-Tinfoil-Enclave-Url: https://<enclave>`, which
 tells the proxy where to forward them. See `EnclaveHttpClient.execute` for

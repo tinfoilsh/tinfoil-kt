@@ -1,6 +1,5 @@
 package sh.tinfoil.internal
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
@@ -9,6 +8,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.internal.transport.Urls
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import kotlin.time.Duration
@@ -17,17 +17,35 @@ import kotlin.time.TimeSource
 
 /**
  * Chooses one of Tinfoil's routers: the first on Tinfoil's router list that
- * verifies.
+ * verifies and that holds the TLS key that its attestation endorses.
  *
- * The list is not trusted. It only proposes hosts, and each is verified
- * against the router's pin like any enclave before anything is sent to it,
- * so a forged list can at worst waste the time that discovery is allowed.
- * That time is bounded as a whole: the fetch of the list and every
- * verification share one budget, however long the list is.
+ * The list is not trusted. It only proposes hosts, and a host has to pass
+ * two checks before it is chosen. Its attestation document is verified
+ * against the router's pin, like any enclave's. That alone does not show
+ * that the host is the router: a document is not tied to the host that
+ * serves it, so a host with a certificate of its own could pass on a
+ * genuine router's document. So the host must then present the attested
+ * TLS key, on a connection that is opened for that and carries no request.
+ * Every connection that the chosen router's client opens afterwards is
+ * pinned to the same key, in either transport mode; see
+ * [EnclaveConnection.create].
+ *
+ * What a forged list can do is therefore this: waste the time that
+ * discovery is allowed; learn that a client is starting, and from which
+ * address; and steer the client to any genuine router, or to the fallback.
+ * It cannot have a request, a header or a body written to a host that does
+ * not hold a verified router's TLS key. That holds only for connections
+ * that this SDK opens itself. A proxy opens its own, to the host that a
+ * request names, so a client that sends through a proxy is never given a
+ * host from the list; see [sh.tinfoil.RouterHttpClient.create].
+ *
+ * The time is bounded as a whole: the fetch of the list, every
+ * verification and every such connection share one budget, however long
+ * the list is.
  */
 internal class RouterDiscovery(
     private val settings: Settings,
-    /** Fetches the list; any failure of it leaves no candidates. */
+    /** Fetches the list; a fetch that fails, with an [IOException], leaves no candidates. */
     private val fetchList: suspend (HttpUrl) -> ByteArray,
 ) {
     /** Where discovery looks, and for how long. */
@@ -40,14 +58,17 @@ internal class RouterDiscovery(
 
     /**
      * The connection that [open] makes for the first router on the list
-     * that verifies within the budget, already verified; or null if there
-     * is none, which leaves the caller its fallback.
+     * that verifies and presents its attested TLS key within the budget,
+     * already verified; or null if there is none, which leaves the caller
+     * its fallback.
      *
      * Routers are tried one at a time, in the order of the list, each with
      * a single attempt. A router that fails is passed over, whatever the
-     * reason: its attestation cannot be fetched, it does not verify, or the
-     * caller's check rejects it. So is a list that cannot be fetched or
-     * read. No router is tried once the budget is spent.
+     * reason: its attestation cannot be fetched, it does not verify, the
+     * caller's check rejects it, or its host cannot be connected to or
+     * presents another TLS key than the attested one. So is a list that
+     * cannot be fetched or read. No router is tried once the budget is
+     * spent.
      *
      * Every connection that [open] made and that is not returned is closed,
      * which ends whatever it was doing: one that failed, one that the
@@ -57,6 +78,8 @@ internal class RouterDiscovery(
     suspend fun discover(open: (host: String) -> EnclaveConnection): EnclaveConnection? {
         val start = settings.timeSource.markNow()
         var candidate: EnclaveConnection? = null
+        // The candidate, once it has passed both checks.
+        var ready: EnclaveConnection? = null
         try {
             val chosen = withTimeoutOrNull(settings.budget) {
                 for (host in routers()) {
@@ -74,6 +97,8 @@ internal class RouterDiscovery(
                     candidate = connection
                     try {
                         connection.verifyOnce()
+                        connection.probe()
+                        ready = connection
                         return@withTimeoutOrNull connection
                     } catch (_: TinfoilException) {
                         candidate = null
@@ -82,9 +107,9 @@ internal class RouterDiscovery(
                 }
                 null
             }
-            // A router that verified just as the budget ran out is verified
-            // all the same.
-            val verified = chosen ?: candidate?.takeIf { it.current != null }
+            // A router that passed its checks just as the budget ran out
+            // has passed them all the same.
+            val verified = chosen ?: ready
             if (verified != null) {
                 candidate = null
             }
@@ -97,9 +122,9 @@ internal class RouterDiscovery(
     private suspend fun routers(): List<String> {
         val body = try {
             fetchList(settings.listUrl)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
+        } catch (_: IOException) {
+            // What a fetch that failed throws. Anything else is a fault in
+            // this SDK, and must not pass for a list that proposes nothing.
             return emptyList()
         }
         return candidates(body)

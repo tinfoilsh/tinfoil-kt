@@ -1,5 +1,6 @@
 package sh.tinfoil.internal.verification
 
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.ConnectionPool
 import okhttp3.ConnectionSpec
@@ -12,6 +13,7 @@ import okio.Buffer
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.TinfoilException
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.SdkIdentity
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.awaitAndRead
@@ -52,24 +54,30 @@ internal class AttestationFetcher(
      * The body of a GET of [url], which must be HTTPS. A failure to get it
      * is a [NetworkException] that keeps its cause, with the status when a
      * server answered with one that is not accepted. Cancelling the coroutine cancels
-     * the fetch.
+     * the fetch. Any thread may call it: the fetch, and the closing of its
+     * connections, run on background threads.
      */
     @Throws(TinfoilException::class)
     suspend fun fetch(url: HttpUrl): ByteArray {
         if (!url.isHttps) {
             throw ConfigurationException("attestation must be fetched over HTTPS")
         }
-        val pool = ConnectionPool()
-        val fetching = client.newBuilder().connectionPool(pool).build()
-        try {
-            return withTimeoutOrNull(timeout) { follow(fetching, url) }
-                ?: throw NetworkException("GET ${describe(url)} timed out after $timeout")
-        } finally {
-            pool.evictAll()
+        return withContext(Background.dispatcher) {
+            val pool = ConnectionPool()
+            val fetching = client.newBuilder().connectionPool(pool).build()
+            try {
+                withTimeoutOrNull(timeout) { follow(fetching, url) }
+                    ?: throw NetworkException("GET ${describe(url)} timed out after $timeout")
+            } finally {
+                pool.evictAll()
+            }
         }
     }
 
-    /** Stops the threads that fetches ran on. Fetches in flight fail. */
+    /**
+     * Stops the threads that fetches ran on. Fetches in flight fail. It
+     * closes their sockets, so it is for a background thread.
+     */
     fun close() {
         client.dispatcher.cancelAll()
         client.dispatcher.executorService.shutdown()

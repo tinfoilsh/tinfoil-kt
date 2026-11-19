@@ -159,6 +159,40 @@ class GatewayHttpClientTest {
         assertEquals(listOf("m"), client.models())
     }
 
+    @Test
+    fun aBodyThatSaysItIsEmptyWhenItIsExaminedIsNotSealedAsItIsLater() = test {
+        gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
+        val client = gateway.client()
+        val secret = "caller-secret-marker-77f2"
+        val text = """{"model":"m","user_cache_secret":"$secret","messages":[]}"""
+        for (zeros in 1..4) {
+            val asked = AtomicInteger()
+            val body = object : RequestBody() {
+                override fun contentType(): MediaType = JSON
+
+                override fun contentLength(): Long = if (asked.incrementAndGet() <= zeros) 0L else text.length.toLong()
+
+                override fun writeTo(sink: BufferedSink) {
+                    sink.writeUtf8(text)
+                }
+            }
+            val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
+                .header("X-Tinfoil-Model", "m").post(body).build()
+            try {
+                client.execute(request).close()
+            } catch (_: IOException) {
+                // A request that fails has sent nothing that matters here.
+            }
+        }
+
+        // A body that was not examined is not sent: its secret would leave
+        // the device, and its members would go unchecked.
+        for (received in gateway.received) {
+            assertFalse(received.text.orEmpty().contains(secret), received.text)
+            assertEquals(0, received.wire.size)
+        }
+    }
+
     // The catalog.
 
     @Test

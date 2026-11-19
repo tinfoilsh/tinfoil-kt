@@ -7,6 +7,7 @@ import okhttp3.ConnectionSpec
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
 import okhttp3.EventListener
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -16,7 +17,9 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
+import sh.tinfoil.internal.Background
 import java.io.IOException
+import java.net.ProtocolException
 import java.net.Proxy
 import java.security.MessageDigest
 import java.security.cert.Certificate
@@ -115,6 +118,8 @@ internal class PinnedTls(private val settings: HttpSettings = HttpSettings()) : 
     override fun bind(verification: Verification): PinnedTlsTransport =
         PinnedTlsTransport(LeafKeyPin.of(verification.tlsPublicKeyFingerprint), dispatcher, calls, settings)
 
+    override fun refuse() = calls.refuse()
+
     override fun close() {
         calls.close()
         // Calls that are running end as cancelled; nothing new is accepted.
@@ -155,6 +160,12 @@ internal class ActiveCalls {
         synchronized(lock) { calls.remove(call) }
     }
 
+    /** Admits no call from now on. It touches no connection. */
+    fun refuse() {
+        synchronized(lock) { closed = true }
+    }
+
+    /** Admits no call from now on, and cancels those in flight, which closes their sockets. */
     fun close() {
         val cancelled = synchronized(lock) {
             closed = true
@@ -195,9 +206,7 @@ internal class PinnedTlsTransport(
         .connectionPool(pool)
         // No cleartext, whatever the request's scheme.
         .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))
-        .hostnameVerifier(PinningHostnameVerifier(pin))
-        .addInterceptor(MismatchReporter)
-        .addNetworkInterceptor(RequestPinCheck(pin))
+        .pinnedTo(pin)
         .eventListener(CallTracker())
         // A response is the enclave's or nothing: a redirect or an
         // authentication challenge is handed to the caller, never acted on.
@@ -226,22 +235,10 @@ internal class PinnedTlsTransport(
         return call
     }
 
-    override fun keyRejection(failure: IOException): String? {
-        var cause: Throwable? = failure
-        repeat(MAX_CAUSE_DEPTH) {
-            when (val e = cause ?: return null) {
-                is PinMismatchException -> return "the enclave's certificate does not carry the attested TLS key"
-                is SSLPeerUnverifiedException -> return "the enclave's certificate was refused: ${e.message}"
-                is SSLHandshakeException ->
-                    if (e.hasCause<CertificateException>()) {
-                        return "the enclave's certificate was refused: ${e.message}"
-                    }
-                else -> Unit
-            }
-            cause = cause?.cause
-        }
-        return null
-    }
+    override fun keyRejection(failure: IOException): String? = pinRejection(failure)
+
+    // The call is tracked like any other, so closing the client ends it.
+    override suspend fun probe(url: HttpUrl) = client.probePin(url, calls::add)
 
     override fun retire() {
         retired = true
@@ -257,31 +254,100 @@ internal class PinnedTlsTransport(
         private fun finished(call: Call) {
             calls.remove(call)
             if (retired || calls.isClosed) {
-                pool.evictAll()
+                // A call ends on the thread that closes its response, which
+                // is the caller's, and sockets are not closed there.
+                Background.run { pool.evictAll() }
             }
         }
     }
 
     private companion object {
-        const val MAX_CAUSE_DEPTH = 8
-
         // How long a response may go without sending a byte. Generous,
         // because an inference request can work for minutes before it
         // answers; a call's own timeout bounds the whole exchange.
         const val READ_TIMEOUT_MINUTES = 10L
+    }
+}
 
-        inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {
-            var cause = this.cause
-            repeat(MAX_CAUSE_DEPTH) {
-                when (cause) {
-                    null -> return false
-                    is T -> return true
-                    else -> cause = cause?.cause
+/**
+ * Holds every connection of the client that is being built to [pin]: a
+ * connection is accepted only if its leaf certificate carries the pinned
+ * key, and each request is written only to a connection that does. See
+ * [PinnedTlsTransport] for when the key is checked.
+ */
+internal fun OkHttpClient.Builder.pinnedTo(pin: LeafKeyPin): OkHttpClient.Builder =
+    hostnameVerifier(PinningHostnameVerifier(pin))
+        .addInterceptor(MismatchReporter)
+        .addNetworkInterceptor(RequestPinCheck(pin))
+
+/**
+ * Why [failure], of a call on a client that is [pinnedTo] a key, means that
+ * the server did not present that key or a certificate that the platform
+ * accepts, which shows before any of the request is written; or null for
+ * any other failure.
+ */
+internal fun pinRejection(failure: IOException): String? {
+    var cause: Throwable? = failure
+    repeat(MAX_CAUSE_DEPTH) {
+        when (val e = cause ?: return null) {
+            is PinMismatchException -> return "the enclave's certificate does not carry the attested TLS key"
+            is SSLPeerUnverifiedException -> return "the enclave's certificate was refused: ${e.message}"
+            is SSLHandshakeException ->
+                if (e.hasCause<CertificateException>()) {
+                    return "the enclave's certificate was refused: ${e.message}"
                 }
-            }
-            return false
+            else -> Unit
+        }
+        cause = cause?.cause
+    }
+    return null
+}
+
+/**
+ * Opens a connection to [url]'s host with this client, which is [pinnedTo]
+ * a key, and gives it up once the connection has passed every check that a
+ * request's connection passes and before any of a request is written to it.
+ * [admit] is handed the call before it starts.
+ *
+ * @throws IOException if no such connection can be opened; [pinRejection]
+ *   says whether the key is why.
+ */
+@Throws(IOException::class)
+internal suspend fun OkHttpClient.probePin(url: HttpUrl, admit: (Call) -> Unit) {
+    // Network interceptors run in the order in which they were added, so
+    // this one runs after the check of the connection's key.
+    val call = newBuilder().addNetworkInterceptor(ProbeEnd).build().newCall(Request.Builder().url(url).build())
+    admit(call)
+    try {
+        call.await().closeQuietly()
+    } catch (_: ProbeComplete) {
+        return
+    }
+    throw ProtocolException("a connection that was only to be opened carried a request")
+}
+
+/**
+ * Ends a probe where its request would be written. It is a protocol error
+ * for the HTTP client, which therefore does not try the request again.
+ */
+private class ProbeComplete : ProtocolException("the connection was opened only to check its key")
+
+private object ProbeEnd : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response = throw ProbeComplete()
+}
+
+private const val MAX_CAUSE_DEPTH = 8
+
+private inline fun <reified T : Throwable> Throwable.hasCause(): Boolean {
+    var cause = this.cause
+    repeat(MAX_CAUSE_DEPTH) {
+        when (cause) {
+            null -> return false
+            is T -> return true
+            else -> cause = cause?.cause
         }
     }
+    return false
 }
 
 /** A connection whose leaf certificate does not carry the pinned key. */

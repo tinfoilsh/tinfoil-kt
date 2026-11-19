@@ -1,10 +1,12 @@
 package sh.tinfoil
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.gateway.GatewayCatalog
 import sh.tinfoil.internal.gateway.GatewayRouter
@@ -73,7 +75,7 @@ public class GatewayHttpClient private constructor(
      *
      * The catalog is fetched again if the last fetch is more than 10
      * seconds old; a fetch that fails keeps the last catalog, so only the
-     * first fetch can fail this.
+     * first fetch can fail this. It is safe to call from the main thread.
      *
      * @throws ConfigurationException if the client is closed.
      * @throws NetworkException if there is no catalog yet and it cannot be
@@ -88,7 +90,8 @@ public class GatewayHttpClient private constructor(
      * in an order that is fixed for the model, so calling this again
      * returns the same replica's verification while it stays valid. A
      * request for the model may still go to another replica, which is
-     * verified in the same way before anything is sealed to it.
+     * verified in the same way before anything is sealed to it. It is safe
+     * to call from the main thread.
      *
      * @throws ConfigurationException if the client is closed or does not
      *   serve [model]: it is not in the catalog, or it is not pinned and
@@ -106,7 +109,9 @@ public class GatewayHttpClient private constructor(
      * Sends [request] through the gateway, sealed to a verified replica of
      * the model that it names, and returns the response as soon as its
      * headers arrive. The body streams as it is read, and the caller closes
-     * the response.
+     * the response. It is safe to call from the main thread: the request's
+     * body is read, examined and sealed on background threads. Reading the
+     * response's body, or closing it unread, is network I/O, and is not.
      *
      * The request must be on [baseUrl]'s origin, without credentials in its
      * URL and without a `Host` header, an `Ehbp-` header or
@@ -220,7 +225,9 @@ public class GatewayHttpClient private constructor(
      * code that is written against OkHttp. Nothing is checked or sent until
      * the call is executed or enqueued; the call's failures are
      * [IOException]s, and its timeout spans everything from the fetch of
-     * the catalog to the last byte of the response body.
+     * the catalog to the last byte of the response body. A blocking
+     * [Call.execute] blocks its thread for all of that, so it is never for
+     * the main thread.
      */
     override fun newCall(request: Request): Call = AttestedCall(router, request)
 
@@ -229,6 +236,11 @@ public class GatewayHttpClient private constructor(
      * [ConfigurationException], verifications in progress and the requests
      * in flight are cancelled, and every connection is closed. Nothing of
      * the client runs afterwards. Closing again does nothing.
+     *
+     * It is safe to call from any thread, the main thread included, and
+     * returns at once: the client refuses requests from then on, and the
+     * cancelling and the closing of connections follow on a background
+     * thread.
      */
     override fun close() {
         router.close()
@@ -250,6 +262,12 @@ public class GatewayHttpClient private constructor(
          * verified here: a model's replicas are verified when a request
          * first needs them, so the pins may name models that the catalog
          * does not list, and a request for such a model fails.
+         *
+         * It is safe to call from the main thread: the options are checked,
+         * which loads the native verifier library the first time, and
+         * everything is fetched on background threads. A caller that is
+         * cancelled just as the client is made does not receive it, and
+         * the client is closed.
          *
          * @param modelPins The repository that each of these models must
          *   run, by the model's name as requests give it, and optionally a
@@ -293,8 +311,9 @@ public class GatewayHttpClient private constructor(
          *   called from several threads.
          * @param catalog Called for every request, and by [models] and
          *   [ensureVerified], in place of the gateway's catalog, which is
-         *   then never fetched. It must be fast and safe to call from
-         *   several threads. Its entries are held to the same rule as the
+         *   then never fetched. It is called on the thread that makes the
+         *   request, so it must be fast, and safe to call from several
+         *   threads. Its entries are held to the same rule as the
          *   gateway's: a model whose repository is not `tinfoilsh/<name>`,
          *   or that has no replicas, is not served. Null fetches the
          *   gateway's catalog here, and again whenever the client is used
@@ -332,7 +351,10 @@ public class GatewayHttpClient private constructor(
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             catalog: (() -> Catalog)?,
             internals: Internals,
-        ): GatewayHttpClient {
+        ): GatewayHttpClient = Background.creating {
+            // Checking the options, which calls into the verifier library,
+            // and everything after it run on a background thread, so that
+            // any thread may call this.
             val client = unverified(
                 modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck,
                 onVerificationResult, catalog, internals,
@@ -345,7 +367,7 @@ public class GatewayHttpClient private constructor(
                 client.close()
                 throw e
             }
-            return client
+            return@creating client
         }
 
         /**
@@ -379,7 +401,8 @@ public class GatewayHttpClient private constructor(
          *
          * The catalog is fetched over HTTPS only, redirects included,
          * within 10 seconds and 2 MiB, and it is not trusted: it says where
-         * replicas are, and proves nothing about them.
+         * replicas are, and proves nothing about them. It is safe to call
+         * from the main thread.
          *
          * @throws ConfigurationException if [host] is not a host.
          * @throws NetworkException if the catalog cannot be fetched or
@@ -392,11 +415,15 @@ public class GatewayHttpClient private constructor(
         @JvmSynthetic
         internal suspend fun fetchCatalog(host: String, internals: Internals): Catalog {
             GatewayCatalog.url(host)
-            val fetcher = GatewayCatalog.fetcher(internals.http)
-            try {
-                return GatewayCatalog.fetch(host, fetcher)
-            } finally {
-                fetcher.close()
+            // The fetch, the reading of what it returns and the closing of
+            // its connections run on a background thread.
+            return withContext(Background.dispatcher) {
+                val fetcher = GatewayCatalog.fetcher(internals.http)
+                try {
+                    GatewayCatalog.fetch(host, fetcher)
+                } finally {
+                    fetcher.close()
+                }
             }
         }
     }

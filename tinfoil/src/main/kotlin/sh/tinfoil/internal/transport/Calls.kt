@@ -4,6 +4,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
+import sh.tinfoil.internal.Background
 import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -12,10 +13,11 @@ import kotlin.coroutines.resumeWithException
  * Sends this call and returns its response once the headers arrive, with the
  * body still to be read. Cancelling the coroutine while it waits cancels the
  * call; a response that arrives for a coroutine that is already cancelled is
- * closed.
+ * closed. The call is cancelled on a background thread, since cancelling
+ * closes its socket and the coroutine may be cancelled from any thread.
  */
 internal suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
-    continuation.invokeOnCancellation { cancel() }
+    continuation.invokeOnCancellation { Background.run { cancel() } }
     enqueue(
         object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -23,7 +25,7 @@ internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont
             }
 
             override fun onResponse(call: Call, response: Response) {
-                continuation.resume(response) { _, unclaimed, _ -> unclaimed.closeQuietly() }
+                continuation.resume(response) { _, unclaimed, _ -> Background.run { unclaimed.closeQuietly() } }
             }
         },
     )
@@ -36,7 +38,7 @@ internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont
  * in progress.
  */
 internal suspend fun <T> Call.awaitAndRead(read: (Response) -> T): T = suspendCancellableCoroutine { continuation ->
-    continuation.invokeOnCancellation { cancel() }
+    continuation.invokeOnCancellation { Background.run { cancel() } }
     enqueue(
         object : Callback {
             override fun onFailure(call: Call, e: IOException) {

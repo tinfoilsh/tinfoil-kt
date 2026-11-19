@@ -6,6 +6,7 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
+import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.transport.AttestedCall
 import sh.tinfoil.internal.transport.UserCacheSecret
@@ -53,6 +54,14 @@ public fun interface VerificationCheck {
  *
  * A client holds threads and connections until it is [closed][close]. It is
  * safe to use from several threads and coroutines at once.
+ *
+ * **Threads.** The suspending functions, [create] included, and [close] are
+ * safe to call from a thread that must not block or touch the network, such
+ * as Android's main thread: what they do there is brief, and the rest runs
+ * on background threads. A response's body is another matter: reading it,
+ * and closing it before it has been read to its end, is network I/O on the
+ * thread that does it. So is a blocking [Call.execute] on a call from
+ * [newCall].
  */
 public class EnclaveHttpClient private constructor(
     private val connection: EnclaveConnection,
@@ -91,7 +100,8 @@ public class EnclaveHttpClient private constructor(
      *
      * Callers that need a verification while one is running share it, its
      * failure included. Cancelling the coroutine ends only this caller's
-     * wait: the shared verification still completes for the others.
+     * wait: the shared verification still completes for the others. It is
+     * safe to call from the main thread.
      *
      * @throws ConfigurationException if the client is closed.
      * @throws NetworkException if the attestation document cannot be fetched.
@@ -111,7 +121,8 @@ public class EnclaveHttpClient private constructor(
      * enclave whose new verification was rejected, [close] the client.
      *
      * A call made while a verification is running shares that one.
-     * Cancellation and errors are those of [ensureVerified].
+     * Cancellation and errors are those of [ensureVerified]. It is safe to
+     * call from the main thread.
      */
     @Throws(IOException::class, CancellationException::class)
     public suspend fun reverify(): Verification = connection.reverify()
@@ -120,6 +131,11 @@ public class EnclaveHttpClient private constructor(
      * Sends [request] to the enclave and returns the response as soon as its
      * headers arrive. The body streams as it is read, and the caller closes
      * the response.
+     *
+     * It is safe to call from the main thread: a request body is read and
+     * sent on background threads. The response's body is not read here, and
+     * reading it blocks on the network, as does closing a response whose
+     * body has not been read to its end: do both off the main thread.
      *
      * This describes a client with [TransportMode.Tls]; what
      * [TransportMode.Ehbp] changes follows it.
@@ -147,20 +163,28 @@ public class EnclaveHttpClient private constructor(
      * answered: the response is returned as it is. No cookies are kept and
      * nothing is cached.
      *
+     * A request body is asked once for its length, its content type and
+     * whether it can be written again, and is held to those answers: a body
+     * that writes another number of bytes than the length that it declared
+     * fails the request with an [IOException].
+     *
      * When the client has a user cache secret, it is added to the body of a
      * `POST` whose path ends in `/chat/completions`, `/completions` or
      * `/responses`, as the member `user_cache_secret`, if the body is one
      * JSON object in which that member is absent or the empty string. The
      * rest of the body is sent byte for byte as it was given, and the
-     * request's `Content-Length` is that of the new body. A non-empty
+     * request's `Content-Length` is that of the new body. Only a member
+     * with exactly that name counts: one whose name differs from it only by
+     * case, such as `User_Cache_Secret`, is left as it was written, and the
+     * client's member is added beside it. A non-empty
      * `user_cache_secret` string in the body is the request's own scope and
      * is kept. Any other body is sent unchanged: one that is not a JSON
      * object in UTF-8, one that names the member more than once or with a
      * value that is not a string,
      * and a body of more than 64 MiB that declares its length or can be
      * written again, which a router refuses for its size. To decide, the
-     * body is read into memory before the request is sent; a body that can
-     * be written only once is written then, and sent from memory. A request
+     * body is read into memory before the request is sent: it is written
+     * once, then, and what it wrote is what is sent. A request
      * to one of those paths whose body cannot be examined is refused with a
      * [ConfigurationException] before anything is sent, so that it does not
      * land in the cache that the API key's other clients share: a duplex
@@ -184,32 +208,49 @@ public class EnclaveHttpClient private constructor(
      * **With [TransportMode.Ehbp]**, connections are not pinned. They are
      * validated as the platform validates any HTTPS connection to
      * [baseUrl]'s host, which may be a proxy, and the request's body is
-     * sealed to the attested HPKE key instead:
+     * sealed to the attested HPKE key instead. The attestation shows what
+     * holds that key; it does not show that [baseUrl]'s host is the
+     * enclave. So this mode trusts the host that the client was created
+     * with, the proxy's or else the enclave's own, and whoever holds a
+     * certificate for it that the platform accepts, with everything that is
+     * not sealed:
      * - Only bodies are sealed. Whatever ends the TLS connection reads the
      *   method, the URL and the headers of every request, and can change
      *   them, and the same goes for the status and the headers of every
      *   response.
      * - A request with a body is sent with the body sealed, as it is
      *   written, and its response's body is opened as it is read, one piece
-     *   at a time. A piece that does not authenticate, or a body that is
-     *   cut short, fails the read with an [IOException], and nothing is
-     *   delivered after that; what was delivered before is a true beginning
-     *   of the enclave's response. Read a body to its end before acting on
-     *   it if acting on a beginning would be wrong.
+     *   at a time. A piece that does not authenticate, or a body that ends
+     *   inside a piece, fails the read with an [IOException], and nothing
+     *   is delivered after that; what was delivered before is a true
+     *   beginning of the enclave's response.
+     * - **A body that ends between two pieces ends without an error.** The
+     *   protocol does not mark the last piece, so whatever ends the TLS
+     *   connection can end a sealed body early, after any piece, and the
+     *   read cannot tell that from the enclave's own end. Reading a body to
+     *   its end therefore shows that all of it is the enclave's, and not
+     *   that it is all that the enclave sent. Only the content can show
+     *   that: the `[DONE]` event that ends a stream of events, or text that
+     *   parses as the one JSON value that it should be. Look for that end
+     *   before acting on a response whose beginning alone could mislead.
      * - A request without a body, or with one that declares a length of
      *   zero, is not sealed, and neither is its response: the protocol
      *   cannot protect them. Nothing but the TLS connection to [baseUrl]'s
-     *   host authenticates such a response.
+     *   host authenticates such a response. A body that declared a length
+     *   of zero is sent as no bytes, whatever it writes.
      * - A response to a sealed request that reports success without being
      *   sealed fails with an [IOException], and so does a redirect. That a
-     *   success is sealed has to show: the read of its body fails if the
-     *   body ends before it has yielded a byte, so a success with an empty
-     *   body, or with a status of 204 or 205, is not accepted in this mode.
-     *   A response with an error status of 400 or above that is not sealed
-     *   is returned as it is: a proxy or a load balancer answers so when
-     *   the request never reached the enclave. Nothing authenticates such a
-     *   response, so treat it as a hint of what went wrong, and never as
-     *   the enclave's answer. [executeRecoverable] returns no token for it.
+     *   response is sealed has to show, whatever its status: the header
+     *   that marks it as sealed is not sealed itself, so the read of the
+     *   body fails if the body ends before it has yielded a byte. A sealed
+     *   response with an empty body, an error included, is therefore not
+     *   accepted in this mode, and neither is a status of 204 or 205.
+     *   A response with an error status of 400 or above that is not marked
+     *   as sealed is returned as it is: a proxy or a load balancer answers
+     *   so when the request never reached the enclave. Nothing
+     *   authenticates such a response, so treat it as a hint of what went
+     *   wrong, and never as the enclave's answer. [executeRecoverable]
+     *   returns no token for it.
      * - If the enclave answers that it cannot open the body, which it does
      *   before it reads any of it, it no longer holds the attested key: the
      *   client verifies the enclave again and sends the request once more,
@@ -275,7 +316,9 @@ public class EnclaveHttpClient private constructor(
      *
      * Every failure of the call, a refused request included, is an
      * [IOException]: this SDK's errors are [TinfoilException]s. A blocking
-     * [Call.execute] blocks its thread while the enclave is verified, too.
+     * [Call.execute] blocks its thread for the whole exchange, and while
+     * the enclave is verified, too, so it is never for the main thread;
+     * [Call.enqueue] is.
      * [Call.cancel] works at any point, and [Call.timeout], which is unset
      * by default, spans the wait for a verification, the request and the
      * reading of the response body. As with [execute], the HTTP client may
@@ -291,6 +334,11 @@ public class EnclaveHttpClient private constructor(
      * one that is waiting for its response fails with an [IOException], and
      * so does the next read of a response body that is still open. Every
      * connection is closed. Closing again does nothing.
+     *
+     * It is safe to call from any thread, the main thread included, and
+     * returns at once. The client refuses requests from the moment this
+     * returns; the requests in flight are cancelled and the connections
+     * closed on a background thread, right afterwards.
      */
     override fun close() {
         connection.close()
@@ -305,6 +353,12 @@ public class EnclaveHttpClient private constructor(
          * misconfigured client fails with a [ConfigurationException] without
          * contacting anything; an enclave that does not verify fails here
          * rather than on the first request.
+         *
+         * It is safe to call from the main thread: the options are checked,
+         * which loads the native verifier library the first time, and
+         * everything is fetched and verified on background threads. A
+         * caller that is cancelled just as the client is made does not
+         * receive it, and the client is closed.
          *
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
@@ -325,8 +379,12 @@ public class EnclaveHttpClient private constructor(
          *   names. A proxy reads everything that is not sealed, so it must
          *   use HTTPS; `http://` is accepted only for `localhost` or a
          *   loopback IP address, on any port, for a proxy on the same
-         *   machine. On Android, cleartext HTTP also has to be permitted by
-         *   the app's network security configuration.
+         *   machine. With [TransportMode.Ehbp], requests to a base URL on
+         *   `localhost` or a loopback IP address, over HTTP or HTTPS, are
+         *   sent there directly, whatever HTTP proxy the system is
+         *   configured with: such a proxy would otherwise be handed them.
+         *   On Android, cleartext HTTP also has to be permitted by the
+         *   app's network security configuration.
          * @param attestationRelay A host, with an optional port, that fetches
          *   the enclave's attestation document on the client's behalf. It is
          *   not trusted: the document is verified whoever delivers it.
@@ -385,7 +443,10 @@ public class EnclaveHttpClient private constructor(
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             internals: Internals,
-        ): EnclaveHttpClient {
+        ): EnclaveHttpClient = Background.creating {
+            // Checking the options, which calls into the verifier library,
+            // and everything after it run on a background thread, so that
+            // any thread may call this.
             val client = unverified(
                 enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
                 onVerificationResult, internals,
@@ -396,7 +457,7 @@ public class EnclaveHttpClient private constructor(
                 client.close()
                 throw e
             }
-            return client
+            return@creating client
         }
 
         /** A client that is checked but not yet verified. It performs no I/O. */

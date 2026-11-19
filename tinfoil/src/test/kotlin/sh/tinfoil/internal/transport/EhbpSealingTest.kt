@@ -1,20 +1,25 @@
 package sh.tinfoil.internal.transport
 
+import okhttp3.MediaType
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockWebServer
+import okio.BufferedSink
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
 import sh.tinfoil.testing.SealingDispatcher
 import sh.tinfoil.testing.SealingKey
 import sh.tinfoil.testing.TestAuthority
+import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.fingerprint
 import sh.tinfoil.testing.httpsServer
 import sh.tinfoil.testing.verification
 import java.io.IOException
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,7 +53,7 @@ class EhbpSealingTest {
     }
 
     private fun protocol(cleartext: Boolean, enclaveUrl: String? = null): EhbpSealing =
-        EhbpSealing(cleartext, enclaveUrl, HttpSettings(authority.trust)).also { protocols += it }
+        EhbpSealing(cleartext, enclaveUrl, pinned = false, settings = HttpSettings(authority.trust)).also { protocols += it }
 
     private fun bind(cleartext: Boolean, hpke: String? = key.publicKey, enclaveUrl: String? = null): EhbpTransport =
         protocol(cleartext, enclaveUrl).bind(verification(authority.fingerprint, Instant.MAX, hpkePublicKey = hpke))
@@ -107,6 +112,43 @@ class EhbpSealingTest {
     }
 
     @Test
+    fun aBodyThatSaysItIsEmptyAndThenWritesIsNeverSentUnsealed() {
+        val server = tlsServer()
+        // However often the body is asked before it answers with a length,
+        // what it writes does not reach the wire in the clear.
+        for (zeros in 0..6) {
+            val asked = AtomicInteger()
+            val body = object : RequestBody() {
+                override fun contentType(): MediaType? = null
+
+                override fun contentLength(): Long = if (asked.incrementAndGet() <= zeros) 0L else MARKER.length.toLong()
+
+                override fun writeTo(sink: BufferedSink) {
+                    sink.writeUtf8(MARKER)
+                }
+            }
+            val request = Request.Builder().url("https://localhost:${server.port}/v1/echo").post(body).build()
+            val outcome = runCatching { bind(cleartext = false).newCall(request).execute().close() }
+            if (zeros == 0) {
+                outcome.getOrThrow()
+            } else {
+                // It said that it was empty, so it is not sealed, and what
+                // it then writes is not sent: the request fails.
+                assertTrue(outcome.exceptionOrNull() is IOException, "$zeros: $outcome")
+            }
+        }
+
+        assertTrue(sealing.received.any { it.sealed })
+        for (received in sealing.received) {
+            assertFalse(received.wire.containsText(MARKER), "sealed=${received.sealed}")
+            if (!received.sealed) {
+                assertEquals(0, received.wire.size)
+                assertEquals("0", received.request.getHeader("Content-Length"))
+            }
+        }
+    }
+
+    @Test
     fun onlyAKeyConfigurationProblemIsAKeyRejection() {
         val server = tlsServer()
         val stranger = SealingKey()
@@ -131,7 +173,8 @@ class EhbpSealingTest {
         transport.retire()
         assertEquals(0, transport.connectionCount)
         transport.newCall(post(url)).execute().close()
-        assertEquals(0, transport.connectionCount, "a retired transport closes a connection once its request is over")
+        // On a background thread, since the request can end on any thread.
+        awaitUntil { transport.connectionCount == 0 }
 
         protocol.close()
         assertFailsWith<ConfigurationException> { transport.newCall(post(url)) }

@@ -118,6 +118,81 @@ class EhbpClientTest {
     // Options.
 
     @Test
+    fun aBaseUrlOnThisMachineIsNeverReachedThroughAProxy() = test {
+        // What a device's proxy setting would send requests through.
+        val systemProxy = MockWebServer().apply { start() }
+        try {
+            val settings = enclave.internals(proxy = java.net.Proxy(java.net.Proxy.Type.HTTP, systemProxy.toProxyAddress().address()))
+            val overHttp = enclave.client(transportMode = TransportMode.Ehbp, baseUrl = proxyUrl, internals = settings)
+            val overTls = enclave.client(transportMode = TransportMode.Ehbp, internals = settings)
+
+            for (client in listOf(overHttp, overTls)) {
+                assertEquals("ok", client.execute(client.post("""{"q":"$MARKER"}""").newBuilder().header("Authorization", "Bearer k").build()).text())
+                client.execute(client.get()).close()
+            }
+
+            assertEquals(0, systemProxy.requestCount, "a request for this machine was handed to a proxy")
+            assertEquals(2, atProxy.received.size)
+            assertEquals(2, atEnclave.received.size)
+        } finally {
+            systemProxy.shutdown()
+        }
+    }
+
+    @Test
+    fun aBodyWhoseLengthChangesAfterItWasJudgedNeverLeavesInTheClear() = test {
+        val marker = "plaintext-marker-5e1f0a"
+        for (client in listOf(direct("cache-secret-0a1b2c"), proxied())) {
+            for (path in listOf("v1/echo", "v1/chat/completions")) {
+                // However often the body is asked before it admits to a
+                // length, as a file does that is written while it is sent.
+                for (zeros in 0..6) {
+                    val asked = AtomicInteger()
+                    val body = object : RequestBody() {
+                        override fun contentType(): MediaType = JSON
+
+                        override fun contentLength(): Long = if (asked.incrementAndGet() <= zeros) 0L else marker.length.toLong()
+
+                        override fun writeTo(sink: BufferedSink) {
+                            sink.writeUtf8(marker)
+                        }
+                    }
+                    val outcome = runCatching {
+                        client.execute(Request.Builder().url(client.baseUrl.resolve(path)!!).post(body).build()).close()
+                    }
+                    // The first answer stands: a body that said that it was
+                    // empty is not sealed, and what it writes is not sent.
+                    if (zeros == 0) {
+                        outcome.getOrThrow()
+                    } else {
+                        assertIs<IOException>(outcome.exceptionOrNull(), "$path, $zeros")
+                    }
+                }
+            }
+        }
+
+        val received = atEnclave.received + atProxy.received
+        assertEquals(4, received.count { it.sealed })
+        for (request in received) {
+            assertFalse(request.wire.containsText(marker), "sealed=${request.sealed}")
+            if (!request.sealed) {
+                assertEquals(0, request.wire.size, "a request that is not sealed carries no body")
+            }
+        }
+    }
+
+    @Test
+    fun aConnectionToAnEnclaveThatTheCallerNamedIsNotPinned() = test {
+        // The host is the caller's choice, and may be anything that
+        // forwards to the enclave; only the body is tied to the attestation.
+        enclave.endorsed = { "ab".repeat(32) }
+        val client = direct()
+
+        assertEquals("ok", client.execute(client.post("""{"a":1}""")).text())
+        assertTrue(atEnclave.received.single().sealed)
+    }
+
+    @Test
     fun aProxyMustUseHttpsUnlessItIsOnThisMachine() = test {
         val refused = listOf(
             "http://proxy.example/",
@@ -460,13 +535,45 @@ class EhbpClientTest {
             val error = assertFailsWith<IOException>("$code") { client.execute(client.post("""{"q":"$MARKER"}""")) }
             assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
         }
-        // An error says nothing that needs proof, and one without a body is returned.
-        atProxy.answer = { MockResponse().setResponseCode(500).setHeader(RESPONSE_NONCE_HEADER, forgedNonce) }
-        client.execute(client.post("""{"q":"$MARKER"}""")).use { response ->
-            assertEquals(500, response.code)
-            assertEquals("", response.body!!.string())
-        }
         assertEquals(1, enclave.fetches)
+    }
+
+    @Test
+    fun anErrorWhoseSealedBodyProvesNothingFailsClosedToo() = test {
+        val client = proxied()
+        val forgedNonce = "5c".repeat(32)
+        // The header that marks a response as sealed is not itself sealed,
+        // so with nothing behind it an error is no more the enclave's than
+        // a success is.
+        for (code in listOf(400, 401, 404, 422, 500, 503)) {
+            atProxy.answer = { MockResponse().setResponseCode(code).setHeader(RESPONSE_NONCE_HEADER, forgedNonce) }
+            val recoverable = client.executeRecoverable(client.post("""{"q":"$MARKER"}"""))
+            assertEquals(code, recoverable.response.code)
+            val error = assertFailsWith<IOException>("$code") { recoverable.response.text() }
+            assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+        }
+        // An error that the enclave sealed is read as before.
+        atProxy.answer = { it.reply("""{"error":"$ANSWER"}""", code = 500) }
+        assertEquals("""{"error":"$ANSWER"}""", client.execute(client.post("""{"q":"$MARKER"}""")).text())
+    }
+
+    @Test
+    fun aStoredResponseWhoseSealedBodyProvesNothingFailsTheRead() = test {
+        val client = proxied()
+        val recoverable = client.executeRecoverable(client.post("""{"q":"$MARKER"}"""))
+        val token = assertNotNull(recoverable.recoveryToken)
+        recoverable.response.close()
+        val forgedNonce = "5c".repeat(32)
+
+        for (code in listOf(200, 201, 404, 500)) {
+            for (frames in listOf(ByteArray(0), Buffer().writeInt(0).writeInt(0).readByteArray())) {
+                val stored = storedResponse(forgedNonce, frames).newBuilder().code(code).build()
+                val opened = token.decryptResponse(stored)
+                assertEquals(code, opened.code)
+                val error = assertFailsWith<IOException>("$code") { opened.text() }
+                assertTrue(error.message!!.contains("FRAMING_TRUNCATED"), error.message)
+            }
+        }
     }
 
     @Test
@@ -956,7 +1063,12 @@ class EhbpClientTest {
         assertEquals("$ANSWER, in two frames", restored.decryptResponse(storedResponse(nonce, frames)).text())
         assertEquals(json, restored.toJson())
 
-        // A copy that was cut off yields what authenticates, and then fails.
+        // A copy that ends after a whole frame is read to that end without
+        // a failure: nothing in the framing says that more was to come.
+        val firstFrame = 4 + Buffer().write(frames, 0, 4).readInt()
+        assertEquals("$ANSWER, ", restored.decryptResponse(storedResponse(nonce, frames.copyOf(firstFrame))).text())
+
+        // A copy that was cut off inside a frame yields what authenticates, and then fails.
         val cut = restored.decryptResponse(storedResponse(nonce, frames.copyOf(frames.size - 3)))
         val delivered = Buffer()
         assertFailsWith<IOException> {
