@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The experimental API is exactly what is listed here. Every other public
+ * The experimental API of this module is exactly what is listed here. Every other public
  * class is stable: adding one that is experimental, or that uses one that
  * is, fails here until it is marked and listed.
  */
@@ -16,11 +16,9 @@ class ExperimentalApiTest {
         "sh/tinfoil/Catalog",
         "sh/tinfoil/CatalogEntry",
         "sh/tinfoil/GatewayHttpClient",
-        "sh/tinfoil/GatewayOpenAIOptions",
         "sh/tinfoil/GatewayOptions",
         "sh/tinfoil/ModelPin",
         "sh/tinfoil/ReplicaVerification",
-        "sh/tinfoil/openai/GatewayOpenAIClient",
     )
 
     private val marker = "Lsh/tinfoil/ExperimentalTinfoilApi;"

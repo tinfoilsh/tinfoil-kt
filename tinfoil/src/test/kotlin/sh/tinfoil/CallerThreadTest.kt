@@ -2,13 +2,10 @@
 
 package sh.tinfoil
 
-import com.openai.core.http.AsyncStreamResponse
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -22,17 +19,11 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import okio.BufferedSink
 import sh.tinfoil.internal.Background
-import sh.tinfoil.internal.verification.AttestationVerifier
-import sh.tinfoil.openai.EnclaveOpenAIClient
-import sh.tinfoil.openai.asFlow
+import sh.tinfoil.testing.NotingVerifier
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.TestGateway
-import sh.tinfoil.testing.awaitUntil
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executor
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -42,7 +33,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * What the clients do on the thread that calls them, which may be one that
+ * What the HTTP clients do on the thread that calls them, which may be one that
  * must not block or touch the network, as Android's main thread: nothing
  * that calls into the verifier, reads a request body or closes a response.
  */
@@ -83,35 +74,6 @@ class CallerThreadTest {
         }
     }
 
-    /** A verifier that notes every call into it. */
-    private inner class Noting(private val inner: AttestationVerifier) : AttestationVerifier {
-        override val callerAuthorizesConfig: Boolean
-            get() {
-                note("callerAuthorizesConfig")
-                return inner.callerAuthorizesConfig
-            }
-
-        override fun newNonce(): ByteArray {
-            note("newNonce")
-            return inner.newNonce()
-        }
-
-        override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String {
-            note("attestationUrl")
-            return inner.attestationUrl(host, relay, nonce)
-        }
-
-        override fun checkPinVerifiability(pin: Pin) {
-            note("checkPinVerifiability")
-            inner.checkPinVerifiability(pin)
-        }
-
-        override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification {
-            note("verify")
-            return inner.verify(document, nonce, pin)
-        }
-    }
-
     /** A body that notes when it is asked how long it is, and when it is written. */
     private inner class NotingBody(private val text: String) : RequestBody() {
         override fun contentType(): MediaType = "application/json".toMediaType()
@@ -133,7 +95,7 @@ class CallerThreadTest {
         enclave.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = MockResponse()
         }
-        val verifier = Verifier.appraisingWith(Noting(enclave.verifier))
+        val verifier = Verifier.appraisingWith(NotingVerifier(enclave.verifier, ::note))
 
         fromCaller {
             val client = EnclaveHttpClient.create(enclave.host, Pin(repo = "tinfoilsh/example"), enclave.internals()) {
@@ -156,7 +118,7 @@ class CallerThreadTest {
     fun aGatewayClientCallsTheVerifierAndReadsBodiesOffTheCallersThread() {
         val gateway = TestGateway().also { closeables += it }
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
-        val verifier = Verifier.appraisingWith(Noting(gateway.verifier))
+        val verifier = Verifier.appraisingWith(NotingVerifier(gateway.verifier, ::note))
 
         fromCaller {
             val client = gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m")), verifier = verifier)
@@ -170,60 +132,6 @@ class CallerThreadTest {
         }
 
         assertNothingOnTheCallersThread("newNonce", "attestationUrl", "checkPinVerifiability", "verify", "contentLength", "writeTo")
-    }
-
-    @Test
-    fun theOpenAIOptionsArePreparedOffTheCallersThread() {
-        val enclave = TestEnclave().also { closeables += it }
-
-        fromCaller {
-            EnclaveOpenAIClient.create(enclave.host, Pin(repo = "tinfoilsh/example"), "a-key", enclave.internals()) {
-                attestationRelay = enclave.relayHost
-                verifier = Verifier.appraisingWith(Noting(enclave.verifier))
-                openAI { note("configure") }
-            }.close()
-        }
-
-        assertNothingOnTheCallersThread("configure", "checkPinVerifiability", "verify")
-    }
-
-    @Test
-    fun aStreamIsSubscribedToAndClosedOffTheCollectorsThread() {
-        val handlers = CompletableFuture<AsyncStreamResponse.Handler<String>>()
-        val closed = AtomicBoolean()
-        val stream = object : AsyncStreamResponse<String> {
-            override fun subscribe(handler: AsyncStreamResponse.Handler<String>): AsyncStreamResponse<String> = apply {
-                note("subscribe")
-                handlers.complete(handler)
-            }
-
-            override fun subscribe(handler: AsyncStreamResponse.Handler<String>, executor: Executor): AsyncStreamResponse<String> =
-                subscribe(handler)
-
-            override fun onCompleteFuture(): CompletableFuture<Void?> = CompletableFuture()
-
-            override fun close() {
-                note("close")
-                closed.set(true)
-            }
-        }
-        val feeder = Thread {
-            val handler = handlers.get()
-            try {
-                handler.onNext("one")
-                handler.onNext("two")
-            } catch (_: CancellationException) {
-                // The collector took the first event and stopped.
-            }
-        }.apply { isDaemon = true }
-        feeder.start()
-
-        // The response is still open when the collector stops, as when a
-        // screen that shows a stream goes away.
-        assertEquals("one", fromCaller { stream.asFlow().first() })
-
-        awaitUntil { closed.get() }
-        assertNothingOnTheCallersThread("subscribe", "close")
     }
 
     @Test

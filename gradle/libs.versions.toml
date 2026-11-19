@@ -11,6 +11,10 @@ kotlinx-coroutines = "1.10.2"
 openai-java = "4.101.0"
 
 [libraries]
+# For build-logic, which applies these plugins from its convention plugin.
+android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+kotlin-serialization-plugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
 junit = { module = "junit:junit", version.ref = "junit" }
@@ -25,6 +29,7 @@ okhttp-tls = { module = "com.squareup.okhttp3:okhttp-tls", version.ref = "okhttp
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 # Only the core of the OpenAI SDK: its own HTTP client is left out, so that
 # this SDK's attested clients are the only way that it reaches the network.
+# Only tinfoil-openai depends on it.
 openai-java-core = { module = "com.openai:openai-java-core", version.ref = "openai-java" }
 # The OpenAI SDK and Jackson's Kotlin module ask for an older kotlin-reflect;
 # it has to match the Kotlin standard library.
@@ -32,7 +37,4 @@ kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref =
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 
 [plugins]
-android-library = { id = "com.android.library", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 binary-compatibility-validator = { id = "org.jetbrains.kotlinx.binary-compatibility-validator", version.ref = "binary-compatibility-validator" }

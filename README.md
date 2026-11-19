@@ -4,6 +4,34 @@ A Kotlin client for verifiably private AI inference with [Tinfoil](https://tinfo
 
 This SDK is under development and is not yet ready for use.
 
+## Install
+
+The SDK is two artifacts, with the same version. They are **not yet
+published**, and their coordinates may still change:
+
+```kotlin
+dependencies {
+    // The OpenAI clients. It brings `tinfoil` with it.
+    implementation("sh.tinfoil:tinfoil-openai:<version>")
+
+    // Or only the verifier and the attested HTTP clients.
+    implementation("sh.tinfoil:tinfoil:<version>")
+}
+```
+
+- `sh.tinfoil:tinfoil-openai` is for apps that call the inference API
+  through the [OpenAI Java SDK](https://github.com/openai/openai-java):
+  `Client`, `RouterOpenAIClient`, `EnclaveOpenAIClient` and
+  `GatewayOpenAIClient`, in the package `sh.tinfoil.openai`. It depends on
+  `tinfoil`, and on the OpenAI SDK, which is large; see [App size](#app-size).
+- `sh.tinfoil:tinfoil` is the attestation verifier and the attested HTTP
+  clients, `EnclaveHttpClient`, `RouterHttpClient` and `GatewayHttpClient`,
+  in the package `sh.tinfoil`. Use it alone when the app makes its own HTTP
+  requests, or brings another API client that takes an OkHttp
+  `Call.Factory`: it has no dependency on the OpenAI SDK.
+
+Both need Android 8.0 (API level 26) or later.
+
 ## Usage
 
 `Client` is an OpenAI client for inference on Tinfoil's recommended route.
@@ -14,7 +42,7 @@ verified service and nowhere else.
 ```kotlin
 import com.openai.models.chat.completions.ChatCompletionCreateParams
 import kotlinx.coroutines.future.await
-import sh.tinfoil.Client
+import sh.tinfoil.openai.Client
 
 val client = Client.create(apiKey)
 
@@ -78,9 +106,9 @@ they send through.
 verifies when it is created:
 
 ```kotlin
-import sh.tinfoil.TinfoilEvent
 import sh.tinfoil.TransportMode
 import sh.tinfoil.openai.RouterOpenAIClient
+import sh.tinfoil.openai.TinfoilEvent
 
 val client = RouterOpenAIClient.create(apiKey) {
     transportMode = TransportMode.EHBP
@@ -204,11 +232,63 @@ attempts of up to 2 sends. With `GatewayOpenAIClient` it is up to 24 times:
 another replica up to 3 times. A request whose body the OpenAI SDK can write
 only once, such as an upload that it streams, is sent once.
 
+### Without the OpenAI SDK
+
+The HTTP clients of the `tinfoil` artifact are what the OpenAI clients send
+through, and work without them. Each is an OkHttp `Call.Factory` that sends
+a request only to the service that it verified:
+
+```kotlin
+import okhttp3.Request
+import sh.tinfoil.EnclaveHttpClient
+import sh.tinfoil.Pin
+
+val client = EnclaveHttpClient.create(
+    enclave = "inference.tinfoil.sh",
+    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+)
+
+val request = Request.Builder()
+    .url(client.baseUrl.resolve("v1/models")!!)
+    .header("Authorization", "Bearer $apiKey")
+    .build()
+client.execute(request).use { response -> println(response.body!!.string()) }
+
+client.close()
+```
+
 ### App size
 
-The OpenAI SDK is large: its classes add tens of megabytes to an app that is
-not shrunk. Build release variants with R8 (`isMinifyEnabled = true`). The
-OpenAI SDK and this SDK each carry the keep rules that they need.
+Build release variants with R8 (`isMinifyEnabled = true`). What the SDK then
+adds to an app is mostly these three things:
+
+- **The OpenAI SDK, with `tinfoil-openai` only.** It adds about 15 MB of dex
+  code to a minified app, about 4.4 MB of the APK, whether or not the app
+  uses all of it: the keep rules that the OpenAI SDK ships pin its classes,
+  and Jackson and `kotlin-reflect` with them, so R8 cannot remove what is
+  not used. An app that depends on `tinfoil` alone carries none of it.
+- **The native verifier library, with either artifact.** It is about 20 MB
+  for each ABI, about 7 MB compressed, and is built for `arm64-v8a`,
+  `armeabi-v7a` and `x86_64`. There is no library for 32-bit `x86`. An app
+  bundle delivers one ABI to a device; an APK that is built for all of them
+  carries all three.
+- **Bouncy Castle's resources, with either artifact.** Bouncy Castle, which
+  seals bodies in `TransportMode.EHBP`, ships about 1.2 MB of data files for
+  an algorithm that this SDK does not use. R8 does not remove resources, but
+  the app's build can leave them out:
+
+  ```kotlin
+  android {
+      packaging {
+          resources {
+              excludes += "org/bouncycastle/pqc/crypto/picnic/**"
+          }
+      }
+  }
+  ```
+
+The SDK's own classes are small, and the artifacts carry the keep rules that
+they need.
 
 ## Transport modes
 
@@ -288,7 +368,9 @@ storage, never log it, and delete it once the response has been read.
 
 ## Development
 
-The SDK is an Android library. Building it needs JDK 17, the Android SDK
+The SDK is two Android library modules: `tinfoil`, the verifier and the
+attested HTTP clients, and `tinfoil-openai`, the OpenAI clients over them.
+Building them needs JDK 17, the Android SDK
 (`ANDROID_HOME`), and the attestation verifier library, `TinfoilGo.aar`, which
 is built from [tinfoil-go](https://github.com/tinfoilsh/tinfoil-go) at the
 commit in `tinfoil-go.properties`:
@@ -300,9 +382,15 @@ bash scripts/build-mobile-android.sh /path/to/TinfoilGo.aar
 
 # in this repository
 export TINFOIL_GO_AAR=/path/to/TinfoilGo.aar
-./gradlew :tinfoil:assembleRelease :tinfoil:lintRelease :tinfoil:testDebugUnitTest :tinfoil:apiCheck
-./gradlew :tinfoil:connectedDebugAndroidTest   # needs a running emulator or a device
+./gradlew assembleRelease lintRelease testDebugUnitTest apiCheck
+./gradlew connectedDebugAndroidTest   # needs a running emulator or a device
 ```
+
+A task that is named without a module runs in both. Name the module to run
+it in one, as in `./gradlew :tinfoil:testDebugUnitTest` or
+`./gradlew :tinfoil-openai:connectedDebugAndroidTest`. `tinfoil` does not
+depend on the OpenAI SDK, and its build fails if a dependency ever brings
+that in.
 
 The EHBP client, which seals request bodies in `TransportMode.EHBP`, is not
 released yet. It is built from source, as a Gradle included build, out of the
@@ -324,7 +412,7 @@ The instrumented tests that verify Tinfoil's production enclaves reach the
 network, so they are skipped unless they are asked for:
 
 ```bash
-./gradlew :tinfoil:connectedDebugAndroidTest \
+./gradlew connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true
 ```
 
@@ -333,7 +421,7 @@ the command line, from the environment, and those tests are skipped without
 it. Never write it into a file:
 
 ```bash
-./gradlew :tinfoil:connectedDebugAndroidTest \
+./gradlew connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true \
   -Pandroid.testInstrumentationRunnerArguments.tinfoilApiKey="$TINFOIL_API_KEY"
 ```
@@ -378,15 +466,16 @@ test-only entry points replace the trust anchors and the clock. The build
 enforces this in both directions. Without `TINFOIL_CONFORMANCE=1`, every
 build fails when `TINFOIL_GO_AAR` names a library that has those entry
 points. With it, the build fails when the library lacks them, and refuses
-every task that packages the SDK, belongs to the release variant or
-publishes; only the instrumented tests run.
+every task, in either module, that packages the SDK, belongs to the release
+variant or publishes; only the instrumented tests run.
 
-The SDK's version is `version` in `gradle.properties`, and `Tinfoil.VERSION`
-is generated from it.
+The SDK's version is `version` in `gradle.properties`, for both modules, and
+`Tinfoil.VERSION` is generated from it.
 
-The public API is pinned in `tinfoil/api/tinfoil.api`, and `apiCheck` fails
-when the code and that file disagree. After a deliberate change to the API,
-run `./gradlew :tinfoil:apiDump` and commit the result.
+The public API of each module is pinned, in `tinfoil/api/tinfoil.api` and
+`tinfoil-openai/api/tinfoil-openai.api`, and `apiCheck` fails when the code
+and those files disagree. After a deliberate change to the API, run
+`./gradlew apiDump` and commit the result.
 
 ## Reporting Vulnerabilities
 
