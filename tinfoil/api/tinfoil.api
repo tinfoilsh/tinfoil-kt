@@ -14,6 +14,7 @@ public final class sh/tinfoil/ArtifactVerification {
 public final class sh/tinfoil/AttestationException : sh/tinfoil/TinfoilException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getLayer-7qrYzj4 ()Ljava/lang/String;
+	public fun isRetryable ()Z
 }
 
 public final class sh/tinfoil/Catalog {
@@ -81,6 +82,7 @@ public final class sh/tinfoil/ConfigVerification {
 }
 
 public final class sh/tinfoil/ConfigurationException : sh/tinfoil/TinfoilException {
+	public fun isRetryable ()Z
 }
 
 public final class sh/tinfoil/CryptoMaterial {
@@ -175,7 +177,6 @@ public abstract interface annotation class sh/tinfoil/ExperimentalTinfoilApi : j
 
 public final class sh/tinfoil/GatewayHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
 	public static final field Companion Lsh/tinfoil/GatewayHttpClient$Companion;
-	public static final field DEFAULT_BASE_URL Ljava/lang/String;
 	public synthetic fun <init> (Lsh/tinfoil/internal/gateway/GatewayRouter;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -192,6 +193,7 @@ public final class sh/tinfoil/GatewayHttpClient$Companion {
 	public final fun create (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun create$default (Lsh/tinfoil/GatewayHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun fetchCatalog (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getDEFAULT_BASE_URL ()Ljava/lang/String;
 }
 
 public abstract class sh/tinfoil/GatewayOpenAIOptions : sh/tinfoil/GatewayOptions, sh/tinfoil/OpenAIOptions {
@@ -228,13 +230,16 @@ public final class sh/tinfoil/Measurement {
 public final class sh/tinfoil/ModelPin {
 	public fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;)V
 	public synthetic fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
 	public final fun getRepo ()Ljava/lang/String;
 	public final fun getVerifier ()Lsh/tinfoil/Verifier;
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/NetworkException : sh/tinfoil/TinfoilException {
 	public final fun getStatus ()Ljava/lang/Integer;
+	public fun isRetryable ()Z
 }
 
 public abstract interface class sh/tinfoil/OpenAIOptions {
@@ -244,7 +249,7 @@ public abstract interface class sh/tinfoil/OpenAIOptions {
 }
 
 public final class sh/tinfoil/Pin {
-	public fun <init> ()V
+	public static final field Companion Lsh/tinfoil/Pin$Companion;
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
@@ -252,6 +257,10 @@ public final class sh/tinfoil/Pin {
 	public final fun getRepo ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Pin$Companion {
+	public final fun getNONE ()Lsh/tinfoil/Pin;
 }
 
 public final class sh/tinfoil/RecoverableResponse : java/io/Closeable {
@@ -367,11 +376,15 @@ public final class sh/tinfoil/SoftwareIdentity {
 
 public final class sh/tinfoil/Tinfoil {
 	public static final field INSTANCE Lsh/tinfoil/Tinfoil;
-	public static final field VERSION Ljava/lang/String;
+	public final fun getVERSION ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/TinfoilErrors {
+	public static final fun getTinfoilException (Ljava/lang/Throwable;)Lsh/tinfoil/TinfoilException;
 }
 
 public final class sh/tinfoil/TinfoilEvent : java/lang/Enum {
-	public static final field WebSearch Lsh/tinfoil/TinfoilEvent;
+	public static final field WEB_SEARCH Lsh/tinfoil/TinfoilEvent;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public final fun getValue ()Ljava/lang/String;
 	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/TinfoilEvent;
@@ -382,14 +395,15 @@ public abstract class sh/tinfoil/TinfoilException : java/io/IOException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getCategory ()Ljava/lang/String;
 	public final fun getDetail ()Ljava/lang/String;
+	public abstract fun isRetryable ()Z
 }
 
 public abstract interface annotation class sh/tinfoil/TinfoilOptionsDsl : java/lang/annotation/Annotation {
 }
 
 public final class sh/tinfoil/TransportMode : java/lang/Enum {
-	public static final field Ehbp Lsh/tinfoil/TransportMode;
-	public static final field Tls Lsh/tinfoil/TransportMode;
+	public static final field EHBP Lsh/tinfoil/TransportMode;
+	public static final field TLS Lsh/tinfoil/TransportMode;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/TransportMode;
 	public static fun values ()[Lsh/tinfoil/TransportMode;
@@ -474,10 +488,6 @@ public final class sh/tinfoil/openai/EnclaveOpenAIClient$Companion {
 	public static synthetic fun create$default (Lsh/tinfoil/openai/EnclaveOpenAIClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
-public final class sh/tinfoil/openai/ErrorsKt {
-	public static final fun getTinfoilException (Ljava/lang/Throwable;)Lsh/tinfoil/TinfoilException;
-}
-
 public final class sh/tinfoil/openai/GatewayOpenAIClient : java/lang/AutoCloseable {
 	public static final field Companion Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/GatewayHttpClient;Lcom/openai/client/OpenAIClient;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -493,6 +503,10 @@ public final class sh/tinfoil/openai/GatewayOpenAIClient$Companion {
 	public static synthetic fun create$default (Lsh/tinfoil/openai/GatewayOpenAIClient$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
+public final class sh/tinfoil/openai/OpenAIStreams {
+	public static final fun asFlow (Lcom/openai/core/http/AsyncStreamResponse;)Lkotlinx/coroutines/flow/Flow;
+}
+
 public final class sh/tinfoil/openai/RouterOpenAIClient : java/lang/AutoCloseable {
 	public static final field Companion Lsh/tinfoil/openai/RouterOpenAIClient$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/RouterHttpClient;Lcom/openai/client/OpenAIClient;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -506,9 +520,5 @@ public final class sh/tinfoil/openai/RouterOpenAIClient : java/lang/AutoCloseabl
 public final class sh/tinfoil/openai/RouterOpenAIClient$Companion {
 	public final fun create (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun create$default (Lsh/tinfoil/openai/RouterOpenAIClient$Companion;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
-}
-
-public final class sh/tinfoil/openai/StreamsKt {
-	public static final fun asFlow (Lcom/openai/core/http/AsyncStreamResponse;)Lkotlinx/coroutines/flow/Flow;
 }
 

@@ -91,7 +91,7 @@ internal class EhbpSealing(
     private val local: Boolean = false,
     private val settings: HttpSettings = HttpSettings(),
 ) : TransportProtocol {
-    override val mode: TransportMode = TransportMode.Ehbp
+    override val mode: TransportMode = TransportMode.EHBP
 
     private val calls = ActiveCalls()
     private val dispatcher = Dispatcher()
@@ -139,8 +139,8 @@ internal class EhbpSealing(
                 request.headers("Connection").any { value -> value.split(',').any { it.trim().equals("upgrade", ignoreCase = true) } }
             ) {
                 throw ConfigurationException(
-                    "TransportMode.Ehbp seals only request and response bodies, so it cannot protect a protocol " +
-                        "upgrade, such as a WebSocket, or a CONNECT tunnel; use TransportMode.Tls on a direct connection",
+                    "TransportMode.EHBP seals only request and response bodies, so it cannot protect a protocol " +
+                        "upgrade, such as a WebSocket, or a CONNECT tunnel; use TransportMode.TLS on a direct connection",
                 )
             }
             for (name in request.headers.names()) {
@@ -154,14 +154,14 @@ internal class EhbpSealing(
                 }
             }
             if (request.body?.isDuplex() == true) {
-                throw ConfigurationException("TransportMode.Ehbp cannot seal a duplex request body")
+                throw ConfigurationException("TransportMode.EHBP cannot seal a duplex request body")
             }
             if (request.isHttps == cleartext) {
                 throw ConfigurationException(
                     if (cleartext) {
                         "the client's base URL is HTTP, and so must its requests be"
                     } else {
-                        "TransportMode.Ehbp requires an HTTPS request, unless the client's base URL is HTTP on this machine"
+                        "TransportMode.EHBP requires an HTTPS request, unless the client's base URL is HTTP on this machine"
                     },
                 )
             }
@@ -182,7 +182,7 @@ internal class EhbpSealing(
             if (key.isNullOrEmpty()) {
                 throw AttestationException(
                     "the attestation endorses no HPKE key, so no request body can be sealed to it; " +
-                        "TransportMode.Ehbp cannot be used with this enclave",
+                        "TransportMode.EHBP cannot be used with this enclave",
                 )
             }
             if (key.length != KEY_LENGTH || !key.all { it in '0'..'9' || it in 'a'..'f' }) {

@@ -83,10 +83,10 @@ import sh.tinfoil.TransportMode
 import sh.tinfoil.openai.RouterOpenAIClient
 
 val client = RouterOpenAIClient.create(apiKey) {
-    transportMode = TransportMode.Ehbp
+    transportMode = TransportMode.EHBP
     baseUrl = "https://proxy.example.com/v1/"
     userCacheSecret = cacheSecret
-    tinfoilEvents = setOf(TinfoilEvent.WebSearch)
+    tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
 }
 ```
 
@@ -163,7 +163,9 @@ from it.
 Creating a client throws this SDK's exceptions, which are `IOException`s:
 an `AttestationException` when the enclave is not to be trusted, a
 `NetworkException` when it cannot be reached to be verified, and a
-`ConfigurationException` for an invalid argument.
+`ConfigurationException` for an invalid argument. A retry loop that retries
+any `IOException` should first read `isRetryable`, which is true only for a
+`NetworkException`: an attestation failure must not be retried blindly.
 
 The OpenAI SDK throws unchecked exceptions, all of them `OpenAIException`s.
 An error status from the API is one of its subclasses, such as
@@ -175,7 +177,7 @@ OpenAI SDK's call throws, and `tinfoilException` finds it:
 import com.openai.errors.OpenAIException
 import com.openai.errors.OpenAIServiceException
 import sh.tinfoil.AttestationException
-import sh.tinfoil.openai.tinfoilException
+import sh.tinfoil.tinfoilException
 
 try {
     client.openAI.chat().completions().create(params)
@@ -213,11 +215,11 @@ OpenAI SDK and this SDK each carry the keep rules that they need.
 A client protects its requests with the keys that the enclave's attestation
 endorses, in one of two ways.
 
-`TransportMode.Tls`, the default, pins every connection to the attested TLS
+`TransportMode.TLS`, the default, pins every connection to the attested TLS
 key. It protects the whole request and response, and needs a direct
 connection to the enclave.
 
-`TransportMode.Ehbp` seals request and response bodies to the attested HPKE
+`TransportMode.EHBP` seals request and response bodies to the attested HPKE
 key with [EHBP](https://docs.tinfoil.sh/resources/ehbp), so that they stay
 private through a proxy that you set as `baseUrl`:
 
@@ -226,7 +228,7 @@ val client = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
     pin = Pin(repo = "tinfoilsh/confidential-model-router"),
 ) {
-    transportMode = TransportMode.Ehbp
+    transportMode = TransportMode.EHBP
     baseUrl = "https://proxy.example.com/"
 }
 ```
@@ -266,7 +268,7 @@ the full rules.
 
 ### Session recovery
 
-With `TransportMode.Ehbp`, `executeRecoverable` returns a response together
+With `TransportMode.EHBP`, `executeRecoverable` returns a response together
 with its session recovery token, which can open that one response again
 later, without the client that sent the request. Use it for a response that
 the server keeps and that can be fetched again after an interruption:
@@ -302,7 +304,7 @@ export TINFOIL_GO_AAR=/path/to/TinfoilGo.aar
 ./gradlew :tinfoil:connectedDebugAndroidTest   # needs a running emulator or a device
 ```
 
-The EHBP client, which seals request bodies in `TransportMode.Ehbp`, is not
+The EHBP client, which seals request bodies in `TransportMode.EHBP`, is not
 released yet. It is built from source, as a Gradle included build, out of the
 `kotlin/` directory of a checkout of
 [encrypted-http-body-protocol](https://github.com/tinfoilsh/encrypted-http-body-protocol)

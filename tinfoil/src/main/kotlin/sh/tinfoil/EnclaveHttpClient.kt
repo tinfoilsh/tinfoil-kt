@@ -43,8 +43,8 @@ public fun interface VerificationCheck {
  * [create] verifies the enclave before it returns a client. From then on,
  * every request waits for a verification that is valid at that moment, and
  * goes out under the keys that the verification endorses: with
- * [TransportMode.Tls], only on a connection whose TLS certificate carries
- * the attested key; with [TransportMode.Ehbp], with its body sealed to the
+ * [TransportMode.TLS], only on a connection whose TLS certificate carries
+ * the attested key; with [TransportMode.EHBP], with its body sealed to the
  * attested HPKE key. The client verifies again by itself when a
  * verification reaches its freshness deadline or the enclave stops
  * holding the verified key.
@@ -78,7 +78,7 @@ public class EnclaveHttpClient private constructor(
 
     /**
      * The URL that requests are sent under: the base URL that the client was
-     * created with, which with [TransportMode.Ehbp] may be a proxy's, or the
+     * created with, which with [TransportMode.EHBP] may be a proxy's, or the
      * enclave's own origin, `https://<enclave>/`. Resolve request paths
      * against it, as in `baseUrl.resolve("v1/models")`.
      */
@@ -138,8 +138,8 @@ public class EnclaveHttpClient private constructor(
      * reading it blocks on the network, as does closing a response whose
      * body has not been read to its end: do both off the main thread.
      *
-     * This describes a client with [TransportMode.Tls]; what
-     * [TransportMode.Ehbp] changes follows it.
+     * This describes a client with [TransportMode.TLS]; what
+     * [TransportMode.EHBP] changes follows it.
      *
      * Before any network I/O, the request is refused with a
      * [ConfigurationException] if
@@ -206,7 +206,7 @@ public class EnclaveHttpClient private constructor(
      * Cancelling the coroutine while it waits cancels the request. Once the
      * response is returned, closing it ends the exchange.
      *
-     * **With [TransportMode.Ehbp]**, connections are not pinned. They are
+     * **With [TransportMode.EHBP]**, connections are not pinned. They are
      * validated as the platform validates any HTTPS connection to
      * [baseUrl]'s host, which may be a proxy, and the request's body is
      * sealed to the attested HPKE key instead. The attestation shows what
@@ -290,7 +290,7 @@ public class EnclaveHttpClient private constructor(
      * that the server keeps and that can be fetched again after an
      * interruption: store the token before reading the body.
      *
-     * It requires [TransportMode.Ehbp]: with [TransportMode.Tls] no body is
+     * It requires [TransportMode.EHBP]: with [TransportMode.TLS] no body is
      * sealed, there is no token, and the call fails with a
      * [ConfigurationException] before any network I/O.
      *
@@ -355,7 +355,7 @@ public class EnclaveHttpClient private constructor(
          *
          * ```
          * val client = EnclaveHttpClient.create("enclave.example.com", pin) {
-         *     transportMode = TransportMode.Ehbp
+         *     transportMode = TransportMode.EHBP
          *     baseUrl = "https://proxy.example.com/"
          * }
          * ```
@@ -376,8 +376,8 @@ public class EnclaveHttpClient private constructor(
          *
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
-         * @param pin What the enclave must be running. A pin that names
-         *   nothing is refused unless the [verifier][EnclaveOptions.verifier]
+         * @param pin What the enclave must be running. The pin that names
+         *   nothing, [Pin.NONE], is refused unless the [verifier][EnclaveOptions.verifier]
          *   authorizes configs by itself, with an embedded config or a
          *   config authorizer.
          * @param options Sets the options; see [EnclaveOptions]. Without
@@ -388,7 +388,7 @@ public class EnclaveHttpClient private constructor(
          *   fetched.
          * @throws AttestationException if the enclave is not to be trusted,
          *   or endorses no key for the transport mode: no HPKE key, for
-         *   [TransportMode.Ehbp].
+         *   [TransportMode.EHBP].
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(

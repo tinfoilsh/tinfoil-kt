@@ -59,6 +59,10 @@ public class Catalog(entries: Map<String, CatalogEntry>) {
 /**
  * Pins a model of the gateway to the repository that its replicas must run.
  *
+ * Two pins are equal when they name the same repository and have the same
+ * verifier: a [Verifier] is equal only to itself, so that means the same
+ * instance, or none in both.
+ *
  * Experimental: the gateway route is new, and this API may change or be
  * removed in a later release.
  */
@@ -75,6 +79,11 @@ public class ModelPin(
      */
     public val verifier: Verifier? = null,
 ) {
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is ModelPin && repo == other.repo && verifier === other.verifier)
+
+    override fun hashCode(): Int = Objects.hash(repo, verifier)
+
     override fun toString(): String =
         "ModelPin(repo=$repo, verifier=${if (verifier == null) "the client's" else "its own"})"
 }

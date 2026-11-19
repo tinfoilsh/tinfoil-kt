@@ -55,6 +55,7 @@ import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.fingerprint
 import sh.tinfoil.testing.httpsServer
+import sh.tinfoil.tinfoilException
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.InterruptedIOException
@@ -97,7 +98,7 @@ class OpenAIClientsTest {
 
     private suspend fun enclaveClient(
         host: String = enclave.host,
-        transportMode: TransportMode = TransportMode.Tls,
+        transportMode: TransportMode = TransportMode.TLS,
         baseUrl: String? = null,
         userCacheSecret: String? = null,
         apiKey: String = KEY,
@@ -545,14 +546,14 @@ class OpenAIClientsTest {
     @Test
     fun theEventsHeaderListsTheEventsInOrderAndIsLeftOutWhenThereAreNone() {
         assertNull(TinfoilEvents.headerValue(emptySet()))
-        assertEquals("web_search", TinfoilEvents.headerValue(setOf(TinfoilEvent.WebSearch)))
+        assertEquals("web_search", TinfoilEvents.headerValue(setOf(TinfoilEvent.WEB_SEARCH)))
         assertEquals(TinfoilEvent.entries.map { it.value }.sorted().joinToString(","), TinfoilEvents.headerValue(TinfoilEvent.entries.toSet()))
-        assertEquals("web_search", TinfoilEvent.WebSearch.value)
+        assertEquals("web_search", TinfoilEvent.WEB_SEARCH.value)
     }
 
     @Test
     fun everyRequestAsksForTheClientsEventsUnlessItNamesItsOwn() = test {
-        val client = enclaveClient(tinfoilEvents = setOf(TinfoilEvent.WebSearch))
+        val client = enclaveClient(tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH))
         repeat(3) { enclave.server.enqueue(completion()) }
         enclave.server.enqueue(json("""{"object":"list","data":[]}"""))
 
@@ -842,7 +843,7 @@ class OpenAIClientsTest {
         val sealing = SealingDispatcher({ key }) { it.reply(completionJson("sealed answer")) }
         enclave.endorsedHpke = { key.publicKey }
         enclave.server.dispatcher = sealing
-        val client = enclaveClient(transportMode = TransportMode.Ehbp, userCacheSecret = "scope-0123456789")
+        val client = enclaveClient(transportMode = TransportMode.EHBP, userCacheSecret = "scope-0123456789")
         val prompt = "a-prompt-that-must-not-be-seen-on-the-wire"
 
         val answer = client.openAI.chat().completions().create(params(prompt))
@@ -864,7 +865,7 @@ class OpenAIClientsTest {
         val sealing = SealingDispatcher({ key }) { it.reply(events, pieces = 7).setHeader("Content-Type", "text/event-stream") }
         enclave.endorsedHpke = { key.publicKey }
         enclave.server.dispatcher = sealing
-        val client = enclaveClient(transportMode = TransportMode.Ehbp)
+        val client = enclaveClient(transportMode = TransportMode.EHBP)
 
         val chunks = client.openAIAsync.chat().completions().createStreaming(params()).asFlow().toList()
 
@@ -882,7 +883,7 @@ class OpenAIClientsTest {
         enclave.endorsedHpke = { key.publicKey }
         enclave.server.dispatcher = sealing
         val sleeper = NoSleep(before = { key = SealingKey() })
-        val client = enclaveClient(transportMode = TransportMode.Ehbp, configure = { sleeper(sleeper) })
+        val client = enclaveClient(transportMode = TransportMode.EHBP, configure = { sleeper(sleeper) })
         key = SealingKey()
 
         assertFailsWith<InternalServerException> { client.openAI.chat().completions().create(params()) }

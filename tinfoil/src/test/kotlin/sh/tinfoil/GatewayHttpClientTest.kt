@@ -109,6 +109,8 @@ class GatewayHttpClientTest {
             "invalid base URL" to { gateway.client(baseUrl = "${gateway.host}/v1/") },
             "invalid base URL" to { gateway.client(baseUrl = "wss://${gateway.host}/v1/") },
             "user cache secret is not well-formed" to { gateway.client(userCacheSecret = "half\ud800") },
+            "baseUrl must not be empty" to { gateway.client(baseUrl = "") },
+            "userCacheSecret must not be empty" to { gateway.client(userCacheSecret = "") },
         )
         for ((message, create) in refused) {
             val error = assertFailsWith<ConfigurationException>(message) { create() }
@@ -147,7 +149,6 @@ class GatewayHttpClientTest {
         val client = gateway.unverified(baseUrl = null)
         assertEquals(GatewayHttpClient.DEFAULT_BASE_URL, client.baseUrl.toString())
         assertEquals("GatewayHttpClient(baseUrl=https://inference-gateway.tinfoil.sh/v1/)", client.toString())
-        assertEquals(GatewayHttpClient.DEFAULT_BASE_URL, gateway.unverified(baseUrl = "").baseUrl.toString())
     }
 
     @Test
@@ -407,7 +408,7 @@ class GatewayHttpClientTest {
     @Test
     fun clientsWithoutASecretShareTheProcessSecretAndNeverSendIt() = test {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
-        val salts = listOf(gateway.client(userCacheSecret = null), gateway.client(userCacheSecret = ""), gateway.client(userCacheSecret = "another")).map { client ->
+        val salts = listOf(gateway.client(userCacheSecret = null), gateway.client(userCacheSecret = null), gateway.client(userCacheSecret = "another")).map { client ->
             client.execute(client.post(chat())).close()
             Regex("\"cache_salt\":\"([A-Za-z0-9_-]{43})\"").find(gateway.received.last().text!!)!!.groupValues[1]
         }

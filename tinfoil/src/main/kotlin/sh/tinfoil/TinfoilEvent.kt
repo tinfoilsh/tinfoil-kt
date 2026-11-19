@@ -22,5 +22,5 @@ public enum class TinfoilEvent(
      * a finished response carries, and may also report the status `blocked`
      * and an `error` object.
      */
-    WebSearch("web_search"),
+    WEB_SEARCH("web_search"),
 }

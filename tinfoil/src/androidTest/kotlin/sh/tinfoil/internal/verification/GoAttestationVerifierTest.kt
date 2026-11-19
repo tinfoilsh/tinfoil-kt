@@ -149,6 +149,6 @@ class GoAttestationVerifierTest {
         assertFailsWith<ConfigurationException> { defaults.checkPinVerifiability(Pin(repo = "not a reference")) }
         assertFailsWith<ConfigurationException> { defaults.checkPinVerifiability(Pin(project = "not a reference")) }
         // The default config trust needs a pin to say whose config to accept.
-        assertFailsWith<ConfigurationException> { defaults.checkPinVerifiability(Pin()) }
+        assertFailsWith<ConfigurationException> { defaults.checkPinVerifiability(Pin.NONE) }
     }
 }

@@ -7,7 +7,7 @@ public enum class TransportMode {
      * endorses. It protects the whole request and response, and needs a
      * direct connection to the enclave.
      */
-    Tls,
+    TLS,
 
     /**
      * Seals request and response bodies to the HPKE key that the enclave's
@@ -25,5 +25,5 @@ public enum class TransportMode {
      * Protocol upgrades, such as WebSockets, and `CONNECT` tunnels are
      * refused, because nothing after the handshake would be sealed.
      */
-    Ehbp,
+    EHBP,
 }

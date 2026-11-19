@@ -61,14 +61,12 @@ class UserCacheSecretRequestsTest {
 
     @Test
     fun aClientWithoutASecretSendsBodiesAsTheyAre() = test {
-        for (given in listOf(null, "")) {
-            val client = enclave.client(userCacheSecret = given)
-            enclave.server.enqueue(MockResponse())
+        val client = enclave.client(userCacheSecret = null)
+        enclave.server.enqueue(MockResponse())
 
-            client.execute(chat("""{"model":"m"}""")).close()
+        client.execute(chat("""{"model":"m"}""")).close()
 
-            assertEquals("""{"model":"m"}""", enclave.server.takeRequest().body.readUtf8())
-        }
+        assertEquals("""{"model":"m"}""", enclave.server.takeRequest().body.readUtf8())
     }
 
     @Test

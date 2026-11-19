@@ -1,3 +1,5 @@
+@file:JvmName("OpenAIStreams")
+
 package sh.tinfoil.openai
 
 import com.openai.core.http.AsyncStreamResponse

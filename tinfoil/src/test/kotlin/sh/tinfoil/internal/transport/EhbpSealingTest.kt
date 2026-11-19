@@ -62,7 +62,7 @@ class EhbpSealingTest {
 
     @Test
     fun theKeyIsTheAttestedOneAndNothingElseWillDo() {
-        assertEquals(TransportMode.Ehbp, protocol(cleartext = false).mode)
+        assertEquals(TransportMode.EHBP, protocol(cleartext = false).mode)
         assertEquals(key.publicKey, EhbpSealing.identityOf(key.publicKey).marshalPublicKeyHex())
         val refused = listOf(
             null, "", "ab", "ab".repeat(31), "ab".repeat(33), "AB".repeat(32), "g".repeat(64), "ab".repeat(32) + "\n",

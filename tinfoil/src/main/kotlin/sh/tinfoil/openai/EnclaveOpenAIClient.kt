@@ -16,6 +16,7 @@ import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.OpenAISettings
 import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
+import sh.tinfoil.tinfoilException
 import java.io.IOException
 
 /**
@@ -137,7 +138,7 @@ public class EnclaveOpenAIClient private constructor(
          *
          * ```
          * val client = EnclaveOpenAIClient.create("enclave.example.com", pin, apiKey) {
-         *     transportMode = TransportMode.Ehbp
+         *     transportMode = TransportMode.EHBP
          *     openAI { maxRetries(0) }
          * }
          * ```

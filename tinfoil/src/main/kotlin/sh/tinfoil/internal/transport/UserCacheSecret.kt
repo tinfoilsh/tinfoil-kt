@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.internal.Background
+import sh.tinfoil.internal.requireNotEmpty
 import java.io.IOException
 import java.net.ProtocolException
 import java.security.SecureRandom
@@ -182,22 +183,20 @@ internal class UserCacheSecret private constructor(
         }
 
         /**
-         * The secret that a client was given, or null if it was given none:
-         * null and the empty string both mean that.
+         * The secret that a client was given, or null if it was given none.
          *
-         * @throws ConfigurationException for text that is not well-formed
-         *   Unicode, which could not reach the server as it was given.
+         * @throws ConfigurationException for an empty secret, which is not
+         *   read as none, and for text that is not well-formed Unicode,
+         *   which could not reach the server as it was given.
          */
         @Throws(ConfigurationException::class)
         fun of(explicit: String?, maxBodyBytes: Long = MAX_BODY_BYTES): UserCacheSecret? {
-            if (explicit.isNullOrEmpty()) {
-                return null
-            }
-            if (!isWellFormed(explicit)) {
+            val secret = requireNotEmpty(explicit, "userCacheSecret") ?: return null
+            if (!isWellFormed(secret)) {
                 // Two such secrets could arrive as one, and share a cache.
                 throw ConfigurationException("the user cache secret is not well-formed Unicode text")
             }
-            return UserCacheSecret(explicit, maxBodyBytes)
+            return UserCacheSecret(secret, maxBodyBytes)
         }
 
         /** The secret that a client was given, or else the process's own. */

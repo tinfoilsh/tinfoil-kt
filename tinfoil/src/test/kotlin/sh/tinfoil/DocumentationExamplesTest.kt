@@ -8,7 +8,6 @@ import sh.tinfoil.openai.EnclaveOpenAIClient
 import sh.tinfoil.openai.GatewayOpenAIClient
 import sh.tinfoil.openai.RouterOpenAIClient
 import sh.tinfoil.openai.asFlow
-import sh.tinfoil.openai.tinfoilException
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -51,10 +50,10 @@ class DocumentationExamplesTest {
 
     private suspend fun router(apiKey: String, cacheSecret: String): RouterOpenAIClient {
         val client = RouterOpenAIClient.create(apiKey) {
-            transportMode = TransportMode.Ehbp
+            transportMode = TransportMode.EHBP
             baseUrl = "https://proxy.example.com/v1/"
             userCacheSecret = cacheSecret
-            tinfoilEvents = setOf(TinfoilEvent.WebSearch)
+            tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
         }
         return client
     }
@@ -83,7 +82,7 @@ class DocumentationExamplesTest {
             enclave = "inference.tinfoil.sh",
             pin = Pin(repo = "tinfoilsh/confidential-model-router"),
         ) {
-            transportMode = TransportMode.Ehbp
+            transportMode = TransportMode.EHBP
             baseUrl = "https://proxy.example.com/"
         }
         return client
@@ -105,6 +104,6 @@ class DocumentationExamplesTest {
 
     @Test
     fun theExamplesNameTheEventThatTheyAskFor() {
-        assertEquals("web_search", TinfoilEvent.WebSearch.value)
+        assertEquals("web_search", TinfoilEvent.WEB_SEARCH.value)
     }
 }

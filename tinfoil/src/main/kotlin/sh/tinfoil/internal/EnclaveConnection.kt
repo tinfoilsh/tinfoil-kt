@@ -222,9 +222,9 @@ internal class EnclaveConnection(
     @Throws(IOException::class)
     suspend fun sendRecoverable(request: Request): RecoverableResponse {
         checkOpen()
-        if (protocol.mode != TransportMode.Ehbp) {
+        if (protocol.mode != TransportMode.EHBP) {
             throw ConfigurationException(
-                "session recovery tokens need TransportMode.Ehbp: TransportMode.${protocol.mode} seals no bodies",
+                "session recovery tokens need TransportMode.EHBP: TransportMode.${protocol.mode} seals no bodies",
             )
         }
         // A request that is sent again is sealed again, and the token is
@@ -430,30 +430,30 @@ internal class EnclaveConnection(
             proposed: Boolean = false,
         ): EnclaveConnection {
             val enclaveUrl = Urls.enclaveUrl(enclave)
-            val base = baseUrl.nullIfEmpty()?.let(Urls::baseUrl)
+            val base = requireNotEmpty(baseUrl, "baseUrl")?.let(Urls::baseUrl)
             val proxied = base != null && Origin.of(base) != Origin.of(enclaveUrl)
             when (transportMode) {
-                TransportMode.Tls -> if (base != null) {
+                TransportMode.TLS -> if (base != null) {
                     if (!base.isHttps) {
-                        throw ConfigurationException("invalid base URL: TransportMode.Tls requires HTTPS")
+                        throw ConfigurationException("invalid base URL: TransportMode.TLS requires HTTPS")
                     }
                     if (proxied) {
                         throw ConfigurationException(
                             "a base URL off the enclave's origin ${Origin.of(enclaveUrl)} is a proxy, " +
-                                "which a pinned TLS connection cannot pass through; a proxy requires TransportMode.Ehbp",
+                                "which a pinned TLS connection cannot pass through; a proxy requires TransportMode.EHBP",
                         )
                     }
                 }
                 // Headers are not sealed, so they travel in the clear only
                 // where they never leave the machine.
-                TransportMode.Ehbp -> if (base != null && !base.isHttps && !Urls.isLoopback(base)) {
+                TransportMode.EHBP -> if (base != null && !base.isHttps && !Urls.isLoopback(base)) {
                     throw ConfigurationException(
                         "invalid base URL: HTTP is allowed only for localhost or a loopback IP address; " +
                             "use HTTPS to protect request headers",
                     )
                 }
             }
-            val relay = attestationRelay.nullIfEmpty()?.also(Urls::requireRelay)
+            val relay = requireNotEmpty(attestationRelay, "attestationRelay")?.also(Urls::requireRelay)
             val fetcher = lazy { AttestationFetcher(internals.http) }
             val attestor = Attestor(
                 verifier = verifier.backend,
@@ -471,8 +471,8 @@ internal class EnclaveConnection(
                 relay = relay,
                 attestor = attestor,
                 protocol = when (transportMode) {
-                    TransportMode.Tls -> PinnedTls(internals.http)
-                    TransportMode.Ehbp -> EhbpSealing(
+                    TransportMode.TLS -> PinnedTls(internals.http)
+                    TransportMode.EHBP -> EhbpSealing(
                         cleartext = base != null && !base.isHttps,
                         // A proxy is told which enclave the client verified,
                         // as the caller named it.
@@ -481,7 +481,7 @@ internal class EnclaveConnection(
                         // the connection reaches; headers are not. A host
                         // that the caller named is trusted with them. One
                         // that was only proposed has to show the attested
-                        // TLS key first, as it does with TransportMode.Tls.
+                        // TLS key first, as it does with TransportMode.TLS.
                         pinned = proposed && !proxied,
                         local = Urls.isLoopback(base ?: enclaveUrl),
                         settings = internals.http,
