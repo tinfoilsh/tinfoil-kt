@@ -169,7 +169,7 @@ class RouterHttpClientTest {
     )
 
     private suspend fun client(
-        transportMode: TransportMode = TransportMode.Tls,
+        transportMode: TransportMode = TransportMode.TLS,
         baseUrl: String? = null,
         attestationRelay: String? = null,
         verifier: AttestationVerifier = this.verifier,
@@ -210,7 +210,7 @@ class RouterHttpClientTest {
         assertEquals(first.host, client.enclave)
         assertEquals(routerPin, client.pin)
         assertEquals("https://${first.host}/", client.baseUrl.toString())
-        assertEquals(TransportMode.Tls, client.transportMode)
+        assertEquals(TransportMode.TLS, client.transportMode)
         assertEquals(first.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
         assertSame(client.current, client.ensureVerified())
         assertEquals(1, first.fetches.get(), "the chosen router is not verified a second time")
@@ -545,7 +545,7 @@ class RouterHttpClientTest {
         val settings = internals()
         val open = { host: String ->
             EnclaveConnection.create(
-                host, RouterDiscovery.ROUTER_PIN, TransportMode.Tls, null, null, Verifier.appraisingWith(verifier), null,
+                host, RouterDiscovery.ROUTER_PIN, TransportMode.TLS, null, null, Verifier.appraisingWith(verifier), null,
                 null, null, settings,
             ).also {
                 opened += it
@@ -631,10 +631,10 @@ class RouterHttpClientTest {
         val second = Router()
         serveList(first.host, second.host)
 
-        val client = client(transportMode = TransportMode.Ehbp, userCacheSecret = "cache-secret-91ab3e")
+        val client = client(transportMode = TransportMode.EHBP, userCacheSecret = "cache-secret-91ab3e")
 
         assertEquals(second.host, client.enclave)
-        assertEquals(TransportMode.Ehbp, client.transportMode)
+        assertEquals(TransportMode.EHBP, client.transportMode)
         assertEquals("https://${second.host}/", client.baseUrl.toString())
         assertEquals(second.key.publicKey, client.current?.hpkePublicKey)
         val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
@@ -661,7 +661,7 @@ class RouterHttpClientTest {
         }
         closeables += AutoCloseable { proxy.shutdown() }
 
-        val client = client(transportMode = TransportMode.Ehbp, baseUrl = "http://localhost:${proxy.port}/v1/")
+        val client = client(transportMode = TransportMode.EHBP, baseUrl = "http://localhost:${proxy.port}/v1/")
 
         // The proxy forwards a request, headers and all, to the host that
         // the request names, so that host is never one that a list proposed.
@@ -694,7 +694,7 @@ class RouterHttpClientTest {
     fun aBaseUrlOnTheFallbackRoutersOwnOriginIsADirectConnectionThatIsPinned() = test {
         serveList(Router().host)
 
-        val client = client(transportMode = TransportMode.Ehbp, baseUrl = "https://${fallback.host}/v1/")
+        val client = client(transportMode = TransportMode.EHBP, baseUrl = "https://${fallback.host}/v1/")
 
         assertEquals(fallback.host, client.enclave)
         assertEquals(0, listServer.requestCount)
@@ -714,7 +714,7 @@ class RouterHttpClientTest {
         val good = Router()
         serveList(keyless.host, good.host)
 
-        val client = client(transportMode = TransportMode.Ehbp)
+        val client = client(transportMode = TransportMode.EHBP)
 
         assertEquals(good.host, client.enclave)
         assertEquals(1, keyless.fetches.get())
@@ -755,7 +755,7 @@ class RouterHttpClientTest {
         val impostor = relaying(Router())
         serveList(impostor.host)
 
-        val client = client(transportMode = TransportMode.Ehbp)
+        val client = client(transportMode = TransportMode.EHBP)
 
         assertEquals(fallback.host, client.enclave)
         assertEquals(0, impostor.requests.size)
@@ -765,7 +765,7 @@ class RouterHttpClientTest {
     fun aRouterThatStopsPresentingItsAttestedKeyReceivesNothingWhenBodiesAreSealed() = test {
         val router = Router()
         serveList(router.host)
-        val client = client(transportMode = TransportMode.Ehbp)
+        val client = client(transportMode = TransportMode.EHBP)
         client.execute(client.chatRequest()).close()
         assertEquals(1, router.requests.size)
 
@@ -786,7 +786,7 @@ class RouterHttpClientTest {
         serveList()
         fallback.attestation = Router().attestation
 
-        val client = client(transportMode = TransportMode.Ehbp)
+        val client = client(transportMode = TransportMode.EHBP)
 
         assertEquals(fallback.host, client.enclave)
         assertFailsWith<AttestationException> { client.execute(client.chatRequest()) }
@@ -806,10 +806,10 @@ class RouterHttpClientTest {
             "a base URL over TLS" to { client(baseUrl = "https://proxy.example/") },
             "a base URL on the fallback's origin" to { client(baseUrl = "https://${fallback.host}/") },
             "a proxy over HTTP that is not on this machine" to {
-                client(transportMode = TransportMode.Ehbp, baseUrl = "http://proxy.example/")
+                client(transportMode = TransportMode.EHBP, baseUrl = "http://proxy.example/")
             },
             "a proxy with credentials under EHBP" to {
-                client(transportMode = TransportMode.Ehbp, baseUrl = "https://user:hunter2@proxy.example/")
+                client(transportMode = TransportMode.EHBP, baseUrl = "https://user:hunter2@proxy.example/")
             },
             "a base URL with credentials" to { client(baseUrl = "https://user:hunter2@proxy.example/") },
             "a base URL with a query" to { client(baseUrl = "https://proxy.example/?key=hunter2") },

@@ -137,7 +137,7 @@ public class EnclaveOpenAIClient private constructor(
          *
          * ```
          * val client = EnclaveOpenAIClient.create("enclave.example.com", pin, apiKey) {
-         *     transportMode = TransportMode.Ehbp
+         *     transportMode = TransportMode.EHBP
          *     openAI { maxRetries(0) }
          * }
          * ```

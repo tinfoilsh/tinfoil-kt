@@ -371,7 +371,7 @@ public final class sh/tinfoil/Tinfoil {
 }
 
 public final class sh/tinfoil/TinfoilEvent : java/lang/Enum {
-	public static final field WebSearch Lsh/tinfoil/TinfoilEvent;
+	public static final field WEB_SEARCH Lsh/tinfoil/TinfoilEvent;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public final fun getValue ()Ljava/lang/String;
 	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/TinfoilEvent;
@@ -388,8 +388,8 @@ public abstract interface annotation class sh/tinfoil/TinfoilOptionsDsl : java/l
 }
 
 public final class sh/tinfoil/TransportMode : java/lang/Enum {
-	public static final field Ehbp Lsh/tinfoil/TransportMode;
-	public static final field Tls Lsh/tinfoil/TransportMode;
+	public static final field EHBP Lsh/tinfoil/TransportMode;
+	public static final field TLS Lsh/tinfoil/TransportMode;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/TransportMode;
 	public static fun values ()[Lsh/tinfoil/TransportMode;

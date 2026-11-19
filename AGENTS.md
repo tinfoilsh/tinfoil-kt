@@ -48,7 +48,7 @@ README.
 
 - Fail closed: no request leaves before its enclave is verified, and option
   errors are raised before any network I/O.
-- With `TransportMode.Tls`, a request is written only to a connection whose
+- With `TransportMode.TLS`, a request is written only to a connection whose
   leaf certificate carries the attested key, checked after the platform's
   own TLS validation. Nothing
   that can weaken that check, such as trusted roots, a proxy or a stand-in
@@ -57,7 +57,7 @@ README.
   Kotlin's `internal` is public to Java; a public class has no ordinary
   member that takes one. Classes under `sh.tinfoil.internal` stay visible to
   Java as such, and are not an API.
-- With `TransportMode.Ehbp`, a request body is sealed to the HPKE key of the
+- With `TransportMode.EHBP`, a request body is sealed to the HPKE key of the
   verification that the request was sent under, and to no other key: the key
   comes only from the verification, never from the network. The sealing
   itself belongs to the EHBP client library; write no EHBP cryptography or

@@ -21,7 +21,7 @@ public annotation class TinfoilOptionsDsl
  *
  * ```
  * val client = EnclaveHttpClient.create("enclave.example.com", pin) {
- *     transportMode = TransportMode.Ehbp
+ *     transportMode = TransportMode.EHBP
  *     baseUrl = "https://proxy.example.com/"
  * }
  * ```
@@ -39,23 +39,23 @@ public annotation class TinfoilOptionsDsl
 @TinfoilOptionsDsl
 public sealed class EnclaveOptions {
     /**
-     * How requests are protected. [TransportMode.Tls], the default, protects
-     * the whole exchange on a direct connection; [TransportMode.Ehbp]
+     * How requests are protected. [TransportMode.TLS], the default, protects
+     * the whole exchange on a direct connection; [TransportMode.EHBP]
      * protects only bodies, and works through a proxy.
      */
-    public var transportMode: TransportMode = TransportMode.Tls
+    public var transportMode: TransportMode = TransportMode.TLS
 
     /**
      * Where requests are sent, when it is not the root of the enclave's
      * origin: an absolute URL without user information, a query or a
-     * fragment. With [TransportMode.Tls] it must be on the enclave's own
+     * fragment. With [TransportMode.TLS] it must be on the enclave's own
      * HTTPS origin, because a pinned connection cannot pass through a
-     * proxy. With [TransportMode.Ehbp] it may also be a proxy on another
+     * proxy. With [TransportMode.EHBP] it may also be a proxy on another
      * origin, which forwards each request to the enclave that the request's
      * `X-Tinfoil-Enclave-Url` header names. A proxy reads everything that is
      * not sealed, so it must use HTTPS; `http://` is accepted only for
      * `localhost` or a loopback IP address, on any port, for a proxy on the
-     * same machine. With [TransportMode.Ehbp], requests to a base URL on
+     * same machine. With [TransportMode.EHBP], requests to a base URL on
      * `localhost` or a loopback IP address, over HTTP or HTTPS, are sent
      * there directly, whatever HTTP proxy the system is configured with:
      * such a proxy would otherwise be handed them. On Android, cleartext
@@ -134,18 +134,18 @@ public sealed class EnclaveOptions {
 @TinfoilOptionsDsl
 public sealed class RouterOptions {
     /**
-     * How requests are protected. [TransportMode.Tls], the default, protects
-     * the whole exchange on a direct connection; [TransportMode.Ehbp]
+     * How requests are protected. [TransportMode.TLS], the default, protects
+     * the whole exchange on a direct connection; [TransportMode.EHBP]
      * protects only bodies, and works through a proxy.
      */
-    public var transportMode: TransportMode = TransportMode.Tls
+    public var transportMode: TransportMode = TransportMode.TLS
 
     /**
      * A proxy to send requests through, which forwards each request to the
      * router that the request's `X-Tinfoil-Enclave-Url` header names. The
      * router is not known before it is chosen, so a base URL cannot name its
      * origin, and a pinned TLS connection cannot pass through a proxy: a
-     * base URL requires [TransportMode.Ehbp]. It is an absolute URL without
+     * base URL requires [TransportMode.EHBP]. It is an absolute URL without
      * user information, a query or a fragment. A proxy reads everything
      * that is not sealed, so it must use HTTPS; `http://` is accepted only
      * for `localhost` or a loopback IP address, and a base URL on this
@@ -338,7 +338,7 @@ public sealed class GatewayOptions {
  *
  * ```
  * val client = Client.create(apiKey) {
- *     tinfoilEvents = setOf(TinfoilEvent.WebSearch)
+ *     tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
  *     openAI { maxRetries(0) }
  * }
  * ```
@@ -393,8 +393,8 @@ public sealed interface OpenAIOptions {
  *
  * ```
  * val client = EnclaveOpenAIClient.create("enclave.example.com", pin, apiKey) {
- *     transportMode = TransportMode.Ehbp
- *     tinfoilEvents = setOf(TinfoilEvent.WebSearch)
+ *     transportMode = TransportMode.EHBP
+ *     tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
  *     openAI { maxRetries(0) }
  * }
  * ```
@@ -423,7 +423,7 @@ public sealed class EnclaveOpenAIOptions : EnclaveOptions(), OpenAIOptions
  * ```
  *
  * Two options mean more here than [RouterOptions] says. [baseUrl], a proxy,
- * which requires [TransportMode.Ehbp], is also where the OpenAI client's
+ * which requires [TransportMode.EHBP], is also where the OpenAI client's
  * requests are sent, used as it is given: the OpenAI API's paths, such as
  * `chat/completions`, are joined under it. Null selects the router's
  * `https://<router>/v1/`. [userCacheSecret] is added to the chat,

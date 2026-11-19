@@ -192,18 +192,18 @@ class OptionsTest {
         closeables += client
 
         val options = assertNotNull(leaked)
-        events += TinfoilEvent.WebSearch
-        options.transportMode = TransportMode.Ehbp
+        events += TinfoilEvent.WEB_SEARCH
+        options.transportMode = TransportMode.EHBP
         options.baseUrl = "https://elsewhere.invalid/v1/"
         options.attestationRelay = "relay.invalid"
         options.verifier = null
         options.userCacheSecret = "a-secret-that-was-set-too-late"
         options.verificationCheck = VerificationCheck { throw IllegalStateException("set too late") }
         options.onVerificationResult = null
-        options.tinfoilEvents = setOf(TinfoilEvent.WebSearch)
+        options.tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
         options.openAI { putHeader("X-Set-Too-Late", "1") }
 
-        assertEquals(TransportMode.Tls, client.httpClient.transportMode)
+        assertEquals(TransportMode.TLS, client.httpClient.transportMode)
         assertEquals("https://${enclave.host}/", client.httpClient.baseUrl.toString())
         client.httpClient.reverify()
         assertEquals(2, enclave.fetches, "the client verifies again through the relay that the block set")
@@ -222,7 +222,7 @@ class OptionsTest {
     @Test
     fun theCollectionsThatTheBlockSetAreCopiedWhenItReturns() {
         val pins = mutableMapOf("a-model" to ModelPin("tinfoilsh/a-model"))
-        val events = mutableSetOf(TinfoilEvent.WebSearch)
+        val events = mutableSetOf(TinfoilEvent.WEB_SEARCH)
         val order = ArrayList<String>()
 
         val gatewaySettings = gatewaySettings { modelPins = pins }
@@ -243,7 +243,7 @@ class OptionsTest {
         assertEquals(setOf("a-model"), gatewaySettings.modelPins.keys)
         assertEquals(setOf("a-model"), gatewayRoute.modelPins.keys)
         for (settings in listOf(gatewayOpenAI, openAI, enclaveOpenAI, routerOpenAI)) {
-            assertEquals(setOf(TinfoilEvent.WebSearch), settings.tinfoilEvents)
+            assertEquals(setOf(TinfoilEvent.WEB_SEARCH), settings.tinfoilEvents)
         }
         assertEquals(emptyList(), order, "a block for the OpenAI options is kept, and does not run with the block around it")
         val builder = ClientOptions.builder()
@@ -254,7 +254,7 @@ class OptionsTest {
     @Test
     fun aBlockThatSetsNothingLeavesEveryOptionAtItsDefault() {
         for (settings in listOf(enclaveSettings { }, routerSettings { }, enclaveOpenAISettings { }.first, routerOpenAISettings { }.first)) {
-            assertEquals(TransportMode.Tls, settings.transportMode)
+            assertEquals(TransportMode.TLS, settings.transportMode)
             assertNull(settings.baseUrl)
             assertNull(settings.attestationRelay)
             assertNull(settings.verifier)

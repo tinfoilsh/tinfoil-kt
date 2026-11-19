@@ -25,7 +25,7 @@ import java.io.IOException
  * The gateway is not trusted with what a request says. Before a request is
  * sent, the client picks a replica of its model, verifies that replica's
  * attestation, and seals the request's body to the HPKE key that the
- * verification endorses, as [TransportMode.Ehbp] does; the response's body
+ * verification endorses, as [TransportMode.EHBP] does; the response's body
  * is sealed in turn. The gateway forwards what it cannot read.
  *
  * What the gateway does see is everything that is not a body: the method,

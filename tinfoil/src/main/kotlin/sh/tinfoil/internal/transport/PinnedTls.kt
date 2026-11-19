@@ -99,7 +99,7 @@ internal class LeafKeyPin private constructor(private val expected: ByteArray) {
  * calls run on.
  */
 internal class PinnedTls(private val settings: HttpSettings = HttpSettings()) : TransportProtocol {
-    override val mode: TransportMode = TransportMode.Tls
+    override val mode: TransportMode = TransportMode.TLS
 
     private val calls = ActiveCalls()
 
@@ -111,7 +111,7 @@ internal class PinnedTls(private val settings: HttpSettings = HttpSettings()) : 
 
     override fun checkRequest(request: Request) {
         if (!request.isHttps) {
-            throw ConfigurationException("TransportMode.Tls requires an HTTPS request")
+            throw ConfigurationException("TransportMode.TLS requires an HTTPS request")
         }
     }
 

@@ -77,7 +77,7 @@ class EnclaveHttpClientTest {
         assertEquals(enclave.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
         assertEquals(enclave.host, client.enclave)
         assertEquals(Pin(repo = "tinfoilsh/example"), client.pin)
-        assertEquals(TransportMode.Tls, client.transportMode)
+        assertEquals(TransportMode.TLS, client.transportMode)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
         assertSame(client.current, client.ensureVerified(), "a valid verification is reused")
         assertEquals(1, enclave.fetches)
@@ -109,13 +109,13 @@ class EnclaveHttpClientTest {
             "a pin that names nothing" to { enclave.client(pin = Pin()) },
             "a pin of empty strings" to { enclave.client(pin = Pin(repo = "", project = "")) },
             "a proxy over HTTP that is not on this machine" to {
-                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "http://proxy.example/")
+                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "http://proxy.example/")
             },
             "a proxy with credentials" to {
-                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "https://user:hunter2@proxy.example/")
+                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "https://user:hunter2@proxy.example/")
             },
             "a proxy with a query" to {
-                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "https://proxy.example/?key=hunter2")
+                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "https://proxy.example/?key=hunter2")
             },
             "a proxy base URL over TLS" to { enclave.client(baseUrl = "https://proxy.example/") },
             "a base URL on another port" to { enclave.client(baseUrl = "https://localhost:1/") },

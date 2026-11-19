@@ -76,7 +76,7 @@ class GatewayOpenAIClientTest {
     fun aChatCompletionIsSealedToAVerifiedReplicaOfItsModel() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
         gateway.answer = { it.reply(completionJson("sealed answer")) }
-        val client = client(tinfoilEvents = setOf(TinfoilEvent.WebSearch))
+        val client = client(tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH))
         val prompt = "a-prompt-that-must-not-be-seen-on-the-wire"
 
         val answer = client.openAI.chat().completions().create(params(prompt))

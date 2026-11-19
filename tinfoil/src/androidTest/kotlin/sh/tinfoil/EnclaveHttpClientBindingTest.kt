@@ -46,7 +46,7 @@ class EnclaveHttpClientBindingTest {
             },
             "a proxy over HTTP that is not on this machine" to {
                 EnclaveHttpClient.create(nowhere, pin) {
-                    transportMode = TransportMode.Ehbp
+                    transportMode = TransportMode.EHBP
                     baseUrl = "http://proxy.invalid/"
                 }
             },

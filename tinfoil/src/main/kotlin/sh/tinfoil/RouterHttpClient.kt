@@ -102,16 +102,16 @@ public class RouterHttpClient private constructor(
      * on [baseUrl]'s origin, without credentials in its URL or a `Host`
      * header; it waits for a valid verification; redirects are not followed;
      * and the HTTP client may send a request again by itself unless its body
-     * can be written only once or is sealed. With [TransportMode.Tls] it is
+     * can be written only once or is sealed. With [TransportMode.TLS] it is
      * written only to a connection that carries the attested key. With
-     * [TransportMode.Ehbp] only its body is sealed, to the attested HPKE
+     * [TransportMode.EHBP] only its body is sealed, to the attested HPKE
      * key: its method, URL and headers are not, nor is a request without a
      * body or the response to it; see [EnclaveHttpClient.execute] for all
      * that this mode changes. One thing is stricter here than there: the
      * caller did not choose the router's host, so a connection that goes
      * to the router itself, and not to a proxy, must present the attested
      * TLS key in this mode too, and a router that presents another key is
-     * verified again and then refused, exactly as with [TransportMode.Tls].
+     * verified again and then refused, exactly as with [TransportMode.TLS].
      * Through a proxy, the connection is the proxy's, and is validated as
      * any HTTPS connection is.
      *
@@ -146,7 +146,7 @@ public class RouterHttpClient private constructor(
      * with its session recovery token: the key material that can open this
      * one response again later, without this client. It behaves as
      * [EnclaveHttpClient.executeRecoverable] does: it requires
-     * [TransportMode.Ehbp], and the token, which is secret key material, is
+     * [TransportMode.EHBP], and the token, which is secret key material, is
      * null for a response that is not sealed.
      */
     @Throws(IOException::class, CancellationException::class)
@@ -262,9 +262,9 @@ public class RouterHttpClient private constructor(
             val base = settings.baseUrl.nullIfEmpty()
             if (base != null) {
                 Urls.baseUrl(base)
-                if (transportMode == TransportMode.Tls) {
+                if (transportMode == TransportMode.TLS) {
                     throw ConfigurationException(
-                        "a base URL is a proxy when the router is discovered, which requires TransportMode.Ehbp",
+                        "a base URL is a proxy when the router is discovered, which requires TransportMode.EHBP",
                     )
                 }
             }

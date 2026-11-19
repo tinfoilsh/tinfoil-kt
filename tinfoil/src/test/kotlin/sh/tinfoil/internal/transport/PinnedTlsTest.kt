@@ -76,7 +76,7 @@ class PinnedTlsTest {
     fun onlyHttpsRequestsAreAccepted() {
         val protocol = PinnedTls().also { protocols += it }
 
-        assertEquals(TransportMode.Tls, protocol.mode)
+        assertEquals(TransportMode.TLS, protocol.mode)
         protocol.checkRequest(Request.Builder().url("https://enclave.example/").build())
         assertFailsWith<ConfigurationException> {
             protocol.checkRequest(Request.Builder().url("http://enclave.example/").build())

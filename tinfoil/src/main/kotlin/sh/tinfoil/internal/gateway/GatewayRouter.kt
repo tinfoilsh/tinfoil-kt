@@ -668,7 +668,7 @@ internal class GatewayRouter private constructor(
                 EnclaveConnection.create(
                     enclave = replica.host,
                     pin = GatewayPolicy.pinOf(replica.reference),
-                    transportMode = TransportMode.Ehbp,
+                    transportMode = TransportMode.EHBP,
                     baseUrl = base.toString(),
                     attestationRelay = relay,
                     verifier = policy.verifierFor(replica),

@@ -56,7 +56,7 @@ class RouterHttpClientLiveTest {
             assertTrue(client.enclave.endsWith(".tinfoil.sh"), client.enclave)
             assertEquals(Pin(repo = router, project = router), client.pin)
             assertEquals("https://${client.enclave}/", client.baseUrl.toString())
-            assertEquals(TransportMode.Tls, client.transportMode)
+            assertEquals(TransportMode.TLS, client.transportMode)
             assertEquals(router, verified.configRepo)
             assertTrue(Regex("[0-9a-f]{64}").matches(verified.tlsPublicKeyFingerprint.orEmpty()), "$verified")
             assertTrue(verified.freshnessExpiresAt.isAfter(Instant.now()), "${verified.freshnessExpiresAt}")
