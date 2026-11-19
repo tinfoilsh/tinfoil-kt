@@ -436,6 +436,9 @@ internal class EhbpTransport(
                 } else {
                     original.newBuilder().header(EhbpSealing.ENCLAVE_URL_HEADER, enclaveUrl).build()
                 }
+                // The sealing client sends a body that says that it is
+                // empty as an empty one, and does not ask it to write.
+                outgoing.body?.let { body -> if (body.contentLength() == 0L) DeclaredEmpty(body).writeTo(Buffer()) }
                 var returned = sealing.roundTrip(outgoing)
                 response = returned
                 if (sealed) {

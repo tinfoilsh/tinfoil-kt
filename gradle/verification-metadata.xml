@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<verification-metadata xmlns="https://schema.gradle.org/dependency-verification" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://schema.gradle.org/dependency-verification https://schema.gradle.org/dependency-verification/dependency-verification-1.3.xsd">
+   <configuration>
+      <verify-metadata>true</verify-metadata>
+      <verify-signatures>false</verify-signatures>
+      <trusted-artifacts>
+         <!--
+           Only the EHBP client is verified for now: JitPack builds it on
+           demand, so nothing but the checksums below says which bytes it
+           serves. Every other group is trusted as its repository serves it;
+           full verification metadata comes with the release tooling.
+         -->
+         <trust group="^(?!com[.]github[.]tinfoilsh$).*$" regex="true"/>
+      </trusted-artifacts>
+   </configuration>
+   <components>
+      <!--
+        JitPack's build of the tag v0.7.0, commit
+        fa27fa12ddf069e2d2f99e274434b387a5280c26, of
+        https://github.com/tinfoilsh/encrypted-http-body-protocol. Gradle
+        resolves it through the .module file, and checks that file and the
+        jar on every build.
+      -->
+      <component group="com.github.tinfoilsh" name="encrypted-http-body-protocol" version="v0.7.0">
+         <artifact name="encrypted-http-body-protocol-v0.7.0.jar">
+            <sha256 value="f9567bd35e78afd8d84cebb2ef4b8fef06d89d85965cf54e515d4534e85f8de2" origin="downloaded from JitPack and compared with a local build of the tag"/>
+         </artifact>
+         <artifact name="encrypted-http-body-protocol-v0.7.0.module">
+            <sha256 value="0b8a3e80fac1f5490c6f8971659b4d6f8b7a33efb58adf1525a97901a8bf59ed" origin="downloaded from JitPack"/>
+         </artifact>
+         <artifact name="encrypted-http-body-protocol-v0.7.0.pom">
+            <sha256 value="f3f481aad1aa8282b892ae5aeab204d2439960a395318ae98adef753931e3df6" origin="downloaded from JitPack"/>
+         </artifact>
+         <artifact name="encrypted-http-body-protocol-v0.7.0-sources.jar">
+            <sha256 value="416ea43bd49a92cef3a50db86e3c9e76d181f25764a1209b59d982a6a0d4ed5a" origin="downloaded from JitPack; identical to a local build of the tag"/>
+         </artifact>
+      </component>
+   </components>
+</verification-metadata>
