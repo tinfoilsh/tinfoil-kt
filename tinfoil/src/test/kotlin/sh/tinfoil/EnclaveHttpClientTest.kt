@@ -18,6 +18,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import okio.BufferedSink
+import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.testing.RawTlsServer
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.awaitUntil
@@ -77,7 +78,7 @@ class EnclaveHttpClientTest {
         assertEquals(enclave.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
         assertEquals(enclave.host, client.enclave)
         assertEquals(Pin(repo = "tinfoilsh/example"), client.pin)
-        assertEquals(TransportMode.Tls, client.transportMode)
+        assertEquals(TransportMode.TLS, client.transportMode)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
         assertSame(client.current, client.ensureVerified(), "a valid verification is reused")
         assertEquals(1, enclave.fetches)
@@ -106,16 +107,20 @@ class EnclaveHttpClientTest {
             "an enclave with a query" to { enclave.client(enclave = "${enclave.host}?x") },
             "an enclave with an empty port" to { enclave.client(enclave = "localhost:") },
             "an enclave with a backslash" to { enclave.client(enclave = "localhost\\x") },
-            "a pin that names nothing" to { enclave.client(pin = Pin()) },
+            "a pin that names nothing" to { enclave.client(pin = Pin.NONE) },
             "a pin of empty strings" to { enclave.client(pin = Pin(repo = "", project = "")) },
+            "an empty base URL" to { enclave.client(baseUrl = "") },
+            "an empty base URL for a proxy" to { enclave.client(transportMode = TransportMode.EHBP, baseUrl = "") },
+            "an empty relay" to { enclave.client(attestationRelay = "") },
+            "an empty cache secret" to { enclave.client(userCacheSecret = "") },
             "a proxy over HTTP that is not on this machine" to {
-                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "http://proxy.example/")
+                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "http://proxy.example/")
             },
             "a proxy with credentials" to {
-                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "https://user:hunter2@proxy.example/")
+                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "https://user:hunter2@proxy.example/")
             },
             "a proxy with a query" to {
-                enclave.client(transportMode = TransportMode.Ehbp, baseUrl = "https://proxy.example/?key=hunter2")
+                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "https://proxy.example/?key=hunter2")
             },
             "a proxy base URL over TLS" to { enclave.client(baseUrl = "https://proxy.example/") },
             "a base URL on another port" to { enclave.client(baseUrl = "https://localhost:1/") },
@@ -147,6 +152,50 @@ class EnclaveHttpClientTest {
             assertNotNull(error, "$name was accepted")
             assertFalse(error.message!!.contains("hunter2"), "$name: the message echoes a secret: ${error.message}")
             assertNothingWasSent()
+        }
+    }
+
+    @Test
+    fun anEmptyStringOptionIsRefusedByNameAndNotReadAsNotSet() = test {
+        val refused: Map<String, suspend () -> Unit> = mapOf(
+            "baseUrl" to { enclave.client(baseUrl = "") },
+            "attestationRelay" to { enclave.client(attestationRelay = "") },
+            "userCacheSecret" to { enclave.client(userCacheSecret = "") },
+            "Pin.repo" to { enclave.client(pin = Pin(repo = "")) },
+            "Pin.project" to { enclave.client(pin = Pin(project = "")) },
+            "enclave" to { enclave.client(enclave = "") },
+        )
+        for ((option, create) in refused) {
+            val error = assertFailsWith<ConfigurationException>(option) { create() }
+            assertTrue(error.detail.startsWith(option), "$option: ${error.detail}")
+            assertNothingWasSent()
+        }
+        // Null is how an option is left unset.
+        val client = enclave.client(baseUrl = null, userCacheSecret = null)
+        assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
+    }
+
+    @Test
+    fun thePinThatNamesNothingIsRefusedUnderTheDefaultTrustAndAcceptedWithAVerifierThatAuthorizesConfigs() = test {
+        val refused = assertFailsWith<ConfigurationException> { enclave.client(pin = Pin.NONE) }
+        assertEquals("configuration error", refused.category)
+        assertNothingWasSent()
+
+        val pins = CopyOnWriteArrayList<Pin>()
+        val inner = enclave.verifier.verify
+        enclave.verifier.verify = { document, nonce, pin -> inner(document, nonce, pin.also { pins += it }) }
+        val authorizing = object : AttestationVerifier by enclave.verifier {
+            override val callerAuthorizesConfig: Boolean = true
+
+            override fun checkPinVerifiability(pin: Pin) = Unit
+        }
+        val client = EnclaveHttpClient.create(enclave.host, Pin.NONE, enclave.internals()) {
+            attestationRelay = enclave.relayHost
+            verifier = Verifier.appraisingWith(authorizing)
+        }
+        client.use {
+            assertSame(Pin.NONE, it.pin)
+            assertEquals(listOf(Pin.NONE), pins.toList())
         }
     }
 

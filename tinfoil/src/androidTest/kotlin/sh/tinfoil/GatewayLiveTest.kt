@@ -18,7 +18,6 @@ import org.junit.Before
 import org.junit.runner.RunWith
 import sh.tinfoil.openai.GatewayOpenAIClient
 import sh.tinfoil.openai.asFlow
-import sh.tinfoil.openai.tinfoilException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

@@ -221,7 +221,7 @@ internal class TestEnclave(
     suspend fun client(
         enclave: String = host,
         pin: Pin = Pin(repo = "tinfoilsh/example"),
-        transportMode: TransportMode = TransportMode.Tls,
+        transportMode: TransportMode = TransportMode.TLS,
         baseUrl: String? = null,
         attestationRelay: String? = relayHost,
         userCacheSecret: String? = null,

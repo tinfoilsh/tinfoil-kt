@@ -19,7 +19,7 @@ import sh.tinfoil.Verifier
 
 /** The options of a client for one enclave, or for a router that is chosen. */
 internal class RouteSettings(
-    val transportMode: TransportMode = TransportMode.Tls,
+    val transportMode: TransportMode = TransportMode.TLS,
     val baseUrl: String? = null,
     val attestationRelay: String? = null,
     val verifier: Verifier? = null,

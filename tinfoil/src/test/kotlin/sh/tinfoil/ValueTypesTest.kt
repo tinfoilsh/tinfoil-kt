@@ -1,5 +1,6 @@
 package sh.tinfoil
 
+import sh.tinfoil.testing.FakeVerifier
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -7,6 +8,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ValueTypesTest {
     @Test
@@ -72,17 +74,45 @@ class ValueTypesTest {
         assertEquals(EmbeddedReferences(), EmbeddedReferences())
     }
 
+    @OptIn(ExperimentalTinfoilApi::class)
     @Test
-    fun anEmbeddedConfigCopiesItsBytesAndNormalisesItsName() {
+    fun modelPinsCompareByRepositoryAndByTheVerifierItself() {
+        val verifier = Verifier.appraisingWith(FakeVerifier())
+        val another = Verifier.appraisingWith(FakeVerifier())
+        assertEquals(ModelPin("tinfoilsh/m"), ModelPin("tinfoilsh/m"))
+        assertEquals(ModelPin("tinfoilsh/m").hashCode(), ModelPin("tinfoilsh/m").hashCode())
+        assertEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m", verifier))
+        assertEquals(ModelPin("tinfoilsh/m", verifier).hashCode(), ModelPin("tinfoilsh/m", verifier).hashCode())
+        assertNotEquals(ModelPin("tinfoilsh/m"), ModelPin("tinfoilsh/other"))
+        assertNotEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m", another))
+        assertNotEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m"))
+        assertEquals("ModelPin(repo=tinfoilsh/m, verifier=the client's)", ModelPin("tinfoilsh/m").toString())
+        assertEquals("ModelPin(repo=tinfoilsh/m, verifier=its own)", ModelPin("tinfoilsh/m", verifier).toString())
+    }
+
+    @Test
+    fun anEmptyNameOfAnEmbeddedConfigIsRefusedAndNotReadAsNotSet() {
+        val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")
+        val errors = listOf(
+            assertFailsWith<ConfigurationException> { EmbeddedConfig.Bytes(byteArrayOf(1), name = "") },
+            assertFailsWith<ConfigurationException> { EmbeddedConfig.Reference("cd", runtime, name = "") },
+        )
+        for (error in errors) {
+            assertTrue(error.detail.contains("embedded config's name must not be empty"), error.detail)
+        }
+    }
+
+    @Test
+    fun anEmbeddedConfigCopiesItsBytesAndHasNoNameByDefault() {
         val bytes = byteArrayOf(1, 2)
-        val config = EmbeddedConfig.Bytes(bytes, name = "")
+        val config = EmbeddedConfig.Bytes(bytes, name = null)
         bytes[0] = 9
         config.bytes[1] = 9
         assertContentEquals(byteArrayOf(1, 2), config.bytes)
         assertNull(config.name)
 
         val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")
-        val reference = EmbeddedConfig.Reference("cd", runtime, name = "")
+        val reference = EmbeddedConfig.Reference("cd", runtime, name = null)
         assertNull(reference.name)
         assertEquals(reference, EmbeddedConfig.Reference("cd", RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")))
         assertEquals(reference.hashCode(), EmbeddedConfig.Reference("cd", runtime).hashCode())

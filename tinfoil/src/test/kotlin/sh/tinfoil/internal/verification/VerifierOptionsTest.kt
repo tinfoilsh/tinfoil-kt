@@ -85,9 +85,9 @@ class VerifierOptionsTest {
     }
 
     @Test
-    fun anEmptyNameIsLeftOut() {
+    fun aNameThatIsNotSetIsLeftOut() {
         val options = VerifierOptions.encode(
-            embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(byteArrayOf(1), name = "")),
+            embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(byteArrayOf(1), name = null)),
         )
         assertEquals(json("""{"embedded_config":{"bytes":"AQ=="}}"""), parse(options))
     }

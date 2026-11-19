@@ -51,7 +51,7 @@ class VerifierBindingTest {
     )
 
     private fun verifyFixture(verifier: Verifier): AttestationException =
-        assertFailsWith<AttestationException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin()) }
+        assertFailsWith<AttestationException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin.NONE) }
 
     @Test
     fun thePublicRegistryIsAccepted() {
@@ -130,6 +130,24 @@ class VerifierBindingTest {
         assertRefused("pinned registers") { Verifier(pinnedRegisters = Measurement(snp, listOf("not hex"))) }
     }
 
+    /** The verifier library takes no empty string for "not set": it refuses each as a value that is not valid. */
+    @Test
+    fun refusesEmptyStrings() {
+        val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab".repeat(32))
+        val digest = "cd".repeat(32)
+        fun reference(runtime: RuntimeReference) =
+            Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Reference(digest, runtime)))
+        reference(runtime)
+        assertRefused("registry URI") { Verifier(configRegistryIds = listOf("")) }
+        assertRefused("registry URI") { Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID, "")) }
+        assertRefused("PEM PUBLIC KEY") { Verifier(configSigningKeysPem = listOf("")) }
+        assertRefused("PEM PUBLIC KEY") { Verifier(configSigningKeysPem = listOf(key, "")) }
+        assertRefused("PEM PUBLIC KEY") { Verifier(freshnessSigningKeysPem = listOf("")) }
+        assertRefused("runtime repository") { reference(RuntimeReference("", runtime.tag, runtime.digest)) }
+        assertRefused("runtime tag") { reference(RuntimeReference(runtime.repo, "", runtime.digest)) }
+        assertRefused("runtime digest") { reference(RuntimeReference(runtime.repo, runtime.tag, "")) }
+    }
+
     @Test
     fun refusesConflictingTrustSources() {
         assertRefused("registry ID policy") {
@@ -172,7 +190,7 @@ class VerifierBindingTest {
     @Test
     fun aPinIsCheckedAgainstThePolicy() {
         val authorized = Verifier(configAuthorizer = { })
-        authorized.backend.checkPinVerifiability(Pin())
+        authorized.backend.checkPinVerifiability(Pin.NONE)
         val unauthenticated = assertFailsWith<ConfigurationException> {
             authorized.backend.checkPinVerifiability(Pin(project = "org/repo"))
         }
@@ -250,7 +268,7 @@ class VerifierBindingTest {
         val verifier = Verifier(
             embeddedReferences = EmbeddedReferences(runtime = fixture.runtime, platform = fixture.platform),
         )
-        assertFailsWith<TinfoilException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin()) }
+        assertFailsWith<TinfoilException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin.NONE) }
     }
 
     /**

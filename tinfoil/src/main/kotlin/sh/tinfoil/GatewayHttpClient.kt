@@ -25,7 +25,7 @@ import java.io.IOException
  * The gateway is not trusted with what a request says. Before a request is
  * sent, the client picks a replica of its model, verifies that replica's
  * attestation, and seals the request's body to the HPKE key that the
- * verification endorses, as [TransportMode.Ehbp] does; the response's body
+ * verification endorses, as [TransportMode.EHBP] does; the response's body
  * is sealed in turn. The gateway forwards what it cannot read.
  *
  * What the gateway does see is everything that is not a body: the method,
@@ -252,7 +252,10 @@ public class GatewayHttpClient private constructor(
 
     public companion object {
         /** The base URL of Tinfoil's gateway, which a client uses unless it is given another. */
-        public const val DEFAULT_BASE_URL: String = GatewayRouter.DEFAULT_BASE_URL
+        // Not a `const`: the compiler would copy a constant's value into
+        // the code that reads it, which would then keep the URL that it was
+        // compiled against.
+        public val DEFAULT_BASE_URL: String = GatewayRouter.DEFAULT_BASE_URL
 
         /**
          * Creates a client for the gateway and fetches the gateway's

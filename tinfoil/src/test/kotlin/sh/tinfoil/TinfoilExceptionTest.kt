@@ -55,6 +55,22 @@ class TinfoilExceptionTest {
     }
 
     @Test
+    fun onlyANetworkFailureIsRetryable() {
+        assertEquals(true, NetworkException("offline").isRetryable)
+        assertEquals(true, NetworkException("unavailable", status = 503).isRetryable)
+        assertEquals(false, ConfigurationException("bad option").isRetryable)
+        assertEquals(false, AttestationException("rejected").isRetryable)
+        assertEquals(false, AttestationException("quote: rejected", VerificationLayer.QUOTE).isRetryable)
+    }
+
+    @Test
+    fun retryabilityIsReadThroughTheSupertype() {
+        // A retry loop catches an IOException and has to ask it.
+        val seen: IOException = AttestationException("rejected", cause = NetworkException("offline"))
+        assertEquals(false, (seen as? TinfoilException)?.isRetryable)
+    }
+
+    @Test
     fun layersAreAnOpenSet() {
         assertEquals("envelope", VerificationLayer.ENVELOPE.value)
         assertEquals("provenance", VerificationLayer.PROVENANCE.value)

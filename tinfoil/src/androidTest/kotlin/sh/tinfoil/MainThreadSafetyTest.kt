@@ -243,7 +243,7 @@ class MainThreadSafetyTest {
         assertTrue(listed > 0)
         onMain { client.close() }
 
-        val sealed = fromMain { RouterOpenAIClient.create("none") { transportMode = TransportMode.Ehbp } }
+        val sealed = fromMain { RouterOpenAIClient.create("none") { transportMode = TransportMode.EHBP } }
         val models = Request.Builder().url(sealed.httpClient.baseUrl.resolve("v1/models")!!).build()
         assertEquals(200, answerTo(sealed.httpClient::execute, models).first)
         onMain { sealed.close() }

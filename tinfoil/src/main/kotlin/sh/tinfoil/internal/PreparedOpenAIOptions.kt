@@ -82,7 +82,7 @@ internal class PreparedOpenAIOptions private constructor(
          * the enclave's origin, [origin].
          */
         fun apiUrl(origin: HttpUrl, configured: String?): HttpUrl =
-            if (configured.nullIfEmpty() == null) origin.newBuilder().encodedPath(API_PATH).build() else origin
+            if (configured == null) origin.newBuilder().encodedPath(API_PATH).build() else origin
 
         private const val API_PATH = "/v1/"
 

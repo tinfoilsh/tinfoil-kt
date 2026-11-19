@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
 import sh.tinfoil.Client
 import sh.tinfoil.Pin
 import sh.tinfoil.TransportMode
+import sh.tinfoil.tinfoilException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -102,10 +103,10 @@ class OpenAIClientsLiveTest {
     @Test
     fun theRouterClientSealsWhatTheOpenAiSdkSends() = live {
         RouterOpenAIClient.create(NOT_A_KEY) {
-            transportMode = TransportMode.Ehbp
+            transportMode = TransportMode.EHBP
             openAI { maxRetries(0) }
         }.use { client ->
-            assertEquals(TransportMode.Ehbp, client.httpClient.transportMode)
+            assertEquals(TransportMode.EHBP, client.httpClient.transportMode)
             assertModelsListed("router, sealed", client.openAIAsync)
             assertRefused("router, sealed", client.openAI, client.openAIAsync)
         }
@@ -130,7 +131,7 @@ class OpenAIClientsLiveTest {
     @Test
     fun aChatIsCompletedAndStreamedWithSealedBodies() = live {
         val key = apiKey()
-        RouterOpenAIClient.create(key) { transportMode = TransportMode.Ehbp }.use { client ->
+        RouterOpenAIClient.create(key) { transportMode = TransportMode.EHBP }.use { client ->
             assertChats("router, sealed", client.openAI, client.openAIAsync)
         }
     }

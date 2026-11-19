@@ -24,6 +24,7 @@ import sh.tinfoil.TinfoilEvent
 import sh.tinfoil.Verifier
 import sh.tinfoil.testing.TestGateway
 import sh.tinfoil.testing.containsText
+import sh.tinfoil.tinfoilException
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -76,7 +77,7 @@ class GatewayOpenAIClientTest {
     fun aChatCompletionIsSealedToAVerifiedReplicaOfItsModel() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
         gateway.answer = { it.reply(completionJson("sealed answer")) }
-        val client = client(tinfoilEvents = setOf(TinfoilEvent.WebSearch))
+        val client = client(tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH))
         val prompt = "a-prompt-that-must-not-be-seen-on-the-wire"
 
         val answer = client.openAI.chat().completions().create(params(prompt))
@@ -183,6 +184,8 @@ class GatewayOpenAIClientTest {
         assertFailsWith<ConfigurationException> { client(apiKey = "") }
         assertFailsWith<ConfigurationException> { client(pinnedModelsOnly = true) }
         assertFailsWith<ConfigurationException> { client(baseUrl = "http://${gateway.host}/v1/") }
+        assertFailsWith<ConfigurationException> { client(baseUrl = "") }
+        assertFailsWith<ConfigurationException> { client(userCacheSecret = "") }
         assertEquals(0, gateway.server.requestCount)
         gateway.catalog = { MockResponse().setResponseCode(500) }
         assertFailsWith<NetworkException> { client() }
