@@ -169,12 +169,15 @@ class MainThreadSafetyTest {
     fun anEnclaveClientIsCreatedUsedAndClosedOnTheMainThreadInBothModes() {
         for (mode in TransportMode.entries) {
             val before = requests.get()
+            val blockRanOn = ArrayList<Thread>()
             val client = fromMain {
-                EnclaveHttpClient.create(
-                    host, Pin(repo = "tinfoilsh/example"), mode, null, null, Verifier.appraisingWith(verifier), null,
-                    null, null, Internals(http = HttpSettings(trust = trust)),
-                )
+                EnclaveHttpClient.create(host, Pin(repo = "tinfoilsh/example"), Internals(http = HttpSettings(trust = trust))) {
+                    blockRanOn += Thread.currentThread()
+                    transportMode = mode
+                    verifier = Verifier.appraisingWith(this@MainThreadSafetyTest.verifier)
+                }
             }
+            assertEquals(listOf(Looper.getMainLooper().thread), blockRanOn, "the options block runs once, on the caller's thread")
             val request = Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build()
             assertEquals(200 to "answer", answerTo(client::execute, request), "$mode")
             fromMain { client.ensureVerified() }
@@ -223,7 +226,7 @@ class MainThreadSafetyTest {
         // from the list.
         val internals = Internals(discovery = RouterDiscovery.Settings(fallback = "fallback.invalid"))
 
-        val client = fromMain { RouterHttpClient.create(TransportMode.Tls, null, null, null, null, null, null, internals) }
+        val client = fromMain { RouterHttpClient.create(internals) { } }
 
         Log.i(TAG, "created on the main thread: ${client.enclave}")
         assertNotEquals("fallback.invalid", client.enclave)
@@ -235,12 +238,12 @@ class MainThreadSafetyTest {
     @Test
     fun theOpenAIClientsAreCreatedAndClosedOnTheMainThread() {
         requireLive()
-        val client = fromMain { Client.create(apiKey = "none") }
+        val client = fromMain { Client.create("none") }
         val listed = runBlocking { withContext(Dispatchers.IO) { client.openAI.models().list().data().size } }
         assertTrue(listed > 0)
         onMain { client.close() }
 
-        val sealed = fromMain { RouterOpenAIClient.create(transportMode = TransportMode.Ehbp, apiKey = "none") }
+        val sealed = fromMain { RouterOpenAIClient.create("none") { transportMode = TransportMode.Ehbp } }
         val models = Request.Builder().url(sealed.httpClient.baseUrl.resolve("v1/models")!!).build()
         assertEquals(200, answerTo(sealed.httpClient::execute, models).first)
         onMain { sealed.close() }

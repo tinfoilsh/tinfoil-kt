@@ -47,7 +47,7 @@ class RouterHttpClientLiveTest {
         val seen = CopyOnWriteArrayList<Verification>()
         val started = System.nanoTime()
 
-        RouterHttpClient.create(verificationCheck = { seen += it }).use { client ->
+        RouterHttpClient.create { verificationCheck = VerificationCheck { seen += it } }.use { client ->
             val verified = assertNotNull(client.current, "a client is verified when it is returned")
             Log.i(TAG, "discovered ${client.enclave} in ${(System.nanoTime() - started) / 1_000_000} ms, after ${seen.size} verification(s)")
             assertSame(verified, seen.last())
@@ -99,12 +99,12 @@ class RouterHttpClientLiveTest {
         val rejected = CopyOnWriteArrayList<String>()
 
         val error = assertFailsWith<AttestationException> {
-            RouterHttpClient.create(
-                verificationCheck = {
+            RouterHttpClient.create {
+                verificationCheck = VerificationCheck {
                     rejected += it.tlsPublicKeyFingerprint.orEmpty()
                     throw IllegalStateException("no router is accepted")
-                },
-            )
+                }
+            }
         }
 
         Log.i(TAG, "a rejecting check saw ${rejected.size} verification(s), ${rejected.toSet().size} distinct key(s)")
@@ -117,7 +117,7 @@ class RouterHttpClientLiveTest {
     fun aVerifierThatAuthorizesConfigsItselfIsRefused() = live {
         val verifier = Verifier(configAuthorizer = { })
 
-        assertFailsWith<ConfigurationException> { RouterHttpClient.create(verifier = verifier) }
+        assertFailsWith<ConfigurationException> { RouterHttpClient.create { this.verifier = verifier } }
     }
 
     private companion object {

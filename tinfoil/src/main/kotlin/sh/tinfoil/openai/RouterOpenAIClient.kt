@@ -2,20 +2,18 @@ package sh.tinfoil.openai
 
 import com.openai.client.OpenAIClient
 import com.openai.client.OpenAIClientAsync
-import com.openai.core.ClientOptions
 import kotlinx.coroutines.CancellationException
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.RouterHttpClient
-import sh.tinfoil.TinfoilEvent
-import sh.tinfoil.TransportMode
-import sh.tinfoil.Verification
-import sh.tinfoil.VerificationCheck
-import sh.tinfoil.Verifier
+import sh.tinfoil.RouterOpenAIOptions
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
-import sh.tinfoil.internal.OpenAIOptions
+import sh.tinfoil.internal.OpenAISettings
+import sh.tinfoil.internal.PreparedOpenAIOptions
+import sh.tinfoil.internal.RouteSettings
+import sh.tinfoil.routerOpenAISettings
 import java.io.IOException
 
 /**
@@ -83,44 +81,37 @@ public class RouterOpenAIClient private constructor(
          * Creates a [RouterHttpClient], which chooses and verifies a router
          * before this returns, and an OpenAI client over it.
          *
-         * Every argument is checked before any network I/O, the OpenAI
-         * options included.
+         * Everything but the API key is an option, set in the one block
+         * that [options] is and described by [RouterOpenAIOptions]:
          *
-         * It is safe to call from the main thread: the OpenAI options are
-         * prepared, the other options are checked, which loads the native
-         * verifier library the first time, and everything is fetched and
-         * verified on background threads.
+         * ```
+         * val client = RouterOpenAIClient.create(apiKey) {
+         *     userCacheSecret = secret
+         *     openAI { maxRetries(0) }
+         * }
+         * ```
          *
-         * The parameters from [transportMode] to [onVerificationResult] are
-         * those of [RouterHttpClient.create], which describes them. Its
-         * `userCacheSecret` is added to the chat, completions and responses
-         * requests that the OpenAI client sends; a request that sets
-         * `user_cache_secret` itself, as an additional body property, keeps
-         * its own, so a server can give each of its users a prompt cache of
-         * their own.
+         * Every argument and option is checked before any network I/O, the
+         * OpenAI options included.
          *
-         * @param baseUrl A proxy to send requests through, which requires
-         *   [TransportMode.Ehbp]. The OpenAI client uses it as it is given:
-         *   the OpenAI API's paths, such as `chat/completions`, are joined
-         *   under it. Null selects the router's `https://<router>/v1/`.
+         * It is safe to call from the main thread. [options] runs once, on
+         * the calling thread, before anything else, and what it set is
+         * copied as it returns; what it throws is thrown from here as it
+         * is, and nothing is contacted. The block that it gave to
+         * `openAI { }` runs later, once, on a background thread, where the
+         * OpenAI options are prepared and the other options are checked,
+         * which loads the native verifier library the first time, and
+         * where everything is fetched and verified.
+         *
          * @param apiKey The API key, sent as a bearer token with every
-         *   request, to the router only, or to the proxy in front of it. It
-         *   is required, unless [configure] sets a credential. It is never
-         *   read from the environment.
-         * @param tinfoilEvents The progress events to ask the router for,
-         *   with the `X-Tinfoil-Events` header of every request; see
-         *   [TinfoilEvent]. None by default, which sends no header. A
-         *   request, or [configure], that sets that header itself keeps its
-         *   own value.
-         * @param configure Sets any other option of the OpenAI client, such
-         *   as `maxRetries`, `timeout` or default headers, on the OpenAI
-         *   SDK's own options builder. It runs once, here, before any
-         *   network I/O, on a background thread. An HTTP client or a base
-         *   URL that it sets is replaced by this client's. Logging is off
-         *   unless it is turned on here; the builder's `fromEnv()`, if
-         *   called here, reads the environment as the OpenAI SDK documents.
-         * @throws ConfigurationException if an argument is invalid, or the
-         *   OpenAI options name no credential.
+         *   request, to the router only, or to the proxy in front of it.
+         *   It must not be empty or blank. It is never read from the
+         *   environment.
+         * @param options Sets the options; see [RouterOpenAIOptions].
+         *   Without it, every option has its default.
+         * @throws ConfigurationException if an argument or an option is
+         *   invalid: [apiKey] is empty or blank, or the OpenAI options do
+         *   not make a client. Its message never repeats the key.
          * @throws NetworkException if no router on the list was chosen and
          *   the attestation document of the fallback router cannot be
          *   fetched.
@@ -129,53 +120,43 @@ public class RouterOpenAIClient private constructor(
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
-            transportMode: TransportMode = TransportMode.Tls,
-            baseUrl: String? = null,
-            attestationRelay: String? = null,
-            verifier: Verifier? = null,
-            userCacheSecret: String? = null,
-            verificationCheck: VerificationCheck? = null,
-            onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-            apiKey: String? = null,
-            tinfoilEvents: Set<TinfoilEvent> = emptySet(),
-            configure: (ClientOptions.Builder.() -> Unit)? = null,
-        ): RouterOpenAIClient = create(
-            transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
-            onVerificationResult, apiKey, tinfoilEvents, configure, Internals(),
-        )
+            apiKey: String,
+            options: RouterOpenAIOptions.() -> Unit = {},
+        ): RouterOpenAIClient = create(apiKey, Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun create(
-            transportMode: TransportMode,
-            baseUrl: String?,
-            attestationRelay: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
-            apiKey: String?,
-            tinfoilEvents: Set<TinfoilEvent>,
-            configure: (ClientOptions.Builder.() -> Unit)?,
+            apiKey: String,
+            internals: Internals,
+            options: RouterOpenAIOptions.() -> Unit,
+        ): RouterOpenAIClient {
+            val (route, openAISettings) = routerOpenAISettings(options)
+            return create(apiKey, route, openAISettings, internals)
+        }
+
+        /** [create] with options that were read already. */
+        @JvmSynthetic
+        internal suspend fun create(
+            apiKey: String,
+            route: RouteSettings,
+            openAISettings: OpenAISettings,
             internals: Internals,
         ): RouterOpenAIClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val options = OpenAIOptions.prepare(apiKey, tinfoilEvents, configure)
+            val prepared = PreparedOpenAIOptions.prepare(apiKey, openAISettings)
             val httpClient = try {
-                RouterHttpClient.create(
-                    transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
-                    onVerificationResult, internals,
-                )
+                RouterHttpClient.create(route, internals)
             } catch (e: Throwable) {
-                options.discard()
+                prepared.discard()
                 throw e
             }
             val openAI = try {
-                options.bind(httpClient, OpenAIOptions.apiUrl(httpClient.baseUrl, baseUrl))
+                prepared.bind(httpClient, PreparedOpenAIOptions.apiUrl(httpClient.baseUrl, route.baseUrl))
             } catch (e: Throwable) {
-                options.discard()
+                prepared.discard()
                 httpClient.close()
                 throw e
             }

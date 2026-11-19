@@ -15,6 +15,7 @@ import sh.tinfoil.Pin
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.Verifier
+import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.transport.HttpSettings
 import java.util.concurrent.ConcurrentHashMap
@@ -160,10 +161,16 @@ internal class TestGateway : AutoCloseable {
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         catalog: (() -> Catalog)? = null,
-    ): GatewayHttpClient = GatewayHttpClient.create(
-        modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck, onVerificationResult,
-        catalog, internals(),
-    ).also { clients += it }
+    ): GatewayHttpClient = GatewayHttpClient.create(internals()) {
+        this.modelPins = modelPins
+        this.pinnedModelsOnly = pinnedModelsOnly
+        this.baseUrl = baseUrl
+        this.verifier = verifier
+        this.userCacheSecret = userCacheSecret
+        this.verificationCheck = verificationCheck
+        this.onVerificationResult = onVerificationResult
+        this.catalog = catalog
+    }.also { clients += it }
 
     /** A client that is checked but has fetched nothing, so that any I/O shows. */
     fun unverified(
@@ -174,7 +181,7 @@ internal class TestGateway : AutoCloseable {
         userCacheSecret: String? = "test-secret",
         catalog: (() -> Catalog)? = null,
     ): GatewayHttpClient = GatewayHttpClient.unverified(
-        modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, null, null, catalog, internals(),
+        GatewaySettings(modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, null, null, catalog), internals(),
     ).also { clients += it }
 
     fun track(client: AutoCloseable) {

@@ -111,6 +111,13 @@ README.
   re-declare its calls.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
+- A `create` function takes what it requires as parameters and everything
+  else as a property of its options type, in `Options.kt`, set in the one
+  block that it takes. A new option is a new property with a default, never
+  a new parameter or an overload. The block runs once, on the caller's
+  thread, and a client is made only from the copies that are taken when it
+  returns (`sh.tinfoil.internal.Settings.kt`). The options types are sealed
+  and marked `@TinfoilOptionsDsl`; only `Options.kt` makes one.
 - The suspending functions and `close()` of every client are safe to call
   from Android's main thread, where the platform refuses network work, the
   closing of a TLS socket included. Nothing that they do on the caller's

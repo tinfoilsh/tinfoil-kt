@@ -6,7 +6,13 @@ import com.openai.core.JsonValue
 import com.openai.core.RequestOptions
 import com.openai.core.Sleeper
 import com.openai.core.http.HttpClient
+import com.fasterxml.jackson.databind.json.JsonMapper
+import com.openai.auth.SubjectTokenProvider
+import com.openai.auth.SubjectTokenType
+import com.openai.auth.WorkloadIdentity
 import com.openai.core.http.HttpRequest
+import com.openai.core.http.HttpRequestAuthenticator
+import com.openai.credential.BearerTokenCredential
 import com.openai.core.http.HttpResponse
 import com.openai.errors.InternalServerException
 import com.openai.errors.OpenAIException
@@ -94,14 +100,18 @@ class OpenAIClientsTest {
         transportMode: TransportMode = TransportMode.Tls,
         baseUrl: String? = null,
         userCacheSecret: String? = null,
-        apiKey: String? = KEY,
+        apiKey: String = KEY,
         tinfoilEvents: Set<TinfoilEvent> = emptySet(),
         configure: (ClientOptions.Builder.() -> Unit)? = null,
-    ): EnclaveOpenAIClient = EnclaveOpenAIClient.create(
-        host, Pin(repo = "tinfoilsh/example"), transportMode, baseUrl, enclave.relayHost,
-        Verifier.appraisingWith(enclave.verifier), userCacheSecret, null, null, apiKey, tinfoilEvents, configure,
-        enclave.internals(),
-    ).also { closeables += it }
+    ): EnclaveOpenAIClient = EnclaveOpenAIClient.create(host, Pin(repo = "tinfoilsh/example"), apiKey, enclave.internals()) {
+        this.transportMode = transportMode
+        this.baseUrl = baseUrl
+        attestationRelay = enclave.relayHost
+        verifier = Verifier.appraisingWith(enclave.verifier)
+        this.userCacheSecret = userCacheSecret
+        this.tinfoilEvents = tinfoilEvents
+        configure?.let { openAI(it) }
+    }.also { closeables += it }
 
     /** Internals under which the test enclave is the router that is chosen when a relay is used. */
     private fun routerInternals(listUrl: okhttp3.HttpUrl = elsewhere.url("/routers")) = Internals(
@@ -114,10 +124,12 @@ class OpenAIClientsTest {
     private suspend fun routerClient(
         userCacheSecret: String? = null,
         configure: (ClientOptions.Builder.() -> Unit)? = null,
-    ): RouterOpenAIClient = RouterOpenAIClient.create(
-        TransportMode.Tls, null, enclave.relayHost, Verifier.appraisingWith(enclave.verifier), userCacheSecret, null,
-        null, KEY, emptySet(), configure, routerInternals(),
-    ).also { closeables += it }
+    ): RouterOpenAIClient = RouterOpenAIClient.create(KEY, routerInternals()) {
+        attestationRelay = enclave.relayHost
+        verifier = Verifier.appraisingWith(enclave.verifier)
+        this.userCacheSecret = userCacheSecret
+        configure?.let { openAI(it) }
+    }.also { closeables += it }
 
     private fun params(prompt: String = "hello") =
         ChatCompletionCreateParams.builder().model("a-model").addUserMessage(prompt).build()
@@ -283,9 +295,9 @@ class OpenAIClientsTest {
         }
         elsewhere.enqueue(MockResponse().setBody("""["${enclave.host}"]"""))
 
-        val client = Client.create(
-            KEY, emptySet(), { maxRetries(0) }, Verifier.appraisingWith(enclave.verifier), routerInternals(),
-        )
+        val client = Client.create(KEY, Verifier.appraisingWith(enclave.verifier), routerInternals()) {
+            openAI { maxRetries(0) }
+        }
         closeables += client
 
         assertEquals("https://${enclave.host}/v1/", client.baseUrl.toString())
@@ -418,9 +430,8 @@ class OpenAIClientsTest {
             // Without an API key of its own, a client is refused rather
             // than given the one in the properties.
             val fetchesBefore = enclave.fetches
-            val refused = assertFailsWith<ConfigurationException> { enclaveClient(apiKey = null) }
-            assertTrue(refused.detail.contains("credential"), refused.detail)
-            assertFailsWith<ConfigurationException> { enclaveClient(apiKey = "") }
+            val refused = assertFailsWith<ConfigurationException> { enclaveClient(apiKey = "") }
+            assertTrue(refused.detail.contains("API key"), refused.detail)
             assertEquals(fetchesBefore, enclave.fetches, "the OpenAI options are checked before any I/O")
 
             val client = enclaveClient()
@@ -439,13 +450,73 @@ class OpenAIClientsTest {
     }
 
     @Test
-    fun aCredentialFromTheCallersOptionsStandsInForTheApiKey() = test {
-        val client = enclaveClient(apiKey = null, configure = { apiKey("set-in-the-options") })
+    fun anEmptyOrBlankApiKeyIsRefusedBeforeAnyIoWhateverTheOptionsSet() = test {
+        for (key in listOf("", " ", "\t\n ")) {
+            for (configure in listOf<(ClientOptions.Builder.() -> Unit)?>(null, { apiKey("set-in-the-options") })) {
+                val refused = assertFailsWith<ConfigurationException> { enclaveClient(apiKey = key, configure = configure) }
+                assertEquals("the API key is empty or blank", refused.detail)
+            }
+        }
+        val throughTheRouter = assertFailsWith<ConfigurationException> {
+            RouterOpenAIClient.create(" ", routerInternals()) { verifier = Verifier.appraisingWith(enclave.verifier) }
+        }
+        assertEquals("the API key is empty or blank", throughTheRouter.detail)
+        assertFailsWith<ConfigurationException> {
+            Client.create("", Verifier.appraisingWith(enclave.verifier), routerInternals()) { }
+        }
+
+        assertEquals(0, enclave.fetches)
+        assertEquals(0, enclave.verifier.verifications.get())
+        assertEquals(0, enclave.server.requestCount + elsewhere.requestCount)
+    }
+
+    @Test
+    fun aCredentialFromTheCallersOptionsReplacesTheApiKey() = test {
+        val client = enclaveClient(configure = { apiKey("set-in-the-options") })
+        val other = enclaveClient(configure = { credential(BearerTokenCredential.create("a-credential-in-the-options")) })
+        enclave.server.enqueue(completion())
         enclave.server.enqueue(completion())
 
         client.openAI.chat().completions().create(params())
+        other.openAI.chat().completions().create(params())
 
-        assertEquals("Bearer set-in-the-options", enclave.server.takeRequest().getHeader("Authorization"))
+        assertEquals(listOf("Bearer set-in-the-options"), enclave.server.takeRequest().headers.values("Authorization"))
+        assertEquals(listOf("Bearer a-credential-in-the-options"), enclave.server.takeRequest().headers.values("Authorization"))
+    }
+
+    @Test
+    fun aCredentialOfAnotherKindInTheCallersOptionsIsRefusedWithTheApiKeyBeforeAnyIo() = test {
+        val error = assertFailsWith<ConfigurationException> {
+            enclaveClient(
+                configure = {
+                    httpRequestAuthenticator(
+                        object : HttpRequestAuthenticator {
+                            override fun authenticate(request: HttpRequest): HttpRequest = request
+                        },
+                    )
+                },
+            )
+        }
+        val provider = object : SubjectTokenProvider {
+            override fun tokenType(): SubjectTokenType = SubjectTokenType.JWT
+
+            override fun getToken(httpClient: HttpClient, jsonMapper: JsonMapper): String = "a-token"
+
+            override fun getTokenAsync(httpClient: HttpClient, jsonMapper: JsonMapper): CompletableFuture<String> =
+                CompletableFuture.completedFuture("a-token")
+        }
+        val identity = WorkloadIdentity.builder().clientId("a-client").identityProviderId("a-provider")
+            .serviceAccountId("an-account").provider(provider).build()
+        val withAnIdentity = assertFailsWith<ConfigurationException> {
+            enclaveClient(configure = { workloadIdentity(identity) })
+        }
+
+        for (refusal in listOf(error, withAnIdentity)) {
+            assertTrue(refusal.detail.startsWith("the OpenAI options do not make a client"), refusal.detail)
+            assertFalse(refusal.allText().contains(KEY), refusal.allText())
+        }
+        assertEquals(0, enclave.fetches)
+        assertEquals(0, enclave.verifier.verifications.get())
     }
 
     @Test

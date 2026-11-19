@@ -228,10 +228,15 @@ internal class TestEnclave(
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         internals: Internals = internals(),
-    ): EnclaveHttpClient = EnclaveHttpClient.create(
-        enclave, pin, transportMode, baseUrl, attestationRelay, Verifier.appraisingWith(verifier), userCacheSecret,
-        verificationCheck, onVerificationResult, internals,
-    ).also { clients += it }
+    ): EnclaveHttpClient = EnclaveHttpClient.create(enclave, pin, internals) {
+        this.transportMode = transportMode
+        this.baseUrl = baseUrl
+        this.attestationRelay = attestationRelay
+        this.verifier = Verifier.appraisingWith(this@TestEnclave.verifier)
+        this.userCacheSecret = userCacheSecret
+        this.verificationCheck = verificationCheck
+        this.onVerificationResult = onVerificationResult
+    }.also { clients += it }
 
     override fun close() {
         clients.forEach { it.close() }

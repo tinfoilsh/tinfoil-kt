@@ -8,6 +8,7 @@ import okhttp3.Response
 import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
+import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.transport.AttestedCall
 import sh.tinfoil.internal.transport.UserCacheSecret
 import java.io.IOException
@@ -349,108 +350,74 @@ public class EnclaveHttpClient private constructor(
          * Creates a client for [enclave] and verifies the enclave against
          * [pin] before returning.
          *
-         * Every argument is checked before any network I/O, so a
+         * Everything else is an option, set in the block that [options] is
+         * and described by [EnclaveOptions]:
+         *
+         * ```
+         * val client = EnclaveHttpClient.create("enclave.example.com", pin) {
+         *     transportMode = TransportMode.Ehbp
+         *     baseUrl = "https://proxy.example.com/"
+         * }
+         * ```
+         *
+         * Every argument and option is checked before any network I/O, so a
          * misconfigured client fails with a [ConfigurationException] without
          * contacting anything; an enclave that does not verify fails here
          * rather than on the first request.
          *
-         * It is safe to call from the main thread: the options are checked,
-         * which loads the native verifier library the first time, and
-         * everything is fetched and verified on background threads. A
-         * caller that is cancelled just as the client is made does not
-         * receive it, and the client is closed.
+         * It is safe to call from the main thread. [options] runs once, on
+         * the calling thread, before anything else, and what it set is
+         * copied as it returns; what it throws is thrown from here as it
+         * is, and nothing is contacted. The options are then checked, which
+         * loads the native verifier library the first time, and everything
+         * is fetched and verified on background threads. A caller that is
+         * cancelled just as the client is made does not receive it, and
+         * the client is closed.
          *
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
          * @param pin What the enclave must be running. A pin that names
-         *   nothing is refused unless [verifier] authorizes configs by
-         *   itself, with an embedded config or a config authorizer.
-         * @param transportMode How requests are protected.
-         *   [TransportMode.Tls], the default, protects the whole exchange on
-         *   a direct connection; [TransportMode.Ehbp] protects only bodies,
-         *   and works through a proxy.
-         * @param baseUrl Where requests are sent, when it is not the root of
-         *   the enclave's origin: an absolute URL without user information,
-         *   a query or a fragment. With [TransportMode.Tls] it must be on
-         *   the enclave's own HTTPS origin, because a pinned connection
-         *   cannot pass through a proxy. With [TransportMode.Ehbp] it may
-         *   also be a proxy on another origin, which forwards each request
-         *   to the enclave that the request's `X-Tinfoil-Enclave-Url` header
-         *   names. A proxy reads everything that is not sealed, so it must
-         *   use HTTPS; `http://` is accepted only for `localhost` or a
-         *   loopback IP address, on any port, for a proxy on the same
-         *   machine. With [TransportMode.Ehbp], requests to a base URL on
-         *   `localhost` or a loopback IP address, over HTTP or HTTPS, are
-         *   sent there directly, whatever HTTP proxy the system is
-         *   configured with: such a proxy would otherwise be handed them.
-         *   On Android, cleartext HTTP also has to be permitted by the
-         *   app's network security configuration.
-         * @param attestationRelay A host, with an optional port, that fetches
-         *   the enclave's attestation document on the client's behalf. It is
-         *   not trusted: the document is verified whoever delivers it.
-         * @param verifier The trust policy. Null selects the defaults.
-         * @param userCacheSecret The prompt-cache scope of the client's
-         *   requests, for an enclave that is one of Tinfoil's routers; other
-         *   enclaves do not read it. Null or empty sends none. It is added
-         *   to the JSON body of a `POST` to a chat, completions or responses
-         *   path, and such a request is refused if its body cannot be
-         *   examined; see [execute]. Use an opaque random value, not a user
-         *   ID or an API key.
-         * @param verificationCheck Called with each verification that passes
-         *   [verifier], before the enclave's keys are used; it throws to
-         *   reject the enclave. It must not call back into the client.
-         * @param onVerificationResult Called with the outcome of every
-         *   verification that the client runs, here and later: the
-         *   verification, or the [TinfoilException] that it failed with. It
-         *   only observes, so anything that it throws is ignored. It is
-         *   called once the verification is over, on a thread of the
-         *   client's: requests that waited for the verification, and this
-         *   function itself, may already have gone on by then. It may call
-         *   back into the client, and may be called from several threads.
-         * @throws ConfigurationException if an argument is invalid.
+         *   nothing is refused unless the [verifier][EnclaveOptions.verifier]
+         *   authorizes configs by itself, with an embedded config or a
+         *   config authorizer.
+         * @param options Sets the options; see [EnclaveOptions]. Without
+         *   it, every option has its default.
+         * @throws ConfigurationException if an argument or an option is
+         *   invalid.
          * @throws NetworkException if the attestation document cannot be
          *   fetched.
          * @throws AttestationException if the enclave is not to be trusted,
-         *   or endorses no key for [transportMode]: no HPKE key, for
+         *   or endorses no key for the transport mode: no HPKE key, for
          *   [TransportMode.Ehbp].
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
             enclave: String,
             pin: Pin,
-            transportMode: TransportMode = TransportMode.Tls,
-            baseUrl: String? = null,
-            attestationRelay: String? = null,
-            verifier: Verifier? = null,
-            userCacheSecret: String? = null,
-            verificationCheck: VerificationCheck? = null,
-            onVerificationResult: ((Result<Verification>) -> Unit)? = null,
-        ): EnclaveHttpClient = create(
-            enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
-            onVerificationResult, Internals(),
-        )
+            options: EnclaveOptions.() -> Unit = {},
+        ): EnclaveHttpClient = create(enclave, pin, Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
             pin: Pin,
-            transportMode: TransportMode,
-            baseUrl: String?,
-            attestationRelay: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
+            internals: Internals,
+            options: EnclaveOptions.() -> Unit,
+        ): EnclaveHttpClient = create(enclave, pin, enclaveSettings(options), internals)
+
+        /** [create] with options that were read already. */
+        @JvmSynthetic
+        internal suspend fun create(
+            enclave: String,
+            pin: Pin,
+            settings: RouteSettings,
             internals: Internals,
         ): EnclaveHttpClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val client = unverified(
-                enclave, pin, transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck,
-                onVerificationResult, internals,
-            )
+            val client = unverified(enclave, pin, settings, internals)
             try {
                 client.ensureVerified()
             } catch (e: Throwable) {
@@ -465,18 +432,13 @@ public class EnclaveHttpClient private constructor(
         internal fun unverified(
             enclave: String,
             pin: Pin,
-            transportMode: TransportMode,
-            baseUrl: String?,
-            attestationRelay: String?,
-            verifier: Verifier?,
-            userCacheSecret: String?,
-            verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
+            settings: RouteSettings,
             internals: Internals,
         ): EnclaveHttpClient = EnclaveHttpClient(
             EnclaveConnection.create(
-                enclave, pin, transportMode, baseUrl, attestationRelay, verifier ?: Verifier(),
-                UserCacheSecret.of(userCacheSecret), verificationCheck, onVerificationResult, internals,
+                enclave, pin, settings.transportMode, settings.baseUrl, settings.attestationRelay,
+                settings.verifier ?: Verifier(), UserCacheSecret.of(settings.userCacheSecret),
+                settings.verificationCheck, settings.onVerificationResult, internals,
             ),
         )
     }

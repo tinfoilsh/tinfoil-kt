@@ -16,6 +16,8 @@ class ExperimentalApiTest {
         "sh/tinfoil/Catalog",
         "sh/tinfoil/CatalogEntry",
         "sh/tinfoil/GatewayHttpClient",
+        "sh/tinfoil/GatewayOpenAIOptions",
+        "sh/tinfoil/GatewayOptions",
         "sh/tinfoil/ModelPin",
         "sh/tinfoil/ReplicaVerification",
         "sh/tinfoil/openai/GatewayOpenAIClient",

@@ -16,7 +16,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams
 import kotlinx.coroutines.future.await
 import sh.tinfoil.Client
 
-val client = Client.create(apiKey = apiKey)
+val client = Client.create(apiKey)
 
 val params = ChatCompletionCreateParams.builder()
     .model("gpt-oss-120b")
@@ -50,12 +50,15 @@ client.openAIAsync.chat().completions().createStreaming(params).asFlow().collect
 }
 ```
 
-Other options of the OpenAI client are set on its own options builder:
+Other options of the OpenAI client are set on its own options builder, in
+`openAI { }`:
 
 ```kotlin
-val client = Client.create(apiKey = apiKey) {
-    maxRetries(1)
-    timeout(Duration.ofMinutes(2))
+val client = Client.create(apiKey) {
+    openAI {
+        maxRetries(1)
+        timeout(Duration.ofMinutes(2))
+    }
 }
 ```
 
@@ -79,13 +82,12 @@ import sh.tinfoil.TinfoilEvent
 import sh.tinfoil.TransportMode
 import sh.tinfoil.openai.RouterOpenAIClient
 
-val client = RouterOpenAIClient.create(
-    transportMode = TransportMode.Ehbp,
-    baseUrl = "https://proxy.example.com/v1/",
-    userCacheSecret = cacheSecret,
-    apiKey = apiKey,
-    tinfoilEvents = setOf(TinfoilEvent.WebSearch),
-)
+val client = RouterOpenAIClient.create(apiKey) {
+    transportMode = TransportMode.Ehbp
+    baseUrl = "https://proxy.example.com/v1/"
+    userCacheSecret = cacheSecret
+    tinfoilEvents = setOf(TinfoilEvent.WebSearch)
+}
 ```
 
 `EnclaveOpenAIClient` sends to an enclave that you name, verified against
@@ -128,11 +130,10 @@ import sh.tinfoil.openai.GatewayOpenAIClient
 
 @OptIn(ExperimentalTinfoilApi::class)
 suspend fun gateway(apiKey: String): GatewayOpenAIClient {
-    val client = GatewayOpenAIClient.create(
-        modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash")),
-        pinnedModelsOnly = true,
-        apiKey = apiKey,
-    )
+    val client = GatewayOpenAIClient.create(apiKey) {
+        modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
+        pinnedModelsOnly = true
+    }
     println(client.httpClient.models())
     return client
 }
@@ -218,15 +219,16 @@ connection to the enclave.
 
 `TransportMode.Ehbp` seals request and response bodies to the attested HPKE
 key with [EHBP](https://docs.tinfoil.sh/resources/ehbp), so that they stay
-private through a proxy that you pass as `baseUrl`:
+private through a proxy that you set as `baseUrl`:
 
 ```kotlin
 val client = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
     pin = Pin(repo = "tinfoilsh/confidential-model-router"),
-    transportMode = TransportMode.Ehbp,
-    baseUrl = "https://proxy.example.com/",
-)
+) {
+    transportMode = TransportMode.Ehbp
+    baseUrl = "https://proxy.example.com/"
+}
 ```
 
 What this mode does not protect:
