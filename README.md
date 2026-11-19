@@ -177,7 +177,7 @@ OpenAI SDK's call throws, and `tinfoilException` finds it:
 import com.openai.errors.OpenAIException
 import com.openai.errors.OpenAIServiceException
 import sh.tinfoil.AttestationException
-import sh.tinfoil.openai.tinfoilException
+import sh.tinfoil.tinfoilException
 
 try {
     client.openAI.chat().completions().create(params)

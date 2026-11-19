@@ -8,7 +8,6 @@ import sh.tinfoil.openai.EnclaveOpenAIClient
 import sh.tinfoil.openai.GatewayOpenAIClient
 import sh.tinfoil.openai.RouterOpenAIClient
 import sh.tinfoil.openai.asFlow
-import sh.tinfoil.openai.tinfoilException
 import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals

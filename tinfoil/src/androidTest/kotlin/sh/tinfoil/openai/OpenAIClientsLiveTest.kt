@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
 import sh.tinfoil.Client
 import sh.tinfoil.Pin
 import sh.tinfoil.TransportMode
+import sh.tinfoil.tinfoilException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

@@ -14,8 +14,8 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import sh.tinfoil.ConfigurationException
-import sh.tinfoil.openai.tinfoilException
 import sh.tinfoil.testing.awaitUntil
+import sh.tinfoil.tinfoilException
 import java.io.OutputStream
 import java.time.Duration
 import java.util.concurrent.CancellationException

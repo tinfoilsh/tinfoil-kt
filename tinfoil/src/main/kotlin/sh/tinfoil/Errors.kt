@@ -1,16 +1,17 @@
-package sh.tinfoil.openai
+@file:JvmName("TinfoilErrors")
 
-import sh.tinfoil.TinfoilException
+package sh.tinfoil
 
 /**
  * The [TinfoilException] behind this failure: the failure itself, or the
  * nearest of its causes that is one, or null if there is none.
  *
- * The OpenAI SDK reports every failure as an unchecked
- * [com.openai.errors.OpenAIException], so a failure of this SDK's own, such
- * as an enclave that does not verify, reaches the caller of an OpenAI client
- * wrapped in one, as its cause. This finds it, whichever exception the
- * OpenAI SDK or a `CompletableFuture` wrapped it in:
+ * A library that sends its requests through one of this SDK's clients
+ * reports a failure in its own way, and a failure of this SDK's own, such
+ * as an enclave that does not verify, then reaches the caller wrapped, as a
+ * cause. The OpenAI SDK, for one, reports every failure as an unchecked
+ * `OpenAIException`. This finds the failure, whichever exception such a
+ * library or a `CompletableFuture` wrapped it in:
  *
  * ```kotlin
  * try {

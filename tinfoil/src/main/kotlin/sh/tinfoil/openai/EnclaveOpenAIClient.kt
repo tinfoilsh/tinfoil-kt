@@ -16,6 +16,7 @@ import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.OpenAISettings
 import sh.tinfoil.internal.PreparedOpenAIOptions
 import sh.tinfoil.internal.RouteSettings
+import sh.tinfoil.tinfoilException
 import java.io.IOException
 
 /**

@@ -24,6 +24,7 @@ import sh.tinfoil.TinfoilEvent
 import sh.tinfoil.Verifier
 import sh.tinfoil.testing.TestGateway
 import sh.tinfoil.testing.containsText
+import sh.tinfoil.tinfoilException
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals

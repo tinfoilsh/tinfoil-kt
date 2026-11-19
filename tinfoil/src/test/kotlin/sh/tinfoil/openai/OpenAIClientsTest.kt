@@ -55,6 +55,7 @@ import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.fingerprint
 import sh.tinfoil.testing.httpsServer
+import sh.tinfoil.tinfoilException
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.InterruptedIOException
