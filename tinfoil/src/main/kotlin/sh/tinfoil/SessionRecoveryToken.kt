@@ -58,12 +58,17 @@ public class SessionRecoveryToken private constructor(private val token: SealedS
      * This call reads nothing and does not block. Reading the returned
      * body reads [response]'s body, and blocks as that does.
      *
-     * A response whose body yields nothing fails the read as well, whatever
-     * its status: the header is not sealed, so a response with nothing
-     * sealed behind it shows nothing of where it came from.
+     * A body in which no piece authenticates fails the read as well: the
+     * header is not sealed, so a response with nothing sealed behind it
+     * shows nothing of where it came from. With a status below 400, a
+     * piece that seals no bytes is enough, as the enclave sends it for an
+     * empty body, and the body is then read as empty. With a status of 400
+     * or above, the body has to yield a byte, so an empty one fails the
+     * read.
      *
      * @throws IOException if [response] has no usable `Ehbp-Response-Nonce`
-     *   header or no body.
+     *   header or no body, or has a status of 204 or 205, which cannot have
+     *   a sealed body.
      */
     @Throws(IOException::class)
     public fun decryptResponse(response: Response): Response = decryptResponseWithToken(response, token).proven()
