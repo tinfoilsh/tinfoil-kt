@@ -1051,6 +1051,42 @@ class EhbpClientTest {
     }
 
     @Test
+    fun aKeyProblemIsToldByItsTypeAndOnlyWithoutANonce() = test {
+        val client = proxied()
+        val type = "urn:ietf:params:ehbp:error:key-config"
+        fun problem(body: String) = MockResponse().setResponseCode(422)
+            .setHeader("Content-Type", "application/problem+json; charset=utf-8").setBody(body)
+        val problems = listOf(
+            """{"type":"$type"}""",
+            """{"type":"$type","title":5}""",
+            """{"title":null,"detail":{},"type":"$type"}""",
+        )
+        for ((index, body) in problems.withIndex()) {
+            val answers = AtomicInteger()
+            atProxy.answer = { if (answers.incrementAndGet() == 1) problem(body) else it.reply(ANSWER) }
+
+            assertEquals(ANSWER, client.execute(client.post("""{"q":1}""")).text(), body)
+
+            assertEquals(2, answers.get(), body)
+            assertEquals(index + 2, enclave.fetches, "the enclave was verified again for: $body")
+        }
+        val fetches = enclave.fetches
+
+        // The same answer marked as sealed is not a key problem: it is
+        // opened like any sealed response, and does not open.
+        atProxy.answer = { problem(problems[0]).setHeader(RESPONSE_NONCE_HEADER, "5c".repeat(32)) }
+        val marked = client.execute(client.post("""{"q":1}"""))
+        assertEquals(422, marked.code)
+        assertFailsWith<IOException> { marked.text() }
+        // And neither is one whose type is of another case or not a string.
+        for (body in listOf("""{"type":"${type.uppercase()}"}""", """{"type":["$type"]}""", """{"Type":"$type"}""")) {
+            atProxy.answer = { problem(body) }
+            client.execute(client.post("""{"q":1}""")).use { assertEquals(422, it.code) }
+        }
+        assertEquals(fetches, enclave.fetches)
+    }
+
+    @Test
     fun aSecondRejectionIsAnAttestationError() = test {
         val stranger = SealingKey()
         enclave.endorsedHpke = { stranger.publicKey }
