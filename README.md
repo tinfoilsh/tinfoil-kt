@@ -163,7 +163,9 @@ from it.
 Creating a client throws this SDK's exceptions, which are `IOException`s:
 an `AttestationException` when the enclave is not to be trusted, a
 `NetworkException` when it cannot be reached to be verified, and a
-`ConfigurationException` for an invalid argument.
+`ConfigurationException` for an invalid argument. A retry loop that retries
+any `IOException` should first read `isRetryable`, which is true only for a
+`NetworkException`: an attestation failure must not be retried blindly.
 
 The OpenAI SDK throws unchecked exceptions, all of them `OpenAIException`s.
 An error status from the API is one of its subclasses, such as

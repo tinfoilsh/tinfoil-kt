@@ -14,6 +14,7 @@ public final class sh/tinfoil/ArtifactVerification {
 public final class sh/tinfoil/AttestationException : sh/tinfoil/TinfoilException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getLayer-7qrYzj4 ()Ljava/lang/String;
+	public fun isRetryable ()Z
 }
 
 public final class sh/tinfoil/Catalog {
@@ -81,6 +82,7 @@ public final class sh/tinfoil/ConfigVerification {
 }
 
 public final class sh/tinfoil/ConfigurationException : sh/tinfoil/TinfoilException {
+	public fun isRetryable ()Z
 }
 
 public final class sh/tinfoil/CryptoMaterial {
@@ -235,6 +237,7 @@ public final class sh/tinfoil/ModelPin {
 
 public final class sh/tinfoil/NetworkException : sh/tinfoil/TinfoilException {
 	public final fun getStatus ()Ljava/lang/Integer;
+	public fun isRetryable ()Z
 }
 
 public abstract interface class sh/tinfoil/OpenAIOptions {
@@ -382,6 +385,7 @@ public abstract class sh/tinfoil/TinfoilException : java/io/IOException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getCategory ()Ljava/lang/String;
 	public final fun getDetail ()Ljava/lang/String;
+	public abstract fun isRetryable ()Z
 }
 
 public abstract interface annotation class sh/tinfoil/TinfoilOptionsDsl : java/lang/annotation/Annotation {

@@ -14,9 +14,8 @@ import java.io.IOException
  * These are [IOException]s on purpose. HTTP stacks built on OkHttp hand only
  * an `IOException` to a call's failure callback and treat anything else that
  * is thrown inside a call as a crash, so an attestation failure has to be an
- * `IOException` to reach the caller of such a library intact. The category,
- * not the supertype, says whether a retry can help: only a
- * [NetworkException] is worth retrying.
+ * `IOException` to reach the caller of such a library intact. The supertype
+ * therefore does not say whether a retry can help; [isRetryable] does.
  */
 public sealed class TinfoilException(
     /**
@@ -27,7 +26,19 @@ public sealed class TinfoilException(
     /** What went wrong, without the category. */
     public val detail: String,
     cause: Throwable?,
-) : IOException("$category: $detail", cause)
+) : IOException("$category: $detail", cause) {
+    /**
+     * Whether trying again can help: true for a [NetworkException], and
+     * false for a [ConfigurationException] and an [AttestationException].
+     *
+     * These exceptions are [IOException]s, which generic retry loops retry.
+     * Check this first. An attestation failure in particular must not be
+     * retried blindly: the client already verifies again by itself where
+     * that is right, so what reaches the caller is an enclave that is not
+     * to be trusted.
+     */
+    public abstract val isRetryable: Boolean
+}
 
 /**
  * The caller's arguments or the client's configuration are invalid, or the
@@ -36,7 +47,9 @@ public sealed class TinfoilException(
 public class ConfigurationException internal constructor(
     detail: String,
     cause: Throwable? = null,
-) : TinfoilException(CONFIGURATION_ERROR, detail, cause)
+) : TinfoilException(CONFIGURATION_ERROR, detail, cause) {
+    override val isRetryable: Boolean get() = false
+}
 
 /**
  * The client could not reach what it needed: a network failure, a timeout or
@@ -47,7 +60,9 @@ public class NetworkException internal constructor(
     /** The HTTP status, when a server answered with an error status. */
     public val status: Int? = null,
     cause: Throwable? = null,
-) : TinfoilException(NETWORK_ERROR, detail, cause)
+) : TinfoilException(NETWORK_ERROR, detail, cause) {
+    override val isRetryable: Boolean get() = true
+}
 
 /**
  * The enclave's evidence, the trust policy or the channel binding was
@@ -61,7 +76,9 @@ public class AttestationException internal constructor(
      */
     public val layer: VerificationLayer? = null,
     cause: Throwable? = null,
-) : TinfoilException(ATTESTATION_ERROR, detail, cause)
+) : TinfoilException(ATTESTATION_ERROR, detail, cause) {
+    override val isRetryable: Boolean get() = false
+}
 
 private const val CONFIGURATION_ERROR = "configuration error"
 private const val NETWORK_ERROR = "network error"
