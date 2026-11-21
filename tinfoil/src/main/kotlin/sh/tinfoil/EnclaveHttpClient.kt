@@ -366,9 +366,9 @@ public class EnclaveHttpClient private constructor(
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
          * @param trust Who vouches for the config that the enclave runs;
-         *   see [Trust]. A variant that no verification could pass, such as
-         *   a [Trust.RepoPin] with an empty or malformed repository, is
-         *   refused before any network I/O.
+         *   see [Trust]. It must not be null. A variant that no verification
+         *   could pass, such as a [Trust.RepoPin] with an empty or malformed
+         *   repository, is refused before any network I/O.
          * @param options Sets the options; see [EnclaveOptions]. Without
          *   it, every option has its default.
          * @throws ConfigurationException if an argument or an option is
@@ -382,9 +382,15 @@ public class EnclaveHttpClient private constructor(
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
             enclave: String,
-            trust: Trust,
+            // Nullable so that a null from Java is refused as a
+            // configuration error, rather than by a NullPointerException.
+            trust: Trust?,
             options: EnclaveOptions.() -> Unit = {},
-        ): EnclaveHttpClient = create(enclave, trust, Internals(), options)
+        ): EnclaveHttpClient = create(enclave, requireTrust(trust), Internals(), options)
+
+        /** [trust], which a caller from Java can pass as null. */
+        private fun requireTrust(trust: Trust?): Trust =
+            trust ?: throw ConfigurationException("trust is required: name who vouches for the enclave's config")
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic

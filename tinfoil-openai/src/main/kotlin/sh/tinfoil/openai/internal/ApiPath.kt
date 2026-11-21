@@ -44,7 +44,9 @@ internal object ApiPath {
             }
         }
         val path = check(apiPath ?: DEFAULT)
-        val joined = base.toString().trimEnd('/') + path + if (path.endsWith("/")) "" else "/"
+        // The base URL ends with exactly the one slash that the join adds;
+        // any slash before it belongs to the proxy's own path.
+        val joined = base.toString().removeSuffix("/") + path + if (path.endsWith("/")) "" else "/"
         return joined.toHttpUrlOrNull()
             ?: throw CrossArtifact.configurationException("apiPath does not make a URL under ${base.scheme}://${base.host}")
     }

@@ -53,11 +53,6 @@ class TrustTest {
         assertEquals(Pin(project = "org/project"), restricted.pin)
         assertEquals(Pin.NONE, VerifierInputs.of(Trust.SignedBy(listOf("key"))).pin)
         assertEquals(Pin.NONE, VerifierInputs.of(Trust.SignedBy(listOf("key"), "")).pin)
-        // The library refuses an empty list of keys.
-        assertEquals(
-            emptyList(),
-            assertIs<VerifierOptions.ConfigTrust.SigningKeys>(VerifierInputs.of(Trust.SignedBy(emptyList())).config).keysPem,
-        )
     }
 
     @Test
@@ -73,6 +68,26 @@ class TrustTest {
         assertEquals("/org/project/v1", config.name)
         assertEquals(Pin.NONE, embedded.pin)
         assertNull(assertIs<VerifierOptions.ConfigTrust.EmbeddedConfig>(VerifierInputs.of(Trust.EmbeddedConfig(byteArrayOf(1), "")).config).name)
+    }
+
+    /** Each is refused here, before any I/O, whatever the verifier library would do with it. */
+    @Test
+    fun emptyKeysAndEmptyArtifactsAreRefused() {
+        val keys = assertFailsWith<ConfigurationException> { VerifierInputs.of(Trust.SignedBy(emptyList(), "org/project")) }
+        assertTrue(keys.detail.contains("keys must not be empty"), keys.detail)
+        val refused = mapOf(
+            "freshness keys must not be empty" to Policy(artifacts = ArtifactTrust.EndorsedArtifacts(emptyList())),
+            "freshness keys must not be empty " to
+                Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = byteArrayOf(1), freshnessKeys = emptyList())),
+            "a runtime or a platform" to Policy(artifacts = ArtifactTrust.EmbeddedArtifacts()),
+            "a runtime or a platform " to Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(freshnessKeys = listOf("key"))),
+        )
+        for ((message, policy) in refused) {
+            val error = assertFailsWith<ConfigurationException>(policy.toString()) { VerifierInputs.policy(policy) }
+            assertTrue(error.detail.contains(message.trim()), error.detail)
+        }
+        // Null keeps Tinfoil's keys.
+        assertNull(VerifierInputs.policy(Policy(artifacts = ArtifactTrust.EndorsedArtifacts(null))).artifacts)
     }
 
     @Test

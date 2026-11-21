@@ -113,10 +113,16 @@ class EnclaveHttpClientTest {
             "an enclave with an empty port" to { enclave.client(enclave = "localhost:") },
             "an enclave with a backslash" to { enclave.client(enclave = "localhost\\x") },
             "a repo pin without a repo" to { enclave.client(trust = Trust.RepoPin("")) },
+            "no trust, as Java can pass" to { EnclaveHttpClient.create(enclave.host, null) },
             "a project pin without a project" to { enclave.client(trust = Trust.ProjectPin("")) },
             "an empty list of registries" to { enclave.client(trust = Trust.ProjectPin("org/project", emptyList())) },
             "an either pin without a project" to { enclave.client(trust = Trust.EitherPin("org/repo", "")) },
             "a negative freshness bound" to { enclave.client(policy = Policy(freshnessMaxAge = (-1).seconds)) },
+            "no signing keys" to { enclave.client(trust = Trust.SignedBy(emptyList())) },
+            "no freshness keys" to {
+                enclave.client(policy = Policy(artifacts = ArtifactTrust.EndorsedArtifacts(emptyList())))
+            },
+            "no embedded artifact" to { enclave.client(policy = Policy(artifacts = ArtifactTrust.EmbeddedArtifacts())) },
             "an empty proxy URL" to { enclave.client(transport = Transport.Ehbp("")) },
             "a proxy over HTTP that is not on this machine" to {
                 enclave.client(transport = Transport.Ehbp("http://proxy.example/"))

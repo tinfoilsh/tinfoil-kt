@@ -6,6 +6,7 @@ import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.internal.verification.GoAttestationVerifier
 import sh.tinfoil.internal.verification.VerifierInputs
+import sh.tinfoil.internal.verification.VerifierOptions
 import java.security.KeyPairGenerator
 import java.security.spec.ECGenParameterSpec
 import java.util.Base64
@@ -121,6 +122,23 @@ class VerifierBindingTest {
         assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement("bogus", listOf("aa")))) }
         assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement(tdx, listOf("aa")))) }
         assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement(snp, listOf("not hex")))) }
+    }
+
+    /**
+     * The client refuses these itself, before the library sees them; the
+     * library refuses them too, so that neither check alone can fail open.
+     */
+    @Test
+    fun theLibraryRefusesEmptyKeysAndEmptyArtifactsToo() {
+        assertRefused("must not be empty") {
+            GoAttestationVerifier.create(VerifierOptions.ConfigTrust.SigningKeys(emptyList()))
+        }
+        assertRefused("must not be empty") {
+            GoAttestationVerifier.create(policy = VerifierOptions.Policy(artifacts = VerifierOptions.Artifacts.Endorsed(emptyList())))
+        }
+        assertRefused("runtime or a platform") {
+            GoAttestationVerifier.create(policy = VerifierOptions.Policy(artifacts = VerifierOptions.Artifacts.Embedded(null, null, null)))
+        }
     }
 
     /** The verifier library takes no empty string for "not set": it refuses each as a value that is not valid. */

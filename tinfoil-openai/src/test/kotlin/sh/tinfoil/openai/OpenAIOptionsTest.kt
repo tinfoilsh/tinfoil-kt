@@ -204,6 +204,10 @@ class OpenAIOptionsTest {
             assertEquals("https://proxy.example/relay/v1/", ApiPath.baseUrl(proxied, null).toString(), proxy)
             assertEquals("https://proxy.example/relay/openai/v1/", ApiPath.baseUrl(proxied, "/openai/v1").toString(), proxy)
         }
+        // A proxy whose path ends in an empty segment keeps it: only the
+        // one slash that the join adds is removed.
+        val doubled = enclaveHttp(Transport.Ehbp("https://proxy.example/relay//"))
+        assertEquals("https://proxy.example/relay//v1/", ApiPath.baseUrl(doubled, null).toString())
     }
 
     @Test
@@ -235,6 +239,12 @@ class OpenAIOptionsTest {
         for (path in accepted) {
             assertEquals(path, ApiPath.check(path))
         }
+    }
+
+    @Test
+    fun aNullHttpClientIsAConfigurationError() = test {
+        val error = assertFailsWith<ConfigurationException> { Client.create(null, KEY) }
+        assertTrue(error.detail.contains("HTTP client is required"), error.detail)
     }
 
     @Test
