@@ -103,7 +103,7 @@ class GatewayHttpClientTest {
             "invalid base URL" to { gateway.client(baseUrl = "${gateway.host}/v1/") },
             "invalid base URL" to { gateway.client(baseUrl = "wss://${gateway.host}/v1/") },
             "user cache secret is not well-formed" to { gateway.client(userCacheSecret = "half\ud800") },
-            "baseUrl must not be empty" to { gateway.client(baseUrl = "") },
+            "url must not be empty" to { gateway.client(baseUrl = "") },
         )
         for ((message, create) in refused) {
             val error = assertFailsWith<ConfigurationException>(message) { create() }
@@ -133,9 +133,9 @@ class GatewayHttpClientTest {
 
     @Test
     fun theDefaultBaseUrlIsTinfoilsGateway() {
-        assertEquals("https://inference-gateway.tinfoil.sh/v1/", GatewayHttpClient.DEFAULT_BASE_URL)
+        assertEquals("https://inference-gateway.tinfoil.sh/v1/", GatewayHttpClient.DEFAULT_URL)
         val client = gateway.unverified(baseUrl = null)
-        assertEquals(GatewayHttpClient.DEFAULT_BASE_URL, client.baseUrl.toString())
+        assertEquals(GatewayHttpClient.DEFAULT_URL, client.baseUrl.toString())
         assertEquals("GatewayHttpClient(baseUrl=https://inference-gateway.tinfoil.sh/v1/)", client.toString())
     }
 

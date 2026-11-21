@@ -190,7 +190,7 @@ public class TestGateway : AutoCloseable {
     ): GatewayHttpClient = GatewayHttpClient.create(internals(note)) {
         this.modelPins = modelPins
         this.pinnedModelsOnly = pinnedModelsOnly
-        this.baseUrl = baseUrl
+        this.url = baseUrl
         this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck

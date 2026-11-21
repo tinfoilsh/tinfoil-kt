@@ -241,12 +241,14 @@ public class GatewayOptions internal constructor() {
     public var pinnedModelsOnly: Boolean = false
 
     /**
-     * The gateway's base URL. Null selects Tinfoil's gateway,
-     * [GatewayHttpClient.DEFAULT_BASE_URL]. It must be an absolute `https`
-     * URL without user information, a query or a fragment. Attestation
-     * documents and the catalog are fetched from its host.
+     * The gateway's URL, which requests are sent to. Null selects Tinfoil's
+     * gateway, [GatewayHttpClient.DEFAULT_URL]. It must be an absolute
+     * `https` URL without user information, a query or a fragment. Its path
+     * is the API's: an OpenAI client over the gateway client sends to it as
+     * it is given. Attestation documents and the catalog are fetched from
+     * its origin, which relays them.
      */
-    public var baseUrl: String? = null
+    public var url: String? = null
 
     /**
      * The checks that apply to the replicas of the models that are not
@@ -307,7 +309,7 @@ public class GatewayOptions internal constructor() {
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): GatewaySettings = GatewaySettings(
-        LinkedHashMap(modelPins), pinnedModelsOnly, baseUrl, policy, userCacheSecret, verificationCheck,
+        LinkedHashMap(modelPins), pinnedModelsOnly, url, policy, userCacheSecret, verificationCheck,
         onVerificationResult, catalog,
     )
 }

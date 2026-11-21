@@ -55,7 +55,7 @@ class GatewayOpenAIClientTest {
         val http = gateway.connections().gateway {
             this.modelPins = modelPins
             this.pinnedModelsOnly = pinnedModelsOnly
-            this.baseUrl = baseUrl
+            this.url = baseUrl
             this.userCacheSecret = userCacheSecret
         }.also(gateway::track)
         return Client.create(http, apiKey) {
@@ -195,7 +195,7 @@ class GatewayOpenAIClientTest {
     @Test
     fun anEmptyApiKeyIsRefusedWithoutAnyIo() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
-        val http = gateway.connections().gateway { baseUrl = gateway.baseUrl }.also(gateway::track)
+        val http = gateway.connections().gateway { url = gateway.baseUrl }.also(gateway::track)
         val requests = gateway.server.requestCount
         assertFailsWith<ConfigurationException> { Client.create(http, "") }
         assertEquals(requests, gateway.server.requestCount)

@@ -11,8 +11,10 @@ import okhttp3.HttpUrl
  */
 public sealed interface AttestedHttpClient : Call.Factory, AutoCloseable {
     /**
-     * The URL that requests are sent under, ending with `/`. Resolve
-     * request paths against it, as in `baseUrl.resolve("v1/models")`.
+     * The URL that requests are sent under: for an enclave or a router
+     * client, the proxy URL or the enclave's origin, ending with `/`; for a
+     * gateway client, the gateway's URL as it was given. Resolve request
+     * paths against it, as in `baseUrl.resolve("v1/models")`.
      */
     public val baseUrl: HttpUrl
 }

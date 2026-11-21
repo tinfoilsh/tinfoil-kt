@@ -500,6 +500,7 @@ SDKs. The changes are breaking:
 | `Verifier(freshnessSigningKeysPem = keys)` | `Policy(artifacts = ArtifactTrust.EndorsedArtifacts(keys))` |
 | `EmbeddedReferences(runtime = ..., platform = ...)` | `Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime, platform))` |
 | `ModelPin(repo, verifier)` | `ModelPin(repo, policy)` |
+| `GatewayOptions.baseUrl`, `GatewayHttpClient.DEFAULT_BASE_URL` | `GatewayOptions.url`, `GatewayHttpClient.DEFAULT_URL` |
 | `Verifier.PUBLIC_REGISTRY_ID` | `Trust.PUBLIC_REGISTRY_ID` |
 | `client.pin` | `client.trust` on the enclave client; none on the router client |
 | `transportMode = TransportMode.EHBP` | `transport = Transport.Ehbp()` |

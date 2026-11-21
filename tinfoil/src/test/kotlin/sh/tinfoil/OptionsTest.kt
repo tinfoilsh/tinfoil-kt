@@ -69,7 +69,7 @@ class OptionsTest {
     }
 
     private fun GatewayOptions.forTheTestGateway() {
-        baseUrl = gateway.baseUrl
+        url = gateway.baseUrl
     }
 
     private fun assertNoIo() {
@@ -165,7 +165,7 @@ class OptionsTest {
         for (settings in listOf(gatewaySettings { })) {
             assertEquals(emptyMap(), settings.modelPins)
             assertEquals(false, settings.pinnedModelsOnly)
-            assertNull(settings.baseUrl)
+            assertNull(settings.url)
             assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)

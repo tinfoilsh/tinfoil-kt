@@ -175,24 +175,24 @@ public final class sh/tinfoil/GatewayHttpClient$Companion {
 	public final fun create (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun create$default (Lsh/tinfoil/GatewayHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun fetchCatalog (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getDEFAULT_BASE_URL ()Ljava/lang/String;
+	public final fun getDEFAULT_URL ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/GatewayOptions {
-	public final fun getBaseUrl ()Ljava/lang/String;
 	public final fun getCatalog ()Lkotlin/jvm/functions/Function0;
 	public final fun getModelPins ()Ljava/util/Map;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPinnedModelsOnly ()Z
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
+	public final fun getUrl ()Ljava/lang/String;
 	public final fun getUserCacheSecret ()Ljava/lang/String;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
-	public final fun setBaseUrl (Ljava/lang/String;)V
 	public final fun setCatalog (Lkotlin/jvm/functions/Function0;)V
 	public final fun setModelPins (Ljava/util/Map;)V
 	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
 	public final fun setPinnedModelsOnly (Z)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
+	public final fun setUrl (Ljava/lang/String;)V
 	public final fun setUserCacheSecret (Ljava/lang/String;)V
 	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
 }

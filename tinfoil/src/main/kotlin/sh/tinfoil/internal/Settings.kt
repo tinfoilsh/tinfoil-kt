@@ -33,7 +33,7 @@ internal class RouteSettings(
 internal class GatewaySettings(
     val modelPins: Map<String, ModelPin> = emptyMap(),
     val pinnedModelsOnly: Boolean = false,
-    val baseUrl: String? = null,
+    val url: String? = null,
     val policy: Policy = Policy(),
     val userCacheSecret: String? = null,
     val verificationCheck: VerificationCheck? = null,

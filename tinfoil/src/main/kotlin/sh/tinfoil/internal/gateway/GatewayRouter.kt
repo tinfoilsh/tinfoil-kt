@@ -601,7 +601,7 @@ internal class GatewayRouter private constructor(
 
     internal companion object {
         /** Tinfoil's gateway. */
-        const val DEFAULT_BASE_URL: String = "https://inference-gateway.tinfoil.sh/v1/"
+        const val DEFAULT_URL: String = "https://inference-gateway.tinfoil.sh/v1/"
 
         /** How often one request follows the gateway to another replica. */
         const val MAX_REROUTES: Int = 3
@@ -645,7 +645,7 @@ internal class GatewayRouter private constructor(
         fun create(
             modelPins: Map<String, ModelPin>,
             pinnedModelsOnly: Boolean,
-            baseUrl: String?,
+            url: String?,
             policy: Policy,
             userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
@@ -653,7 +653,7 @@ internal class GatewayRouter private constructor(
             catalog: (() -> Catalog)?,
             internals: Internals,
         ): GatewayRouter {
-            val base = Urls.baseUrl(requireNotEmpty(baseUrl, "baseUrl") ?: DEFAULT_BASE_URL)
+            val base = Urls.baseUrl(requireNotEmpty(url, "url") ?: DEFAULT_URL)
             if (!base.isHttps) {
                 throw ConfigurationException("invalid base URL: the gateway base URL must use HTTPS")
             }

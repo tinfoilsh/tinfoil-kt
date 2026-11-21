@@ -255,7 +255,7 @@ public class GatewayHttpClient private constructor(
         // Not a `const`: the compiler would copy a constant's value into
         // the code that reads it, which would then keep the URL that it was
         // compiled against.
-        public val DEFAULT_BASE_URL: String = GatewayRouter.DEFAULT_BASE_URL
+        public val DEFAULT_URL: String = GatewayRouter.DEFAULT_URL
 
         /**
          * Creates a client for the gateway and fetches the gateway's
@@ -326,7 +326,7 @@ public class GatewayHttpClient private constructor(
         @JvmSynthetic
         internal fun unverified(settings: GatewaySettings, internals: Internals): GatewayHttpClient = GatewayHttpClient(
             GatewayRouter.create(
-                settings.modelPins, settings.pinnedModelsOnly, settings.baseUrl, settings.policy,
+                settings.modelPins, settings.pinnedModelsOnly, settings.url, settings.policy,
                 settings.userCacheSecret, settings.verificationCheck, settings.onVerificationResult, settings.catalog,
                 internals,
             ),

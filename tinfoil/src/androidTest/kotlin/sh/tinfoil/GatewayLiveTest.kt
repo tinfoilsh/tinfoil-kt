@@ -72,7 +72,7 @@ class GatewayLiveTest {
     fun aReplicaIsVerifiedThroughTheGatewayAndAnswersASealedRequest() = live {
         val results = java.util.concurrent.CopyOnWriteArrayList<Result<Verification>>()
         GatewayHttpClient.create { onVerificationResult = { results += it } }.use { client ->
-            assertEquals(GatewayHttpClient.DEFAULT_BASE_URL, client.baseUrl.toString())
+            assertEquals(GatewayHttpClient.DEFAULT_URL, client.baseUrl.toString())
             val models = client.models()
             Log.i(TAG, "models: $models")
             assertTrue(models.isNotEmpty())
