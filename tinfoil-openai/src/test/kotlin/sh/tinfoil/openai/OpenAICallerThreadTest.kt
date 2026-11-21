@@ -70,10 +70,11 @@ class OpenAICallerThreadTest {
         val enclave = TestEnclave().also { closeables += it }
 
         fromCaller {
-            EnclaveOpenAIClient.create(enclave.host, Trust.RepoPin("tinfoilsh/example"), "a-key", enclave.connections(::note)::enclave) {
+            val http = enclave.connections(::note).enclave(enclave.host, Trust.RepoPin("tinfoilsh/example")) {
                 attestationRelay = enclave.relayHost
-                openAI { note("configure") }
-            }.close()
+            }
+            Client.create(http, "a-key") { openAI { note("configure") } }.close()
+            http.close()
         }
 
         assertNothingOnTheCallersThread("configure", "checkPinVerifiability", "verify")

@@ -53,12 +53,12 @@ import java.io.IOException
 @ExperimentalTinfoilApi
 public class GatewayHttpClient private constructor(
     private val router: GatewayRouter,
-) : Call.Factory, AutoCloseable {
+) : AttestedHttpClient {
     /**
      * The gateway's base URL, which requests are sent under. Resolve request
      * paths against it, as in `baseUrl.resolve("chat/completions")`.
      */
-    public val baseUrl: HttpUrl get() = router.baseUrl
+    override val baseUrl: HttpUrl get() = router.baseUrl
 
     /**
      * The last successful verification of each replica that the client has

@@ -17,6 +17,7 @@ import okhttp3.mockwebserver.MockResponse
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.ExperimentalTinfoilApi
+import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.ModelPin
 import sh.tinfoil.NetworkException
 import sh.tinfoil.testing.TestGateway
@@ -50,14 +51,20 @@ class GatewayOpenAIClientTest {
         apiKey: String = KEY,
         tinfoilEvents: Set<TinfoilEvent> = emptySet(),
         configure: (ClientOptions.Builder.() -> Unit)? = null,
-    ): GatewayOpenAIClient = GatewayOpenAIClient.create(apiKey, gateway.connections()::gateway) {
-        this.modelPins = modelPins
-        this.pinnedModelsOnly = pinnedModelsOnly
-        this.baseUrl = baseUrl
-        this.userCacheSecret = userCacheSecret
-        this.tinfoilEvents = tinfoilEvents
-        configure?.let { openAI(it) }
-    }.also(gateway::track)
+    ): Client {
+        val http = gateway.connections().gateway {
+            this.modelPins = modelPins
+            this.pinnedModelsOnly = pinnedModelsOnly
+            this.baseUrl = baseUrl
+            this.userCacheSecret = userCacheSecret
+        }.also(gateway::track)
+        return Client.create(http, apiKey) {
+            this.tinfoilEvents = tinfoilEvents
+            configure?.let { openAI(it) }
+        }.also(gateway::track)
+    }
+
+    private val Client.gatewayHttp: GatewayHttpClient get() = httpClient as GatewayHttpClient
 
     private fun params(prompt: String = "hello", model: String = "a-model"): ChatCompletionCreateParams =
         ChatCompletionCreateParams.builder().model(model).addUserMessage(prompt).build()
@@ -93,7 +100,7 @@ class GatewayOpenAIClientTest {
         assertTrue(text.contains(prompt) && Regex(""","cache_salt":"[A-Za-z0-9_-]{43}"}$""").containsMatchIn(text), text)
         assertFalse(text.contains("user_cache_secret"))
         assertEquals(64, received.request.getHeader("X-Tinfoil-Cache-Prefix")!!.length)
-        assertEquals("GatewayOpenAIClient(baseUrl=${gateway.baseUrl})", client.toString())
+        assertEquals("Client(baseUrl=${gateway.baseUrl})", client.toString())
     }
 
     @Test
@@ -177,7 +184,6 @@ class GatewayOpenAIClientTest {
 
     @Test
     fun optionsAreCheckedBeforeAnyIoAndACatalogThatCannotBeFetchedFailsTheCreation() = test {
-        assertFailsWith<ConfigurationException> { client(apiKey = "") }
         assertFailsWith<ConfigurationException> { client(pinnedModelsOnly = true) }
         assertFailsWith<ConfigurationException> { client(baseUrl = "http://${gateway.host}/v1/") }
         assertFailsWith<ConfigurationException> { client(baseUrl = "") }
@@ -187,14 +193,23 @@ class GatewayOpenAIClientTest {
     }
 
     @Test
-    fun aClosedClientRefusesRequests() = test {
+    fun anEmptyApiKeyIsRefusedWithoutAnyIo() = test {
+        gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
+        val http = gateway.connections().gateway { baseUrl = gateway.baseUrl }.also(gateway::track)
+        val requests = gateway.server.requestCount
+        assertFailsWith<ConfigurationException> { Client.create(http, "") }
+        assertEquals(requests, gateway.server.requestCount)
+    }
+
+    @Test
+    fun aClosedClientRefusesRequestsAndLeavesTheHttpClientOpen() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
         val client = client()
         client.close()
         client.close()
         val error = assertFailsWith<OpenAIException> { client.openAI.chat().completions().create(params()) }
         assertIs<ConfigurationException>(error.tinfoilException)
-        assertFailsWith<ConfigurationException> { client.httpClient.models() }
+        assertEquals(listOf("a-model"), client.gatewayHttp.models())
     }
 
     private companion object {

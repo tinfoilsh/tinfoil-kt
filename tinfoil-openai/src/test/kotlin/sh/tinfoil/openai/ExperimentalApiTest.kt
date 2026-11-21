@@ -13,11 +13,11 @@ import kotlin.test.assertTrue
  * built on, fails here until it is marked and listed.
  */
 class ExperimentalApiTest {
-    /** The public classes that carry [ExperimentalTinfoilApi]: the gateway route. */
-    private val experimental = setOf(
-        "sh/tinfoil/openai/GatewayOpenAIClient",
-        "sh/tinfoil/openai/GatewayOpenAIOptions",
-    )
+    /**
+     * The public classes that carry [ExperimentalTinfoilApi]: none, since the
+     * OpenAI client takes any attested client, the gateway's included.
+     */
+    private val experimental = emptySet<String>()
 
     private val marker = "Lsh/tinfoil/ExperimentalTinfoilApi;"
 
@@ -57,8 +57,8 @@ class ExperimentalApiTest {
 
     @Test
     fun theCommittedApiIsRead() {
-        assertTrue(api.size > 10, "the API dump was not found or not understood")
-        assertTrue("sh/tinfoil/openai/EnclaveOpenAIClient" in api && "sh/tinfoil/openai/Client" in api)
+        assertTrue(api.size > 3, "the API dump was not found or not understood")
+        assertTrue("sh/tinfoil/openai/OpenAIOptions" in api && "sh/tinfoil/openai/Client" in api)
         assertTrue("sh/tinfoil/GatewayHttpClient" in experimentalBelow && "sh/tinfoil/ModelPin" in experimentalBelow)
     }
 

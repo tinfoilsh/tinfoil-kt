@@ -21,8 +21,8 @@ dependencies {
 
 - `sh.tinfoil:tinfoil-openai` is for apps that call the inference API
   through the [OpenAI Java SDK](https://github.com/openai/openai-java):
-  `Client`, `RouterOpenAIClient`, `EnclaveOpenAIClient` and
-  `GatewayOpenAIClient`, in the package `sh.tinfoil.openai`. It depends on
+  `Client`, which is built on top of an attested HTTP client of
+  `tinfoil`, in the package `sh.tinfoil.openai`. It depends on
   `tinfoil`, and on the OpenAI SDK, which is large; see [App size](#app-size).
 - `sh.tinfoil:tinfoil` is the attestation verifier and the attested HTTP
   clients, `EnclaveHttpClient`, `RouterHttpClient` and `GatewayHttpClient`,
@@ -109,52 +109,65 @@ val client = Client.create(apiKey) {
 }
 ```
 
-An HTTP client or a base URL that is set there is replaced: the OpenAI
-client reaches the network only through this SDK. The one way around that is
+An HTTP client or a base URL that is set there is replaced, and so is one
+that the OpenAI SDK reads from `OPENAI_BASE_URL`: the OpenAI client reaches
+the network only through this SDK. The one way around that is
 the OpenAI SDK's `withOptions`, on the client or on one of its services: a
 client that it returns with another HTTP client sends its requests, and the
 API key, without any of this SDK's protection.
 
 ### Choosing the route
 
-`Client` says nothing about how requests reach the models, so that the route
-can change. Two clients do, and take the options of the HTTP clients that
-they send through.
+`Client.create(apiKey)` says nothing about how requests reach the models, so
+that the route can change. To choose the route, create one of the attested
+HTTP clients of the `tinfoil` artifact and put an OpenAI client over it:
 
-`RouterOpenAIClient` sends to one of Tinfoil's routers, which it chooses and
-verifies when it is created:
+- `RouterHttpClient` sends to one of Tinfoil's routers, which it chooses and
+  verifies when it is created;
+- `EnclaveHttpClient` sends to an enclave that you name, verified under the
+  trust that you name for it (see [What is trusted](#what-is-trusted));
+- `GatewayHttpClient` sends through Tinfoil's gateway (see
+  [Gateway](#gateway-experimental)).
 
 ```kotlin
+import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.Transport
-import sh.tinfoil.openai.RouterOpenAIClient
+import sh.tinfoil.openai.Client
 import sh.tinfoil.openai.TinfoilEvent
 
-val client = RouterOpenAIClient.create(apiKey) {
+val router = RouterHttpClient.create {
     transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
     userCacheSecret = cacheSecret
+}
+val client = Client.create(router, apiKey) {
     tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
 }
 ```
 
-`EnclaveOpenAIClient` sends to an enclave that you name, verified under the
-trust that you name for it (see [What is trusted](#what-is-trusted)):
-
 ```kotlin
+import sh.tinfoil.EnclaveHttpClient
 import sh.tinfoil.Trust
-import sh.tinfoil.openai.EnclaveOpenAIClient
 
-val client = EnclaveOpenAIClient.create(
+val enclave = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
     trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
-    apiKey = apiKey,
 )
-println(client.httpClient.current?.codeDigest)
+val client = Client.create(enclave, apiKey) {
+    apiPath = "/v1/"
+}
+println(enclave.current?.codeDigest)
 ```
 
-Both send to `v1/` under the enclave's origin, `https://<enclave>/`, or
-under the proxy URL of `Transport.Ehbp`. Their
-`httpClient` is the attested HTTP client itself, for requests that the
-OpenAI SDK has no call for.
+Creating the OpenAI client does no network I/O: the HTTP client verified
+its service when it was created, and verifies it again by itself. Requests
+go to `apiPath`, `/v1/` by default, under the HTTP client's `baseUrl`: the
+enclave's origin, `https://<enclave>/`, or the proxy URL of
+`Transport.Ehbp`, whose path is where the proxy is mounted. Over a gateway
+client they go to the gateway's URL as it is given, and `apiPath` is
+refused. The OpenAI client does not own the HTTP client: close each, and one
+HTTP client can serve several OpenAI clients, each with its own API key.
+`Client.create(apiKey)` makes its own router client, and closes it with
+itself.
 
 ### What is trusted
 
@@ -197,7 +210,7 @@ a compile error until the code opts in.
 
 Tinfoil's gateway forwards each request to an enclave that serves the model
 that the request names: a replica of that model. The gateway is not trusted
-with what a request says. `GatewayOpenAIClient` picks a replica, verifies its
+with what a request says. `GatewayHttpClient` picks a replica, verifies its
 attestation, and seals the request's body to the key that the attestation
 endorses, so the gateway forwards a body that it cannot read. It does read
 everything else: the URL, the headers, the API key among them, and the name
@@ -205,16 +218,18 @@ of the model.
 
 ```kotlin
 import sh.tinfoil.ExperimentalTinfoilApi
+import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.ModelPin
-import sh.tinfoil.openai.GatewayOpenAIClient
+import sh.tinfoil.openai.Client
 
 @OptIn(ExperimentalTinfoilApi::class)
-suspend fun gateway(apiKey: String): GatewayOpenAIClient {
-    val client = GatewayOpenAIClient.create(apiKey) {
+suspend fun gateway(apiKey: String): Client {
+    val gateway = GatewayHttpClient.create {
         modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
         pinnedModelsOnly = true
     }
-    println(client.httpClient.models())
+    val client = Client.create(gateway, apiKey)
+    println(gateway.models())
     return client
 }
 ```
@@ -228,7 +243,7 @@ Tinfoil's repositories, and trusts Tinfoil for which of them serves the
 model. `pinnedModelsOnly` serves no model without a pin.
 
 A request has to name its model, so the calls of the OpenAI SDK that name
-none, such as listing models, are refused; `httpClient.models()` lists what
+none, such as listing models, are refused; `GatewayHttpClient.models()` lists what
 the client serves. A JSON body that names `model`, `user_cache_secret` or
 `cache_salt` twice, or in another case, such as `Model`, is refused too,
 since a server could read another member than the client did.
@@ -278,8 +293,8 @@ one again after an `AttestationException` or a `ConfigurationException`.
 Each of its attempts can itself send the request more than once, when an
 enclave has changed its key and is verified again, so how often one call can
 send a request depends on the route. With the default options it is up to 6
-times with `Client`, `RouterOpenAIClient` and `EnclaveOpenAIClient`: 3
-attempts of up to 2 sends. With `GatewayOpenAIClient` it is up to 24 times:
+times over a router or an enclave client: 3 attempts of up to 2 sends. Over
+a gateway client it is up to 24 times:
 3 attempts of up to 8 sends, because the gateway can also route a request to
 another replica up to 3 times. A request whose body the OpenAI SDK can write
 only once, such as an upload that it streams, is sent once.

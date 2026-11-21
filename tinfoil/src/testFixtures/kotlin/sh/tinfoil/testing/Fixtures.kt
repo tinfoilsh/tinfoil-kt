@@ -16,6 +16,9 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.CryptoMaterial
 import sh.tinfoil.EnclaveHttpClient
+import sh.tinfoil.EnclaveOptions
+import sh.tinfoil.GatewayOptions
+import sh.tinfoil.RouterOptions
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.Pin
@@ -28,9 +31,7 @@ import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.VerificationLayer
 import sh.tinfoil.VerificationMetadata
-import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.Internals
-import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.LeafKeyPin
@@ -240,13 +241,14 @@ internal fun standInVerifiers(
  * the tests of another module put their own clients over a test server.
  */
 public class TestConnections internal constructor(private val internals: Internals) {
-    public suspend fun enclave(enclave: String, trust: Trust, settings: RouteSettings): EnclaveHttpClient =
-        EnclaveHttpClient.create(enclave, trust, settings, internals)
+    public suspend fun enclave(enclave: String, trust: Trust, options: EnclaveOptions.() -> Unit = {}): EnclaveHttpClient =
+        EnclaveHttpClient.create(enclave, trust, internals, options)
 
-    public suspend fun router(settings: RouteSettings): RouterHttpClient = RouterHttpClient.create(settings, internals)
+    public suspend fun router(options: RouterOptions.() -> Unit = {}): RouterHttpClient = RouterHttpClient.create(internals, options)
 
     @ExperimentalTinfoilApi
-    public suspend fun gateway(settings: GatewaySettings): GatewayHttpClient = GatewayHttpClient.create(settings, internals)
+    public suspend fun gateway(options: GatewayOptions.() -> Unit = {}): GatewayHttpClient =
+        GatewayHttpClient.create(internals, options)
 }
 
 /**

@@ -42,6 +42,10 @@ public final class sh/tinfoil/AttestationException : sh/tinfoil/TinfoilException
 	public fun isRetryable ()Z
 }
 
+public abstract interface class sh/tinfoil/AttestedHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+	public abstract fun getBaseUrl ()Lokhttp3/HttpUrl;
+}
+
 public final class sh/tinfoil/Catalog {
 	public fun <init> (Ljava/util/Map;)V
 	public fun equals (Ljava/lang/Object;)Z
@@ -103,14 +107,14 @@ public final class sh/tinfoil/CryptoMaterial {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class sh/tinfoil/EnclaveHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+public final class sh/tinfoil/EnclaveHttpClient : sh/tinfoil/AttestedHttpClient {
 	public static final field Companion Lsh/tinfoil/EnclaveHttpClient$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/internal/EnclaveConnection;Lsh/tinfoil/Trust;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
@@ -124,7 +128,7 @@ public final class sh/tinfoil/EnclaveHttpClient$Companion {
 	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Trust;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
-public abstract class sh/tinfoil/EnclaveOptions {
+public final class sh/tinfoil/EnclaveOptions {
 	public final fun getAttestationRelay ()Ljava/lang/String;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
@@ -140,14 +144,14 @@ public abstract class sh/tinfoil/EnclaveOptions {
 public abstract interface annotation class sh/tinfoil/ExperimentalTinfoilApi : java/lang/annotation/Annotation {
 }
 
-public final class sh/tinfoil/GatewayHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+public final class sh/tinfoil/GatewayHttpClient : sh/tinfoil/AttestedHttpClient {
 	public static final field Companion Lsh/tinfoil/GatewayHttpClient$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/internal/gateway/GatewayRouter;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Ljava/util/List;
 	public final fun models (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
@@ -161,7 +165,7 @@ public final class sh/tinfoil/GatewayHttpClient$Companion {
 	public final fun getDEFAULT_BASE_URL ()Ljava/lang/String;
 }
 
-public abstract class sh/tinfoil/GatewayOptions {
+public final class sh/tinfoil/GatewayOptions {
 	public final fun getBaseUrl ()Ljava/lang/String;
 	public final fun getCatalog ()Lkotlin/jvm/functions/Function0;
 	public final fun getModelPins ()Ljava/util/Map;
@@ -262,14 +266,14 @@ public final class sh/tinfoil/ReplicaVerification {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class sh/tinfoil/RouterHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+public final class sh/tinfoil/RouterHttpClient : sh/tinfoil/AttestedHttpClient {
 	public static final field Companion Lsh/tinfoil/RouterHttpClient$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/internal/EnclaveConnection;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
@@ -282,7 +286,7 @@ public final class sh/tinfoil/RouterHttpClient$Companion {
 	public static synthetic fun create$default (Lsh/tinfoil/RouterHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
-public abstract class sh/tinfoil/RouterOptions {
+public final class sh/tinfoil/RouterOptions {
 	public final fun getAttestationRelay ()Ljava/lang/String;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;

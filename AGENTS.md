@@ -15,8 +15,8 @@ version. A class's package names its artifact.
   directly or through another dependency, and its build fails if it does
   (`checkRuntimeDependencies`): apps use it alone to stay small.
 - `tinfoil-openai/`: the artifact `tinfoil-openai`, in the package
-  `sh.tinfoil.openai` and nowhere else: the OpenAI clients that name their
-  route, `Client`, which does not, their options and `TinfoilEvent`. Its
+  `sh.tinfoil.openai` and nowhere else: `Client`, the OpenAI client that is
+  built on top of an attested HTTP client, its options and `TinfoilEvent`. Its
   implementation detail is under `sh.tinfoil.openai.internal`. It depends on
   `tinfoil` and on the OpenAI SDK, and has no native library of its own.
 - `tinfoil/src/testFixtures`: the fakes and test servers that the tests of
@@ -93,8 +93,9 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   that weakens verification. The seams for those stay `internal` to
   `tinfoil`. The tests of `tinfoil-openai` reach them only through the test
   fixtures, which wrap them in public functions, such as
-  `TestEnclave.connections()`; the OpenAI clients' own seam for tests takes
-  a function that returns an attested HTTP client, and nothing less.
+  `TestEnclave.connections()`; the drop-in `Client.create(apiKey)` has a
+  seam for tests that takes a function that returns a `RouterHttpClient`,
+  and nothing less.
 - With `Transport.Ehbp`, a request body is sealed to the HPKE key of the
   verification that the request was sent under, and to no other key: the key
   comes only from the verification, never from the network. The sealing
@@ -135,8 +136,13 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
 - The OpenAI SDK reaches the network only through this SDK's attested
   clients. Depend on `openai-java-core` alone: the artifacts `openai-java`
   and `openai-java-client-okhttp` bring an HTTP client of their own and must
-  stay off the classpath. The OpenAI clients set their HTTP client and base
-  URL after the caller's options, and take no credential, URL or option from
+  stay off the classpath. `Client` takes only an `AttestedHttpClient`, which
+  is sealed to this SDK's three clients. It sets the OpenAI SDK's HTTP
+  client and base URL after the caller's options, so that a base URL from
+  the caller, `OPENAI_BASE_URL` or a data residency option has no effect;
+  the caller chooses only the API path, which is checked against RFC 3986's
+  `path-absolute` without dot segments, `%2F` or `%5C`. It takes no
+  credential, URL or option from
   the environment or from system properties; `OpenAIHttpAdapter` opens no
   connection. What the OpenAI SDK reads there by itself is known and
   harmless: `OPENAI_LOG` when its options builder is made, which is then
@@ -161,11 +167,10 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   default, never a new parameter or an overload. The block runs once, on the
   caller's thread, and a client is made only from the copies that are taken
   when it returns (`sh.tinfoil.internal.Settings.kt`). The options types are
-  marked `@TinfoilOptionsDsl`, and only the two `Options.kt` files make one.
-  An option of a route is declared once, in `tinfoil`: the options types of
-  the OpenAI clients extend the route's, which is why those are abstract
-  classes whose constructors are marked `@InternalTinfoilApi`, and not
-  sealed. Do not copy an option into `tinfoil-openai`.
+  marked `@TinfoilOptionsDsl`, and only the two `Options.kt` files make one:
+  their constructors are `internal`. An option of a route is declared once,
+  in `tinfoil`; `tinfoil-openai` has the options of the OpenAI client alone.
+  Do not copy an option into `tinfoil-openai`.
 - The suspending functions and `close()` of every client are safe to call
   from Android's main thread, where the platform refuses network work, the
   closing of a TLS socket included. Nothing that they do on the caller's

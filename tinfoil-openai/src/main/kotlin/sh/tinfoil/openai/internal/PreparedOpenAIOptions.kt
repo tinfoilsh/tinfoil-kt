@@ -80,14 +80,6 @@ internal class PreparedOpenAIOptions private constructor(
             return PreparedOpenAIOptions(adapter, options)
         }
 
-        /**
-         * Where an OpenAI client sends its requests: the OpenAI API under
-         * [base], the attested client's base URL, which ends with `/`.
-         */
-        fun apiUrl(base: HttpUrl): HttpUrl = checkNotNull(base.resolve(API_PATH))
-
-        private const val API_PATH = "v1/"
-
         private fun invalid(e: RuntimeException): ConfigurationException = CrossArtifact.configurationException(
             "the OpenAI options do not make a client: ${e.message ?: e.javaClass.simpleName}",
             cause = e,

@@ -72,7 +72,7 @@ public class EnclaveHttpClient private constructor(
      * keep.
      */
     public val trust: Trust,
-) : Call.Factory, AutoCloseable {
+) : AttestedHttpClient {
     /**
      * The enclave that the client verifies: its host, with a port when one
      * was given.
@@ -85,7 +85,7 @@ public class EnclaveHttpClient private constructor(
      * `https://<enclave>/`. Resolve request paths against it, as in
      * `baseUrl.resolve("v1/models")`.
      */
-    public val baseUrl: HttpUrl get() = connection.baseUrl
+    override val baseUrl: HttpUrl get() = connection.baseUrl
 
     /** How the client protects its requests, as it was created with. */
     public val transport: Transport get() = connection.transport

@@ -36,8 +36,7 @@ public annotation class TinfoilOptionsDsl
  * before anything is contacted.
  */
 @TinfoilOptionsDsl
-@SubclassOptInRequired(InternalTinfoilApi::class)
-public abstract class EnclaveOptions @InternalTinfoilApi protected constructor() {
+public class EnclaveOptions internal constructor() {
     /**
      * How requests are protected: [Transport.Tls], the default, protects
      * the whole exchange on a direct connection; [Transport.Ehbp] protects
@@ -107,8 +106,7 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
  * before anything is contacted.
  */
 @TinfoilOptionsDsl
-@SubclassOptInRequired(InternalTinfoilApi::class)
-public abstract class RouterOptions @InternalTinfoilApi protected constructor() {
+public class RouterOptions internal constructor() {
     /**
      * How requests are protected: [Transport.Tls], the default, protects
      * the whole exchange on a direct connection; [Transport.Ehbp] protects
@@ -210,8 +208,7 @@ public abstract class RouterOptions @InternalTinfoilApi protected constructor() 
  */
 @ExperimentalTinfoilApi
 @TinfoilOptionsDsl
-@SubclassOptInRequired(InternalTinfoilApi::class)
-public abstract class GatewayOptions @InternalTinfoilApi protected constructor() {
+public class GatewayOptions internal constructor() {
     /**
      * The repository that each of these models must run, by the model's
      * name as requests give it, and optionally a trust policy for the
@@ -297,31 +294,19 @@ public abstract class GatewayOptions @InternalTinfoilApi protected constructor()
     )
 }
 
-// The objects that the blocks receive. They are private, and extending the
-// types above is for this SDK's own artifacts alone, which the marker on
-// their constructors says: a `create` function takes a block and never an
-// options object, so an object that someone else made reaches no client.
-
-private class PlainEnclaveOptions : EnclaveOptions()
-
-private class PlainRouterOptions : RouterOptions()
-
-@ExperimentalTinfoilApi
-private class PlainGatewayOptions : GatewayOptions()
-
 // Each of these runs the caller's block once, on the calling thread, and
 // returns copies of what it set. Whatever the block throws is the caller's
 // own failure, and passes through.
 
 @JvmSynthetic
 internal fun enclaveSettings(options: EnclaveOptions.() -> Unit): RouteSettings =
-    PlainEnclaveOptions().apply(options).snapshot()
+    EnclaveOptions().apply(options).snapshot()
 
 @JvmSynthetic
 internal fun routerSettings(options: RouterOptions.() -> Unit): RouteSettings =
-    PlainRouterOptions().apply(options).snapshot()
+    RouterOptions().apply(options).snapshot()
 
 @ExperimentalTinfoilApi
 @JvmSynthetic
 internal fun gatewaySettings(options: GatewayOptions.() -> Unit): GatewaySettings =
-    PlainGatewayOptions().apply(options).snapshot()
+    GatewayOptions().apply(options).snapshot()

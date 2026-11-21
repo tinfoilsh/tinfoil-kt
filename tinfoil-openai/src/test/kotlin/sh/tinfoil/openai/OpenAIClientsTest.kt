@@ -34,7 +34,9 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
+import sh.tinfoil.EnclaveHttpClient
 import sh.tinfoil.NetworkException
+import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.Trust
 import sh.tinfoil.Transport
 import sh.tinfoil.VerificationLayer
@@ -88,31 +90,41 @@ class OpenAIClientsTest {
 
     private fun test(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
+    /** An enclave client for the test enclave, which the test closes. */
+    private suspend fun enclaveHttp(host: String = enclave.host, transport: Transport = Transport.Tls): EnclaveHttpClient =
+        enclave.connections().enclave(host, Trust.RepoPin("tinfoilsh/example")) {
+            this.transport = transport
+            attestationRelay = enclave.relayHost
+        }.also { closeables += it }
+
     private suspend fun enclaveClient(
         host: String = enclave.host,
         transport: Transport = Transport.Tls,
         apiKey: String = KEY,
         tinfoilEvents: Set<TinfoilEvent> = emptySet(),
         configure: (ClientOptions.Builder.() -> Unit)? = null,
-    ): EnclaveOpenAIClient = EnclaveOpenAIClient.create(host, Trust.RepoPin("tinfoilsh/example"), apiKey, enclave.connections()::enclave) {
-        this.transport = transport
-        attestationRelay = enclave.relayHost
+        http: EnclaveHttpClient? = null,
+    ): Client = Client.create(http ?: enclaveHttp(host, transport), apiKey) {
         this.tinfoilEvents = tinfoilEvents
         configure?.let { openAI(it) }
     }.also { closeables += it }
 
-    /** Makes a router client for which the test enclave is the router that is chosen when a relay is used. */
-    private fun routerConnection(listUrl: okhttp3.HttpUrl = elsewhere.url("/routers")) =
-        enclave.routerConnections(listUrl)::router
+    /** What the drop-in client makes its router client with: the test enclave, when the list names none that verifies. */
+    private fun dropInConnection(listUrl: okhttp3.HttpUrl = elsewhere.url("/routers")): suspend () -> RouterHttpClient =
+        { enclave.routerConnections(listUrl).router() }
 
     private suspend fun routerClient(
         userCacheSecret: String? = null,
         configure: (ClientOptions.Builder.() -> Unit)? = null,
-    ): RouterOpenAIClient = RouterOpenAIClient.create(KEY, routerConnection()) {
-        attestationRelay = enclave.relayHost
-        this.userCacheSecret = userCacheSecret
-        configure?.let { openAI(it) }
-    }.also { closeables += it }
+    ): Client {
+        val http = enclave.routerConnections(elsewhere.url("/routers")).router {
+            attestationRelay = enclave.relayHost
+            this.userCacheSecret = userCacheSecret
+        }.also { closeables += it }
+        return Client.create(http, KEY) { configure?.let { openAI(it) } }.also { closeables += it }
+    }
+
+    private val Client.enclaveHttp: EnclaveHttpClient get() = httpClient as EnclaveHttpClient
 
     private fun params(prompt: String = "hello") =
         ChatCompletionCreateParams.builder().model("a-model").addUserMessage(prompt).build()
@@ -225,7 +237,7 @@ class OpenAIClientsTest {
         client.openAI.chat().completions().create(own)
         client.openAI.models().list()
 
-        assertEquals(enclave.host, client.httpClient.enclave)
+        assertEquals(enclave.host, (client.httpClient as RouterHttpClient).enclave)
         val first = enclave.server.takeRequest()
         assertEquals("/v1/chat/completions", first.path)
         assertEquals("Bearer $KEY", first.getHeader("Authorization"))
@@ -275,7 +287,7 @@ class OpenAIClientsTest {
         }
         elsewhere.enqueue(MockResponse().setBody("""["${enclave.host}"]"""))
 
-        val client = Client.create(KEY, routerConnection()) {
+        val client = Client.create(KEY, dropInConnection()) {
             openAI { maxRetries(0) }
         }
         closeables += client
@@ -409,8 +421,9 @@ class OpenAIClientsTest {
         try {
             // Without an API key of its own, a client is refused rather
             // than given the one in the properties.
+            val http = enclaveHttp()
             val fetchesBefore = enclave.fetches
-            val refused = assertFailsWith<ConfigurationException> { enclaveClient(apiKey = "") }
+            val refused = assertFailsWith<ConfigurationException> { enclaveClient(apiKey = "", http = http) }
             assertTrue(refused.detail.contains("API key"), refused.detail)
             assertEquals(fetchesBefore, enclave.fetches, "the OpenAI options are checked before any I/O")
 
@@ -430,24 +443,20 @@ class OpenAIClientsTest {
     }
 
     @Test
-    fun anEmptyOrBlankApiKeyIsRefusedBeforeAnyIoWhateverTheOptionsSet() = test {
+    fun anEmptyOrBlankApiKeyIsRefusedWithoutAnyIoWhateverTheOptionsSet() = test {
+        val http = enclaveHttp()
         for (key in listOf("", " ", "\t\n ")) {
             for (configure in listOf<(ClientOptions.Builder.() -> Unit)?>(null, { apiKey("set-in-the-options") })) {
-                val refused = assertFailsWith<ConfigurationException> { enclaveClient(apiKey = key, configure = configure) }
+                val refused = assertFailsWith<ConfigurationException> { enclaveClient(apiKey = key, configure = configure, http = http) }
                 assertEquals("the API key is empty or blank", refused.detail)
             }
         }
-        val throughTheRouter = assertFailsWith<ConfigurationException> {
-            RouterOpenAIClient.create(" ", routerConnection()) { }
-        }
-        assertEquals("the API key is empty or blank", throughTheRouter.detail)
-        assertFailsWith<ConfigurationException> {
-            Client.create("", routerConnection()) { }
-        }
+        val dropIn = assertFailsWith<ConfigurationException> { Client.create(" ", dropInConnection()) { } }
+        assertEquals("the API key is empty or blank", dropIn.detail)
 
-        assertEquals(0, enclave.fetches)
-        assertEquals(0, enclave.verifications)
-        assertEquals(0, enclave.server.requestCount + elsewhere.requestCount)
+        assertEquals(1, enclave.fetches, "only the HTTP client verified")
+        assertEquals(1, enclave.verifications)
+        assertEquals(0, enclave.server.requestCount + elsewhere.requestCount, "the drop-in client discovered nothing")
     }
 
     @Test
@@ -465,9 +474,11 @@ class OpenAIClientsTest {
     }
 
     @Test
-    fun aCredentialOfAnotherKindInTheCallersOptionsIsRefusedWithTheApiKeyBeforeAnyIo() = test {
+    fun aCredentialOfAnotherKindInTheCallersOptionsIsRefusedWithTheApiKeyWithoutAnyIo() = test {
+        val http = enclaveHttp()
         val error = assertFailsWith<ConfigurationException> {
             enclaveClient(
+                http = http,
                 configure = {
                     httpRequestAuthenticator(
                         object : HttpRequestAuthenticator {
@@ -488,26 +499,27 @@ class OpenAIClientsTest {
         val identity = WorkloadIdentity.builder().clientId("a-client").identityProviderId("a-provider")
             .serviceAccountId("an-account").provider(provider).build()
         val withAnIdentity = assertFailsWith<ConfigurationException> {
-            enclaveClient(configure = { workloadIdentity(identity) })
+            enclaveClient(http = http, configure = { workloadIdentity(identity) })
         }
 
         for (refusal in listOf(error, withAnIdentity)) {
             assertTrue(refusal.detail.startsWith("the OpenAI options do not make a client"), refusal.detail)
             assertFalse(refusal.allText().contains(KEY), refusal.allText())
         }
-        assertEquals(0, enclave.fetches)
-        assertEquals(0, enclave.verifications)
+        assertEquals(1, enclave.fetches, "only the HTTP client verified")
+        assertEquals(0, enclave.server.requestCount)
     }
 
     @Test
-    fun optionsThatSelectADestinationOfTheirOwnAreRefusedBeforeAnyIo() = test {
+    fun optionsThatSelectADestinationOfTheirOwnAreRefusedWithoutAnyIo() = test {
+        val http = enclaveHttp()
         val error = assertFailsWith<ConfigurationException> {
-            enclaveClient(configure = { dataResidency(DataResidency.EU) })
+            enclaveClient(http = http, configure = { dataResidency(DataResidency.EU) })
         }
 
         assertTrue(error.detail.startsWith("the OpenAI options do not make a client"), error.detail)
-        assertEquals(0, enclave.fetches)
-        assertEquals(0, enclave.verifications)
+        assertEquals(1, enclave.fetches, "only the HTTP client verified")
+        assertEquals(0, enclave.server.requestCount)
     }
 
     @Test
@@ -668,7 +680,7 @@ class OpenAIClientsTest {
 
         // What one request costs when it is sent directly.
         val before = enclave.fetches
-        assertFailsWith<AttestationException> { client.httpClient.execute(enclave.get("/v1/models")) }
+        assertFailsWith<AttestationException> { client.enclaveHttp.execute(enclave.get("/v1/models")) }
         val perRequest = enclave.fetches - before
         assertTrue(perRequest >= 1)
 
@@ -724,7 +736,7 @@ class OpenAIClientsTest {
 
         assertEquals("after", answer.choices().single().message().content().get())
         assertEquals(2, enclave.fetches, "the enclave was verified again")
-        assertEquals(enclave.certificate.fingerprint, client.httpClient.current?.tlsPublicKeyFingerprint)
+        assertEquals(enclave.certificate.fingerprint, client.enclaveHttp.current?.tlsPublicKeyFingerprint)
         assertTrue(old != enclave.certificate.fingerprint)
         assertEquals(1, enclave.server.requestCount, "the request reached the enclave once, under the new key")
         assertEquals(0, sleeper.sleeps.get(), "the attested client sent it again, not the OpenAI SDK")
@@ -791,12 +803,12 @@ class OpenAIClientsTest {
         for (text in listOf(direct.toString(), router.toString(), direct.httpClient.toString(), router.httpClient.toString())) {
             assertFalse(text.contains(KEY), text)
         }
-        assertEquals("EnclaveOpenAIClient(enclave=${enclave.host})", direct.toString())
-        assertEquals("RouterOpenAIClient(enclave=${enclave.host})", router.toString())
+        assertEquals("Client(baseUrl=https://${enclave.host}/v1/)", direct.toString())
+        assertEquals("Client(baseUrl=https://${enclave.host}/v1/)", router.toString())
     }
 
     @Test
-    fun closingClosesTheOpenAiClientAndTheHttpClient() = test {
+    fun closingClosesTheOpenAiClientAndLeavesTheCallersHttpClientOpen() = test {
         val client = enclaveClient()
         enclave.server.enqueue(completion())
         client.openAI.chat().completions().create(params())
@@ -809,9 +821,10 @@ class OpenAIClientsTest {
         assertIs<ConfigurationException>(error.tinfoilException)
         val async = assertFailsWith<OpenAIException> { client.openAIAsync.models().list().await() }
         assertIs<ConfigurationException>(async.tinfoilException)
-        assertFailsWith<ConfigurationException> { client.httpClient.execute(enclave.get("/v1/models")) }
-        assertFailsWith<ConfigurationException> { client.httpClient.ensureVerified() }
-        assertEquals(1, enclave.server.requestCount)
+        enclave.server.enqueue(json("""{"object":"list","data":[]}"""))
+        client.enclaveHttp.execute(enclave.get("/v1/models")).close()
+        client.enclaveHttp.ensureVerified()
+        assertEquals(2, enclave.server.requestCount, "the HTTP client is the caller's, and stays open")
     }
 
     // Sealed bodies.

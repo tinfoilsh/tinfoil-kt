@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.junit.Assume.assumeTrue
 import org.junit.runner.RunWith
+import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.Transport
 import sh.tinfoil.testing.MainThread
 import kotlin.test.Test
@@ -45,9 +46,11 @@ class OpenAIMainThreadSafetyTest {
         assertTrue(listed > 0)
         onMain { client.close() }
 
-        val sealed = fromMain { RouterOpenAIClient.create("none") { transport = Transport.Ehbp() } }
-        val models = Request.Builder().url(sealed.httpClient.baseUrl.resolve("v1/models")!!).build()
-        assertEquals(200, main.answerTo(sealed.httpClient::execute, models).first)
+        val router = fromMain { RouterHttpClient.create { transport = Transport.Ehbp() } }
+        val sealed = fromMain { Client.create(router, "none") }
+        val models = Request.Builder().url(sealed.baseUrl.resolve("models")!!).build()
+        assertEquals(200, main.answerTo(router::execute, models).first)
         onMain { sealed.close() }
+        onMain { router.close() }
     }
 }

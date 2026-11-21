@@ -5,8 +5,11 @@ import com.openai.errors.OpenAIServiceException
 import com.openai.models.chat.completions.ChatCompletionCreateParams
 import kotlinx.coroutines.future.await
 import sh.tinfoil.AttestationException
+import sh.tinfoil.EnclaveHttpClient
 import sh.tinfoil.ExperimentalTinfoilApi
+import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.ModelPin
+import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.Trust
 import sh.tinfoil.Transport
 import sh.tinfoil.tinfoilException
@@ -50,31 +53,36 @@ class DocumentationExamplesTest {
         return client
     }
 
-    private suspend fun router(apiKey: String, cacheSecret: String): RouterOpenAIClient {
-        val client = RouterOpenAIClient.create(apiKey) {
+    private suspend fun router(apiKey: String, cacheSecret: String): Client {
+        val router = RouterHttpClient.create {
             transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
             userCacheSecret = cacheSecret
+        }
+        val client = Client.create(router, apiKey) {
             tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
         }
         return client
     }
 
     private suspend fun enclave(apiKey: String) {
-        val client = EnclaveOpenAIClient.create(
+        val enclave = EnclaveHttpClient.create(
             enclave = "inference.tinfoil.sh",
             trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
-            apiKey = apiKey,
         )
-        println(client.httpClient.current?.codeDigest)
+        val client = Client.create(enclave, apiKey) {
+            apiPath = "/v1/"
+        }
+        println(enclave.current?.codeDigest)
     }
 
     @OptIn(ExperimentalTinfoilApi::class)
-    private suspend fun gateway(apiKey: String): GatewayOpenAIClient {
-        val client = GatewayOpenAIClient.create(apiKey) {
+    private suspend fun gateway(apiKey: String): Client {
+        val gateway = GatewayHttpClient.create {
             modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
             pinnedModelsOnly = true
         }
-        println(client.httpClient.models())
+        val client = Client.create(gateway, apiKey)
+        println(gateway.models())
         return client
     }
 

@@ -42,7 +42,7 @@ import kotlin.coroutines.coroutineContext
  */
 public class RouterHttpClient private constructor(
     private val connection: EnclaveConnection,
-) : Call.Factory, AutoCloseable {
+) : AttestedHttpClient {
     /**
      * The router that the client chose and verifies: its host, with a port
      * when the router list gave one.
@@ -54,7 +54,7 @@ public class RouterHttpClient private constructor(
      * `https://<enclave>/`, or the proxy that the client was created with.
      * Resolve request paths against it, as in `baseUrl.resolve("v1/models")`.
      */
-    public val baseUrl: HttpUrl get() = connection.baseUrl
+    override val baseUrl: HttpUrl get() = connection.baseUrl
 
     /** How the client protects its requests, as it was created with. */
     public val transport: Transport get() = connection.transport
