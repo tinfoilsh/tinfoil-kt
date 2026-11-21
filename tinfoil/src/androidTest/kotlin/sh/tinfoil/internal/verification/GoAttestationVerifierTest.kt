@@ -125,17 +125,8 @@ class GoAttestationVerifierTest {
     }
 
     @Test
-    fun optionsThatCannotBeReadAreAConfigurationError() {
-        for (options in listOf("""{"no_such_option": true}""", "[]", "null", "{", """{"freshness_max_age_ns":"1"}""")) {
-            val error = assertFailsWith<ConfigurationException>(options) { GoAttestationVerifier.create(options) }
-            assertFalse(error.detail.startsWith(Mobile.UsageErrorPrefix), "The library's prefix is dropped.")
-        }
-    }
-
-    @Test
-    fun theDefaultPolicyIsAnEmptyStringOrAnEmptyObject() {
-        assertFalse(GoAttestationVerifier.create("").callerAuthorizesConfig)
-        assertFalse(GoAttestationVerifier.create("{}").callerAuthorizesConfig)
+    fun theDefaultPolicyAuthorizesNoConfigItself() {
+        assertFalse(GoAttestationVerifier.create().callerAuthorizesConfig)
     }
 
     @Test

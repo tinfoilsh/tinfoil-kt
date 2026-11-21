@@ -1,7 +1,6 @@
 package sh.tinfoil.internal.verification
 
 import sh.tinfoil.AttestationException
-import sh.tinfoil.ConfigAuthorizer
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
@@ -50,19 +49,20 @@ internal class GoAttestationVerifier private constructor(
         const val NONCE_SIZE: Int = 32
 
         /**
-         * A verifier for the policy in [optionsJson], the library's options;
-         * an empty string selects the defaults. With [configAuthorizer], it
-         * decides which configs are authorized in place of their
-         * endorsements.
+         * A verifier that trusts configs as [config] says, or as Tinfoil's
+         * public registry does when it is null, under [policy].
          */
         @Throws(ConfigurationException::class, AttestationException::class)
-        fun create(optionsJson: String = "", configAuthorizer: ConfigAuthorizer? = null): GoAttestationVerifier {
-            val bridge = configAuthorizer?.let(::ConfigAuthorizerBridge)
+        fun create(
+            config: VerifierOptions.ConfigTrust? = null,
+            policy: VerifierOptions.Policy = VerifierOptions.Policy(),
+        ): GoAttestationVerifier {
+            val bridge = (config as? VerifierOptions.ConfigTrust.Authorizer)?.let { ConfigAuthorizerBridge(it.authorizer) }
             val verifier = calling {
                 if (bridge != null) {
-                    Mobile.newVerifierWithConfigAuthorizer(optionsJson, bridge)
+                    Mobile.newVerifierWithConfigAuthorizer(VerifierOptions.encodePolicy(policy), bridge)
                 } else {
-                    Mobile.newVerifier(optionsJson)
+                    Mobile.newVerifier(VerifierOptions.encode(config, policy))
                 }
             } ?: throw ConfigurationException("the verifier library returned no verifier")
             return GoAttestationVerifier(verifier, bridge)

@@ -118,7 +118,7 @@ class VerifierBindingTest {
         assertRefused("cvm-version") {
             Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes("not: a config".toByteArray())))
         }
-        assertRefused("either bytes, or digest and runtime") {
+        assertRefused("config digest") {
             Verifier(
                 embeddedReferences = EmbeddedReferences(
                     config = EmbeddedConfig.Reference("", RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")),
@@ -150,10 +150,10 @@ class VerifierBindingTest {
 
     @Test
     fun refusesConflictingTrustSources() {
-        assertRefused("registry ID policy") {
+        assertRefused("alternatives") {
             Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID), configSigningKeysPem = listOf(key))
         }
-        assertRefused("conflicting trust sources") {
+        assertRefused("alternatives") {
             Verifier(
                 configSigningKeysPem = listOf(key),
                 embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(fixture.config)),
@@ -165,16 +165,16 @@ class VerifierBindingTest {
                 embeddedReferences = EmbeddedReferences(EmbeddedConfig.Bytes(fixture.config), fixture.runtime, fixture.platform),
             )
         }
-        assertRefused("config authorizer conflicts") {
+        assertRefused("alternatives") {
             Verifier(configSigningKeysPem = listOf(key), configAuthorizer = { })
         }
-        assertRefused("config authorizer conflicts") {
+        assertRefused("alternatives") {
             Verifier(
                 embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(fixture.config)),
                 configAuthorizer = { },
             )
         }
-        assertRefused("require endorsement verification") {
+        assertRefused("alternatives") {
             Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID), configAuthorizer = { })
         }
     }

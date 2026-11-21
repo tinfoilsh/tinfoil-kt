@@ -62,15 +62,12 @@ public class Verifier private constructor(
         configAuthorizer: ConfigAuthorizer? = null,
     ) : this(
         GoAttestationVerifier.create(
-            optionsJson = VerifierOptions.encode(
+            config = configTrust(configRegistryIds, configSigningKeysPem, embeddedReferences, configAuthorizer),
+            policy = VerifierOptions.Policy(
                 pinnedRegisters = pinnedRegisters,
-                freshnessMaxAge = freshnessMaxAge,
-                configRegistryIds = configRegistryIds,
-                configSigningKeysPem = configSigningKeysPem,
-                freshnessSigningKeysPem = freshnessSigningKeysPem,
-                embeddedReferences = embeddedReferences,
+                freshnessMaxAgeNs = freshnessMaxAge?.let(::positiveNanoseconds),
+                artifacts = artifacts(embeddedReferences, freshnessSigningKeysPem),
             ),
-            configAuthorizer = configAuthorizer,
         ),
     )
 
@@ -284,5 +281,61 @@ public class RuntimeReference(
 
     override fun toString(): String = "RuntimeReference(repo=$repo, tag=$tag, digest=$digest)"
 }
+
+/** The one config trust that the options name, or null for the public registry. */
+private fun configTrust(
+    configRegistryIds: List<String>?,
+    configSigningKeysPem: List<String>?,
+    embeddedReferences: EmbeddedReferences?,
+    configAuthorizer: ConfigAuthorizer?,
+): VerifierOptions.ConfigTrust? {
+    // The library reads options without any embedded component as "no
+    // embedded references", so an empty set would silently keep the
+    // defaults.
+    if (embeddedReferences != null && embeddedReferences.config == null &&
+        embeddedReferences.runtime == null && embeddedReferences.platform == null
+    ) {
+        throw ConfigurationException("embedded references must contain at least one component")
+    }
+    val embedded = when (val config = embeddedReferences?.config) {
+        null -> null
+        is EmbeddedConfig.Bytes -> VerifierOptions.ConfigTrust.EmbeddedConfig(config.name, config.bytes)
+        is EmbeddedConfig.Reference -> VerifierOptions.ConfigTrust.EmbeddedConfigReference(
+            config.name, config.digest, config.runtime.repo, config.runtime.tag, config.runtime.digest,
+        )
+    }
+    val sources = listOfNotNull(
+        configRegistryIds?.let(VerifierOptions.ConfigTrust::Registries),
+        configSigningKeysPem?.let(VerifierOptions.ConfigTrust::SigningKeys),
+        embedded,
+        configAuthorizer?.let(VerifierOptions.ConfigTrust::Authorizer),
+    )
+    if (sources.size > 1) {
+        throw ConfigurationException(
+            "config registry IDs, config signing keys, an embedded config and a config authorizer are " +
+                "alternatives: set one",
+        )
+    }
+    return sources.firstOrNull()
+}
+
+/** The artifact trust that the options name, or null for Tinfoil's endorsements. */
+private fun artifacts(
+    embeddedReferences: EmbeddedReferences?,
+    freshnessSigningKeysPem: List<String>?,
+): VerifierOptions.Artifacts? {
+    val runtime = embeddedReferences?.runtime
+    val platform = embeddedReferences?.platform
+    return when {
+        runtime != null || platform != null -> VerifierOptions.Artifacts.Embedded(runtime, platform, freshnessSigningKeysPem)
+        freshnessSigningKeysPem != null -> VerifierOptions.Artifacts.Endorsed(freshnessSigningKeysPem)
+        else -> null
+    }
+}
+
+/** A freshness bound, which must be positive: null is how the default is asked for. */
+private fun positiveNanoseconds(age: Duration): Long =
+    VerifierOptions.freshnessNanoseconds(age)
+        ?: throw ConfigurationException("freshness maximum age must be positive, not $age: leave it null for the default")
 
 private fun ByteArray?.describeSize(): String = if (this == null) "null" else "$size bytes"
