@@ -11,7 +11,7 @@ import sh.tinfoil.EnclaveHttpClient
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Trust
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.tinfoilException
@@ -29,7 +29,7 @@ import java.io.IOException
  * enclave that is valid at that moment, goes out under the keys that the
  * verification endorses, and is refused if it is addressed to any other
  * origin; see [EnclaveHttpClient.execute] for the rules, which depend on the
- * [TransportMode].
+ * [Transport].
  *
  * Requests are sent under the base URL that the client was created with or,
  * when there is none, under the enclave's own `https://<enclave>/v1/`.
@@ -138,7 +138,7 @@ public class EnclaveOpenAIClient private constructor(
          *
          * ```
          * val client = EnclaveOpenAIClient.create("enclave.example.com", Trust.RepoPin("org/repo"), apiKey) {
-         *     transportMode = TransportMode.EHBP
+         *     transport = Transport.Ehbp()
          *     openAI { maxRetries(0) }
          * }
          * ```
@@ -216,7 +216,7 @@ public class EnclaveOpenAIClient private constructor(
                 throw e
             }
             val openAI = try {
-                prepared.bind(httpClient, PreparedOpenAIOptions.apiUrl(httpClient.baseUrl, route.baseUrl))
+                prepared.bind(httpClient, PreparedOpenAIOptions.apiUrl(httpClient.baseUrl))
             } catch (e: Throwable) {
                 prepared.discard()
                 httpClient.close()

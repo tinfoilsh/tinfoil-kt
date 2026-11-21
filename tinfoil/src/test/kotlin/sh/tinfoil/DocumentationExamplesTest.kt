@@ -32,8 +32,7 @@ class DocumentationExamplesTest {
             enclave = "inference.tinfoil.sh",
             trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
         ) {
-            transportMode = TransportMode.EHBP
-            baseUrl = "https://proxy.example.com/"
+            transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
         }
         return client
     }
@@ -49,7 +48,7 @@ class DocumentationExamplesTest {
     }
 
     @Test
-    fun theExamplesNameTheTransportModeThatTheyAskFor() {
-        assertEquals("EHBP", TransportMode.EHBP.name)
+    fun theExamplesNameTheTransportThatTheyAskFor() {
+        assertEquals(Transport.Ehbp("https://proxy.example.com/"), Transport.Ehbp(proxyUrl = "https://proxy.example.com/"))
     }
 }

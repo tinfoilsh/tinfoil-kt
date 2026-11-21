@@ -56,8 +56,8 @@ public class RouterHttpClient private constructor(
      */
     public val baseUrl: HttpUrl get() = connection.baseUrl
 
-    /** How the client protects its requests. */
-    public val transportMode: TransportMode get() = connection.transportMode
+    /** How the client protects its requests, as it was created with. */
+    public val transport: Transport get() = connection.transport
 
     /**
      * The last successful verification, without checking it. It may have
@@ -100,16 +100,16 @@ public class RouterHttpClient private constructor(
      * on [baseUrl]'s origin, without credentials in its URL or a `Host`
      * header; it waits for a valid verification; redirects are not followed;
      * and the HTTP client may send a request again by itself unless its body
-     * can be written only once or is sealed. With [TransportMode.TLS] it is
+     * can be written only once or is sealed. With [Transport.Tls] it is
      * written only to a connection that carries the attested key. With
-     * [TransportMode.EHBP] only its body is sealed, to the attested HPKE
+     * [Transport.Ehbp] only its body is sealed, to the attested HPKE
      * key: its method, URL and headers are not, nor is a request without a
      * body or the response to it; see [EnclaveHttpClient.execute] for all
      * that this mode changes. One thing is stricter here than there: the
      * caller did not choose the router's host, so a connection that goes
      * to the router itself, and not to a proxy, must present the attested
      * TLS key in this mode too, and a router that presents another key is
-     * verified again and then refused, exactly as with [TransportMode.TLS].
+     * verified again and then refused, exactly as with [Transport.Tls].
      * Through a proxy, the connection is the proxy's, and is validated as
      * any HTTPS connection is.
      *
@@ -144,7 +144,7 @@ public class RouterHttpClient private constructor(
      * with its session recovery token: the key material that can open this
      * one response again later, without this client. It behaves as
      * [EnclaveHttpClient.executeRecoverable] does: it requires
-     * [TransportMode.EHBP], and the token, which is secret key material, is
+     * [Transport.Ehbp], and the token, which is secret key material, is
      * null for a response that is not sealed.
      */
     @Throws(IOException::class, CancellationException::class)
@@ -252,27 +252,19 @@ public class RouterHttpClient private constructor(
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val transportMode = settings.transportMode
+            val transport = settings.transport
             val verificationCheck = settings.verificationCheck
             val onVerificationResult = settings.onVerificationResult
             // Everything down to the fallback's connection is checked
             // before any I/O.
-            val base = requireNotEmpty(settings.baseUrl, "baseUrl")
-            if (base != null) {
-                Urls.baseUrl(base)
-                if (transportMode == TransportMode.TLS) {
-                    throw ConfigurationException(
-                        "a base URL is a proxy when the router is discovered, which requires TransportMode.EHBP",
-                    )
-                }
-            }
+            val proxy = (transport as? Transport.Ehbp)?.proxyUrl?.also { Urls.routeUrl(it, "proxy URL") }
             // The router's config trust is Tinfoil's public registry.
             val verifier = internals.newVerifier(null, VerifierInputs.policy(settings.policy))
             val relay = requireNotEmpty(settings.attestationRelay, "attestationRelay")
             val secret = UserCacheSecret.orProcessDefault(settings.userCacheSecret)
             val open = { host: String ->
                 EnclaveConnection.create(
-                    host, RouterDiscovery.ROUTER_PIN, transportMode, base, relay, verifier, secret, verificationCheck,
+                    host, RouterDiscovery.ROUTER_PIN, transport, relay, verifier, secret, verificationCheck,
                     onVerificationResult, internals,
                     // The caller named no host, so a direct connection to
                     // the router is pinned in both transport modes.
@@ -286,7 +278,7 @@ public class RouterHttpClient private constructor(
             // sees. A listed host could not be held to its attested key
             // there, so none is used.
             val discovered = try {
-                if (relay == null && base == null) discover(open, internals) else null
+                if (relay == null && proxy == null) discover(open, internals) else null
             } catch (e: Throwable) {
                 fallback.close()
                 throw e

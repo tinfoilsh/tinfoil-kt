@@ -19,9 +19,8 @@ public annotation class TinfoilOptionsDsl
  * it takes:
  *
  * ```
- * val client = EnclaveHttpClient.create("enclave.example.com", pin) {
- *     transportMode = TransportMode.EHBP
- *     baseUrl = "https://proxy.example.com/"
+ * val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
+ *     transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
  * }
  * ```
  *
@@ -40,30 +39,13 @@ public annotation class TinfoilOptionsDsl
 @SubclassOptInRequired(InternalTinfoilApi::class)
 public abstract class EnclaveOptions @InternalTinfoilApi protected constructor() {
     /**
-     * How requests are protected. [TransportMode.TLS], the default, protects
-     * the whole exchange on a direct connection; [TransportMode.EHBP]
-     * protects only bodies, and works through a proxy.
+     * How requests are protected: [Transport.Tls], the default, protects
+     * the whole exchange on a direct connection; [Transport.Ehbp] protects
+     * only bodies, and works through a proxy, its
+     * [proxyUrl][Transport.Ehbp.proxyUrl], which must not be on the
+     * enclave's own origin.
      */
-    public var transportMode: TransportMode = TransportMode.TLS
-
-    /**
-     * Where requests are sent, when it is not the root of the enclave's
-     * origin: an absolute URL without user information, a query or a
-     * fragment. With [TransportMode.TLS] it must be on the enclave's own
-     * HTTPS origin, because a pinned connection cannot pass through a
-     * proxy. With [TransportMode.EHBP] it may also be a proxy on another
-     * origin, which forwards each request to the enclave that the request's
-     * `X-Tinfoil-Enclave-Url` header names. A proxy reads everything that is
-     * not sealed, so it must use HTTPS; `http://` is accepted only for
-     * `localhost` or a loopback IP address, on any port, for a proxy on the
-     * same machine. With [TransportMode.EHBP], requests to a base URL on
-     * `localhost` or a loopback IP address, over HTTP or HTTPS, are sent
-     * there directly, whatever HTTP proxy the system is configured with:
-     * such a proxy would otherwise be handed them. On Android, cleartext
-     * HTTP also has to be permitted by the app's network security
-     * configuration.
-     */
-    public var baseUrl: String? = null
+    public var transport: Transport = Transport.Tls
 
     /**
      * A host, with an optional port, that fetches the enclave's attestation
@@ -111,7 +93,7 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transportMode, baseUrl, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
+        transport, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
     )
 }
 
@@ -138,33 +120,20 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
 @SubclassOptInRequired(InternalTinfoilApi::class)
 public abstract class RouterOptions @InternalTinfoilApi protected constructor() {
     /**
-     * How requests are protected. [TransportMode.TLS], the default, protects
-     * the whole exchange on a direct connection; [TransportMode.EHBP]
-     * protects only bodies, and works through a proxy.
+     * How requests are protected: [Transport.Tls], the default, protects
+     * the whole exchange on a direct connection; [Transport.Ehbp] protects
+     * only bodies, and works through a proxy, its
+     * [proxyUrl][Transport.Ehbp.proxyUrl], which forwards each request to
+     * the router that the request's `X-Tinfoil-Enclave-Url` header names.
+     * With a proxy the router list is not consulted, and the router is
+     * always `inference.tinfoil.sh`: the proxy opens the connection to the
+     * host that the header names and passes it every header, the API key
+     * included, and this SDK cannot hold that connection to the attested
+     * key, so the header never names a host that an untrusted list
+     * proposed. The router is still verified directly, or through
+     * [attestationRelay], and not through the proxy.
      */
-    public var transportMode: TransportMode = TransportMode.TLS
-
-    /**
-     * A proxy to send requests through, which forwards each request to the
-     * router that the request's `X-Tinfoil-Enclave-Url` header names. The
-     * router is not known before it is chosen, so a base URL cannot name its
-     * origin, and a pinned TLS connection cannot pass through a proxy: a
-     * base URL requires [TransportMode.EHBP]. It is an absolute URL without
-     * user information, a query or a fragment. A proxy reads everything
-     * that is not sealed, so it must use HTTPS; `http://` is accepted only
-     * for `localhost` or a loopback IP address, and a base URL on this
-     * machine is reached directly, whatever HTTP proxy the system is
-     * configured with. With a base URL the router list is not consulted,
-     * and the router is always `inference.tinfoil.sh`: the proxy opens the
-     * connection to the host that the header names and passes it every
-     * header, the API key included, and this SDK cannot hold that
-     * connection to the attested key, so the header never names a host that
-     * an untrusted list proposed. The router is still verified directly, or
-     * through [attestationRelay], and not through the proxy. The proxy
-     * itself is trusted with everything that is not sealed; see
-     * [EnclaveHttpClient.execute].
-     */
-    public var baseUrl: String? = null
+    public var transport: Transport = Transport.Tls
 
     /**
      * A host, with an optional port, that fetches attestation documents on
@@ -217,7 +186,7 @@ public abstract class RouterOptions @InternalTinfoilApi protected constructor() 
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transportMode, baseUrl, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
+        transport, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
     )
 }
 

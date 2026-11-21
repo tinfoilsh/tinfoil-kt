@@ -125,13 +125,12 @@ they send through.
 verifies when it is created:
 
 ```kotlin
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.openai.RouterOpenAIClient
 import sh.tinfoil.openai.TinfoilEvent
 
 val client = RouterOpenAIClient.create(apiKey) {
-    transportMode = TransportMode.EHBP
-    baseUrl = "https://proxy.example.com/v1/"
+    transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
     userCacheSecret = cacheSecret
     tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
 }
@@ -152,7 +151,8 @@ val client = EnclaveOpenAIClient.create(
 println(client.httpClient.current?.codeDigest)
 ```
 
-Both send to `https://<enclave>/v1/`, or to `baseUrl` as it is given. Their
+Both send to `v1/` under the enclave's origin, `https://<enclave>/`, or
+under the proxy URL of `Transport.Ehbp`. Their
 `httpClient` is the attested HTTP client itself, for requests that the
 OpenAI SDK has no call for.
 
@@ -325,7 +325,7 @@ adds to an app is mostly these three things:
   bundle delivers one ABI to a device; an APK that is built for all of them
   carries all three.
 - **Bouncy Castle's resources, with either artifact.** Bouncy Castle, which
-  seals bodies in `TransportMode.EHBP`, ships about 1.2 MB of data files for
+  seals bodies with `Transport.Ehbp`, ships about 1.2 MB of data files for
   an algorithm that this SDK does not use. R8 does not remove resources, but
   the app's build can leave them out:
 
@@ -342,35 +342,40 @@ adds to an app is mostly these three things:
 The SDK's own classes are small, and the artifacts carry the keep rules that
 they need.
 
-## Transport modes
+## Transports
 
 A client protects its requests with the keys that the enclave's attestation
-endorses, in one of two ways.
+endorses, in one of two ways, which its `transport` option selects.
 
-`TransportMode.TLS`, the default, pins every connection to the attested TLS
+`Transport.Tls`, the default, pins every connection to the attested TLS
 key. It protects the whole request and response, and needs a direct
-connection to the enclave.
+connection to the enclave, so it takes no URL.
 
-`TransportMode.EHBP` seals request and response bodies to the attested HPKE
-key with [EHBP](https://docs.tinfoil.sh/resources/ehbp), so that they stay
-private through a proxy that you set as `baseUrl`:
+`Transport.Ehbp` seals request and response bodies to the attested HPKE key
+with [EHBP](https://docs.tinfoil.sh/resources/ehbp), so that they stay
+private through a proxy, its `proxyUrl`, or on a direct connection when that
+is null:
 
 ```kotlin
 val client = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
     trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
 ) {
-    transportMode = TransportMode.EHBP
-    baseUrl = "https://proxy.example.com/"
+    transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
 }
 ```
+
+The proxy URL's path is where the proxy is mounted: request paths, and the
+OpenAI clients' `v1/`, join under it whether or not it ends with `/`. A proxy
+on the enclave's own origin is refused; leave `proxyUrl` null to connect
+directly.
 
 What this mode does not protect:
 
 - **Only bodies are sealed.** The method, the URL and the headers of every
   request, an API key among them, are not: the proxy reads them and can
   change them. The proxy must therefore use HTTPS; `http://` is accepted only
-  for `localhost` or a loopback IP address. A base URL on this machine is
+  for `localhost` or a loopback IP address. A proxy on this machine is
   reached directly, whatever HTTP proxy the system is configured with.
 - **A request without a body is not sealed, and neither is its response.**
   The same goes for a body that is empty: one that declares a length of
@@ -405,7 +410,7 @@ the full rules.
 
 ### Session recovery
 
-With `TransportMode.EHBP`, `executeRecoverable` returns a response together
+With `Transport.Ehbp`, `executeRecoverable` returns a response together
 with its session recovery token, which can open that one response again
 later, without the client that sent the request. Use it for a response that
 the server keeps and that can be fetched again after an interruption:
@@ -449,7 +454,7 @@ it in one, as in `./gradlew :tinfoil:testDebugUnitTest` or
 depend on the OpenAI SDK, and its build fails if a dependency ever brings
 that in.
 
-The EHBP client, which seals request bodies in `TransportMode.EHBP`, is the
+The EHBP client, which seals request bodies with `Transport.Ehbp`, is the
 released artifact `com.github.tinfoilsh:encrypted-http-body-protocol`, which
 JitPack builds from the release tag of
 [encrypted-http-body-protocol](https://github.com/tinfoilsh/encrypted-http-body-protocol).

@@ -18,7 +18,7 @@ import sh.tinfoil.Policy
 import sh.tinfoil.Trust
 import sh.tinfoil.RouterOptions
 import sh.tinfoil.TinfoilOptionsDsl
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.openai.internal.TinfoilEvents
 import sh.tinfoil.testing.TestEnclave
@@ -172,8 +172,7 @@ class OpenAIOptionsTest {
 
         val options = assertNotNull(leaked)
         events += TinfoilEvent.WEB_SEARCH
-        options.transportMode = TransportMode.EHBP
-        options.baseUrl = "https://elsewhere.invalid/v1/"
+        options.transport = Transport.Ehbp("https://elsewhere.invalid/v1/")
         options.attestationRelay = "relay.invalid"
         options.policy = Policy(freshnessMaxAge = Duration.INFINITE)
         options.userCacheSecret = "a-secret-that-was-set-too-late"
@@ -182,7 +181,7 @@ class OpenAIOptionsTest {
         options.tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
         options.openAI { putHeader("X-Set-Too-Late", "1") }
 
-        assertEquals(TransportMode.TLS, client.httpClient.transportMode)
+        assertEquals(Transport.Tls, client.httpClient.transport)
         assertEquals("https://${enclave.host}/", client.httpClient.baseUrl.toString())
         client.httpClient.reverify()
         assertEquals(2, enclave.fetches, "the client verifies again through the relay that the block set")
@@ -231,8 +230,7 @@ class OpenAIOptionsTest {
     @Test
     fun aBlockThatSetsNothingLeavesEveryOptionAtItsDefault() {
         for (settings in listOf(enclaveOpenAISettings { }.first, routerOpenAISettings { }.first)) {
-            assertEquals(TransportMode.TLS, settings.transportMode)
-            assertNull(settings.baseUrl)
+            assertEquals(Transport.Tls, settings.transport)
             assertNull(settings.attestationRelay)
             assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
@@ -257,7 +255,7 @@ class OpenAIOptionsTest {
     }
 
     // Scopes. Inside `openAI { }`, an option of the block around it does not
-    // compile unless its receiver is named: `transportMode = ...` there is
+    // compile unless its receiver is named: `transport = ...` there is
     // an error, which no test can show by running.
 
     @Test

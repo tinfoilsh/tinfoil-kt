@@ -44,8 +44,8 @@ public fun interface VerificationCheck {
  * [create] verifies the enclave before it returns a client. From then on,
  * every request waits for a verification that is valid at that moment, and
  * goes out under the keys that the verification endorses: with
- * [TransportMode.TLS], only on a connection whose TLS certificate carries
- * the attested key; with [TransportMode.EHBP], with its body sealed to the
+ * [Transport.Tls], only on a connection whose TLS certificate carries
+ * the attested key; with [Transport.Ehbp], with its body sealed to the
  * attested HPKE key. The client verifies again by itself when a
  * verification reaches its freshness deadline or the enclave stops
  * holding the verified key.
@@ -81,15 +81,15 @@ public class EnclaveHttpClient private constructor(
     public val enclave: String get() = connection.enclave
 
     /**
-     * The URL that requests are sent under: the base URL that the client was
-     * created with, which with [TransportMode.EHBP] may be a proxy's, or the
-     * enclave's own origin, `https://<enclave>/`. Resolve request paths
-     * against it, as in `baseUrl.resolve("v1/models")`.
+     * The URL that requests are sent under: the proxy URL of a
+     * [Transport.Ehbp], ending with `/`, or the enclave's own origin,
+     * `https://<enclave>/`. Resolve request paths against it, as in
+     * `baseUrl.resolve("v1/models")`.
      */
     public val baseUrl: HttpUrl get() = connection.baseUrl
 
-    /** How the client protects its requests. */
-    public val transportMode: TransportMode get() = connection.transportMode
+    /** How the client protects its requests, as it was created with. */
+    public val transport: Transport get() = connection.transport
 
     /**
      * The last successful verification, without checking it. It may have
@@ -142,8 +142,8 @@ public class EnclaveHttpClient private constructor(
      * reading it blocks on the network, as does closing a response whose
      * body has not been read to its end: do both off the main thread.
      *
-     * This describes a client with [TransportMode.TLS]; what
-     * [TransportMode.EHBP] changes follows it.
+     * This describes a client with [Transport.Tls]; what
+     * [Transport.Ehbp] changes follows it.
      *
      * Before any network I/O, the request is refused with a
      * [ConfigurationException] if
@@ -210,7 +210,7 @@ public class EnclaveHttpClient private constructor(
      * Cancelling the coroutine while it waits cancels the request. Once the
      * response is returned, closing it ends the exchange.
      *
-     * **With [TransportMode.EHBP]**, connections are not pinned. They are
+     * **With [Transport.Ehbp]**, connections are not pinned. They are
      * validated as the platform validates any HTTPS connection to
      * [baseUrl]'s host, which may be a proxy, and the request's body is
      * sealed to the attested HPKE key instead. The attestation shows what
@@ -301,7 +301,7 @@ public class EnclaveHttpClient private constructor(
      * that the server keeps and that can be fetched again after an
      * interruption: store the token before reading the body.
      *
-     * It requires [TransportMode.EHBP]: with [TransportMode.TLS] no body is
+     * It requires [Transport.Ehbp]: with [Transport.Tls] no body is
      * sealed, there is no token, and the call fails with a
      * [ConfigurationException] before any network I/O.
      *
@@ -366,8 +366,7 @@ public class EnclaveHttpClient private constructor(
          *
          * ```
          * val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
-         *     transportMode = TransportMode.EHBP
-         *     baseUrl = "https://proxy.example.com/"
+         *     transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
          * }
          * ```
          *
@@ -399,7 +398,7 @@ public class EnclaveHttpClient private constructor(
          *   fetched.
          * @throws AttestationException if the enclave is not to be trusted,
          *   or endorses no key for the transport mode: no HPKE key, for
-         *   [TransportMode.EHBP].
+         *   [Transport.Ehbp].
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
@@ -450,9 +449,10 @@ public class EnclaveHttpClient private constructor(
             val verifier = internals.newVerifier(inputs.config, VerifierInputs.policy(settings.policy))
             return EnclaveHttpClient(
                 EnclaveConnection.create(
-                    enclave, inputs.pin, settings.transportMode, settings.baseUrl, settings.attestationRelay,
+                    enclave, inputs.pin, settings.transport, settings.attestationRelay,
                     verifier, UserCacheSecret.of(settings.userCacheSecret),
                     settings.verificationCheck, settings.onVerificationResult, internals,
+                    refuseProxyOnEnclaveOrigin = true,
                 ),
                 trust,
             )

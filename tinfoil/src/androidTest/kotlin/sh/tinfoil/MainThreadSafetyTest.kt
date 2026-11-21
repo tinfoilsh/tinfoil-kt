@@ -141,7 +141,7 @@ class MainThreadSafetyTest {
 
     @Test
     fun anEnclaveClientIsCreatedUsedAndClosedOnTheMainThreadInBothModes() {
-        for (mode in TransportMode.entries) {
+        for (mode in listOf(Transport.Tls, Transport.Ehbp())) {
             val before = requests.get()
             val blockRanOn = ArrayList<Thread>()
             val client = fromMain {
@@ -151,7 +151,7 @@ class MainThreadSafetyTest {
                     Internals(http = HttpSettings(trust = trust), newVerifier = { _, _ -> verifier }),
                 ) {
                     blockRanOn += Thread.currentThread()
-                    transportMode = mode
+                    transport = mode
                 }
             }
             assertEquals(listOf(Looper.getMainLooper().thread), blockRanOn, "the options block runs once, on the caller's thread")

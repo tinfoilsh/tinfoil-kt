@@ -18,6 +18,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
+import sh.tinfoil.Transport
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
@@ -60,6 +61,8 @@ internal class EnclaveConnection(
     val enclave: String,
     val pin: Pin,
     val baseUrl: HttpUrl,
+    /** The proxy URL as the caller gave it, or null for a direct connection. */
+    private val proxyUrl: String?,
     private val relay: String?,
     private val attestor: Attestor,
     private val protocol: TransportProtocol,
@@ -71,6 +74,13 @@ internal class EnclaveConnection(
     private val onClose: () -> Unit = {},
 ) : AttestedSender {
     val transportMode: TransportMode get() = protocol.mode
+
+    /** The transport that the connection was made with. */
+    val transport: Transport
+        get() = when (protocol.mode) {
+            TransportMode.TLS -> Transport.Tls
+            TransportMode.EHBP -> Transport.Ehbp(proxyUrl)
+        }
 
     /**
      * Runs calls that are not awaited. Its threads come from the shared pool
@@ -226,7 +236,7 @@ internal class EnclaveConnection(
         checkOpen()
         if (protocol.mode != TransportMode.EHBP) {
             throw ConfigurationException(
-                "session recovery tokens need TransportMode.EHBP: TransportMode.${protocol.mode} seals no bodies",
+                "session recovery tokens need Transport.Ehbp: Transport.Tls seals no bodies",
             )
         }
         // A request that is sent again is sealed again, and the token is
@@ -415,8 +425,7 @@ internal class EnclaveConnection(
         fun create(
             enclave: String,
             pin: Pin,
-            transportMode: TransportMode,
-            baseUrl: String?,
+            transport: Transport,
             attestationRelay: String?,
             verifier: AttestationVerifier,
             cacheSecret: UserCacheSecret?,
@@ -430,31 +439,22 @@ internal class EnclaveConnection(
              * attested TLS key in every transport mode.
              */
             proposed: Boolean = false,
+            /**
+             * Whether a proxy on [enclave]'s own origin is refused. It is
+             * for an enclave that the caller named: a proxy there is no
+             * proxy, and would reach the enclave under the name of one.
+             */
+            refuseProxyOnEnclaveOrigin: Boolean = false,
         ): EnclaveConnection {
             val enclaveUrl = Urls.enclaveUrl(enclave)
-            val base = requireNotEmpty(baseUrl, "baseUrl")?.let(Urls::baseUrl)
-            val proxied = base != null && Origin.of(base) != Origin.of(enclaveUrl)
-            when (transportMode) {
-                TransportMode.TLS -> if (base != null) {
-                    if (!base.isHttps) {
-                        throw ConfigurationException("invalid base URL: TransportMode.TLS requires HTTPS")
-                    }
-                    if (proxied) {
-                        throw ConfigurationException(
-                            "a base URL off the enclave's origin ${Origin.of(enclaveUrl)} is a proxy, " +
-                                "which a pinned TLS connection cannot pass through; a proxy requires TransportMode.EHBP",
-                        )
-                    }
-                }
-                // Headers are not sealed, so they travel in the clear only
-                // where they never leave the machine.
-                TransportMode.EHBP -> if (base != null && !base.isHttps && !Urls.isLoopback(base)) {
-                    throw ConfigurationException(
-                        "invalid base URL: HTTP is allowed only for localhost or a loopback IP address; " +
-                            "use HTTPS to protect request headers",
-                    )
-                }
+            val base = (transport as? Transport.Ehbp)?.proxyUrl?.let { Urls.routeUrl(it, "proxy URL") }
+            if (refuseProxyOnEnclaveOrigin && base != null && Origin.of(base) == Origin.of(enclaveUrl)) {
+                throw ConfigurationException(
+                    "invalid proxy URL: it is the enclave's own origin ${Origin.of(enclaveUrl)}; " +
+                        "leave proxyUrl null to connect directly",
+                )
             }
+            val proxied = base != null && Origin.of(base) != Origin.of(enclaveUrl)
             val relay = requireNotEmpty(attestationRelay, "attestationRelay")?.also(Urls::requireRelay)
             val fetcher = lazy { AttestationFetcher(internals.http) }
             val attestor = Attestor(
@@ -470,11 +470,12 @@ internal class EnclaveConnection(
                 enclave = enclave,
                 pin = pin,
                 baseUrl = base ?: enclaveUrl,
+                proxyUrl = (transport as? Transport.Ehbp)?.proxyUrl,
                 relay = relay,
                 attestor = attestor,
-                protocol = when (transportMode) {
-                    TransportMode.TLS -> PinnedTls(internals.http)
-                    TransportMode.EHBP -> EhbpSealing(
+                protocol = when (transport) {
+                    Transport.Tls -> PinnedTls(internals.http)
+                    is Transport.Ehbp -> EhbpSealing(
                         cleartext = base != null && !base.isHttps,
                         // A proxy is told which enclave the client verified,
                         // as the caller named it.
@@ -483,7 +484,7 @@ internal class EnclaveConnection(
                         // the connection reaches; headers are not. A host
                         // that the caller named is trusted with them. One
                         // that was only proposed has to show the attested
-                        // TLS key first, as it does with TransportMode.TLS.
+                        // TLS key first, as it does with Transport.Tls.
                         pinned = proposed && !proxied,
                         local = Urls.isLoopback(base ?: enclaveUrl),
                         settings = internals.http,

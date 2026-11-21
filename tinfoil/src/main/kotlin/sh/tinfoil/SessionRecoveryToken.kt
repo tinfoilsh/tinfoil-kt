@@ -10,7 +10,7 @@ import sh.tinfoil.ehbp.identity.SessionRecoveryToken as SealedSessionToken
  * The key material that opens one sealed response, and only that one,
  * without the client that sent its request.
  *
- * A request that is sent with [TransportMode.EHBP] and has a body gets a
+ * A request that is sent with [Transport.Ehbp] and has a body gets a
  * response that only the sending client can open. The token lets the response
  * be opened elsewhere or later: store it, with [toJson], before reading the
  * body, and if the read fails, or the response ends before its content is

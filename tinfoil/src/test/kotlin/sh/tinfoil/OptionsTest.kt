@@ -154,8 +154,7 @@ class OptionsTest {
     @Test
     fun aBlockThatSetsNothingLeavesEveryOptionAtItsDefault() {
         for (settings in listOf(enclaveSettings { }, routerSettings { })) {
-            assertEquals(TransportMode.TLS, settings.transportMode)
-            assertNull(settings.baseUrl)
+            assertEquals(Transport.Tls, settings.transport)
             assertNull(settings.attestationRelay)
             assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)

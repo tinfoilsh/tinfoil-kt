@@ -31,7 +31,7 @@ import sh.tinfoil.Pin
 import sh.tinfoil.RecoverableResponse
 import sh.tinfoil.ReplicaVerification
 import sh.tinfoil.TinfoilException
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.internal.Background
@@ -667,8 +667,7 @@ internal class GatewayRouter private constructor(
                 EnclaveConnection.create(
                     enclave = replica.host,
                     pin = GatewayPolicy.pinOf(replica.reference),
-                    transportMode = TransportMode.EHBP,
-                    baseUrl = base.toString(),
+                    transport = Transport.Ehbp(proxyUrl = base.toString()),
                     attestationRelay = relay,
                     verifier = gatewayPolicy.verifierFor(replica),
                     // The router scopes the cache itself.

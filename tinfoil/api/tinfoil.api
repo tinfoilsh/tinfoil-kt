@@ -113,7 +113,7 @@ public final class sh/tinfoil/EnclaveHttpClient : java/lang/AutoCloseable, okhtt
 	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getTrust ()Lsh/tinfoil/Trust;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
 	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -126,17 +126,15 @@ public final class sh/tinfoil/EnclaveHttpClient$Companion {
 
 public abstract class sh/tinfoil/EnclaveOptions {
 	public final fun getAttestationRelay ()Ljava/lang/String;
-	public final fun getBaseUrl ()Ljava/lang/String;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getUserCacheSecret ()Ljava/lang/String;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
 	public final fun setAttestationRelay (Ljava/lang/String;)V
-	public final fun setBaseUrl (Ljava/lang/String;)V
 	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
-	public final fun setTransportMode (Lsh/tinfoil/TransportMode;)V
+	public final fun setTransport (Lsh/tinfoil/Transport;)V
 	public final fun setUserCacheSecret (Ljava/lang/String;)V
 	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
 }
@@ -276,7 +274,7 @@ public final class sh/tinfoil/RouterHttpClient : java/lang/AutoCloseable, okhttp
 	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
 	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -288,17 +286,15 @@ public final class sh/tinfoil/RouterHttpClient$Companion {
 
 public abstract class sh/tinfoil/RouterOptions {
 	public final fun getAttestationRelay ()Ljava/lang/String;
-	public final fun getBaseUrl ()Ljava/lang/String;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getUserCacheSecret ()Ljava/lang/String;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
 	public final fun setAttestationRelay (Ljava/lang/String;)V
-	public final fun setBaseUrl (Ljava/lang/String;)V
 	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
-	public final fun setTransportMode (Lsh/tinfoil/TransportMode;)V
+	public final fun setTransport (Lsh/tinfoil/Transport;)V
 	public final fun setUserCacheSecret (Ljava/lang/String;)V
 	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
 }
@@ -343,12 +339,27 @@ public abstract class sh/tinfoil/TinfoilException : java/io/IOException {
 public abstract interface annotation class sh/tinfoil/TinfoilOptionsDsl : java/lang/annotation/Annotation {
 }
 
-public final class sh/tinfoil/TransportMode : java/lang/Enum {
-	public static final field EHBP Lsh/tinfoil/TransportMode;
-	public static final field TLS Lsh/tinfoil/TransportMode;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/TransportMode;
-	public static fun values ()[Lsh/tinfoil/TransportMode;
+public abstract interface class sh/tinfoil/Transport {
+}
+
+public final class sh/tinfoil/Transport$Ehbp : sh/tinfoil/Transport {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lsh/tinfoil/Transport$Ehbp;
+	public static synthetic fun copy$default (Lsh/tinfoil/Transport$Ehbp;Ljava/lang/String;ILjava/lang/Object;)Lsh/tinfoil/Transport$Ehbp;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getProxyUrl ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Transport$Tls : sh/tinfoil/Transport {
+	public static final field INSTANCE Lsh/tinfoil/Transport$Tls;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface class sh/tinfoil/Trust {

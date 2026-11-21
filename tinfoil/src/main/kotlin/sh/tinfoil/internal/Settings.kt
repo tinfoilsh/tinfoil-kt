@@ -7,7 +7,7 @@ import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.ModelPin
 import sh.tinfoil.Policy
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 
@@ -25,8 +25,7 @@ import sh.tinfoil.VerificationCheck
 /** The options of a client for one enclave, or for a router that is chosen. */
 @InternalTinfoilApi
 public class RouteSettings internal constructor(
-    @get:JvmSynthetic public val transportMode: TransportMode = TransportMode.TLS,
-    @get:JvmSynthetic public val baseUrl: String? = null,
+    @get:JvmSynthetic public val transport: Transport = Transport.Tls,
     @get:JvmSynthetic public val attestationRelay: String? = null,
     @get:JvmSynthetic public val policy: Policy = Policy(),
     @get:JvmSynthetic public val userCacheSecret: String? = null,

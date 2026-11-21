@@ -8,7 +8,7 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.ModelPin
 import sh.tinfoil.Trust
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.tinfoilException
 import java.time.Duration
 import kotlin.test.Test
@@ -52,8 +52,7 @@ class DocumentationExamplesTest {
 
     private suspend fun router(apiKey: String, cacheSecret: String): RouterOpenAIClient {
         val client = RouterOpenAIClient.create(apiKey) {
-            transportMode = TransportMode.EHBP
-            baseUrl = "https://proxy.example.com/v1/"
+            transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
             userCacheSecret = cacheSecret
             tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
         }

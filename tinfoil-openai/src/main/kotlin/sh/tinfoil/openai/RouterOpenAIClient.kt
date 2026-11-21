@@ -157,7 +157,7 @@ public class RouterOpenAIClient private constructor(
                 throw e
             }
             val openAI = try {
-                prepared.bind(httpClient, PreparedOpenAIOptions.apiUrl(httpClient.baseUrl, route.baseUrl))
+                prepared.bind(httpClient, PreparedOpenAIOptions.apiUrl(httpClient.baseUrl))
             } catch (e: Throwable) {
                 prepared.discard()
                 httpClient.close()

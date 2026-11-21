@@ -36,7 +36,7 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Trust
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.VerificationLayer
 import sh.tinfoil.openai.internal.TinfoilEvents
 import sh.tinfoil.testing.RawTlsServer
@@ -90,15 +90,13 @@ class OpenAIClientsTest {
 
     private suspend fun enclaveClient(
         host: String = enclave.host,
-        transportMode: TransportMode = TransportMode.TLS,
-        baseUrl: String? = null,
+        transport: Transport = Transport.Tls,
         userCacheSecret: String? = null,
         apiKey: String = KEY,
         tinfoilEvents: Set<TinfoilEvent> = emptySet(),
         configure: (ClientOptions.Builder.() -> Unit)? = null,
     ): EnclaveOpenAIClient = EnclaveOpenAIClient.create(host, Trust.RepoPin("tinfoilsh/example"), apiKey, enclave.connections()::enclave) {
-        this.transportMode = transportMode
-        this.baseUrl = baseUrl
+        this.transport = transport
         attestationRelay = enclave.relayHost
         this.userCacheSecret = userCacheSecret
         this.tinfoilEvents = tinfoilEvents
@@ -208,16 +206,13 @@ class OpenAIClientsTest {
     }
 
     @Test
-    fun aConfiguredBaseUrlIsUsedAsItIsGiven() = test {
-        for (base in listOf("https://${enclave.host}/api/", "https://${enclave.host}/api", "https://${enclave.host}/")) {
-            val client = enclaveClient(baseUrl = base)
-            enclave.server.enqueue(completion())
+    fun theOpenAiApiIsUnderTheEnclavesOrigin() = test {
+        val client = enclaveClient()
+        enclave.server.enqueue(completion())
 
-            client.openAI.chat().completions().create(params())
+        client.openAI.chat().completions().create(params())
 
-            val expected = if (base.endsWith("/api/") || base.endsWith("/api")) "/api/chat/completions" else "/chat/completions"
-            assertEquals(expected, enclave.server.takeRequest().path, base)
-        }
+        assertEquals("/v1/chat/completions", enclave.server.takeRequest().path)
     }
 
     @Test
@@ -829,7 +824,7 @@ class OpenAIClientsTest {
         val sealing = SealingDispatcher({ key }) { it.reply(completionJson("sealed answer")) }
         enclave.endorsedHpke = { key.publicKey }
         enclave.server.dispatcher = sealing
-        val client = enclaveClient(transportMode = TransportMode.EHBP, userCacheSecret = "scope-0123456789")
+        val client = enclaveClient(transport = Transport.Ehbp(), userCacheSecret = "scope-0123456789")
         val prompt = "a-prompt-that-must-not-be-seen-on-the-wire"
 
         val answer = client.openAI.chat().completions().create(params(prompt))
@@ -851,7 +846,7 @@ class OpenAIClientsTest {
         val sealing = SealingDispatcher({ key }) { it.reply(events, pieces = 7).setHeader("Content-Type", "text/event-stream") }
         enclave.endorsedHpke = { key.publicKey }
         enclave.server.dispatcher = sealing
-        val client = enclaveClient(transportMode = TransportMode.EHBP)
+        val client = enclaveClient(transport = Transport.Ehbp())
 
         val chunks = client.openAIAsync.chat().completions().createStreaming(params()).asFlow().toList()
 
@@ -869,7 +864,7 @@ class OpenAIClientsTest {
         enclave.endorsedHpke = { key.publicKey }
         enclave.server.dispatcher = sealing
         val sleeper = NoSleep(before = { key = SealingKey() })
-        val client = enclaveClient(transportMode = TransportMode.EHBP, configure = { sleeper(sleeper) })
+        val client = enclaveClient(transport = Transport.Ehbp(), configure = { sleeper(sleeper) })
         key = SealingKey()
 
         assertFailsWith<InternalServerException> { client.openAI.chat().completions().create(params()) }

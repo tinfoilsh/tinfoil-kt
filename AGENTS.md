@@ -70,7 +70,7 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
 
 - Fail closed: no request leaves before its enclave is verified, and option
   errors are raised before any network I/O.
-- With `TransportMode.TLS`, a request is written only to a connection whose
+- With `Transport.Tls`, a request is written only to a connection whose
   leaf certificate carries the attested key, checked after the platform's
   own TLS validation. Nothing
   that can weaken that check, such as trusted roots, a proxy or a stand-in
@@ -95,12 +95,12 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   fixtures, which wrap them in public functions, such as
   `TestEnclave.connections()`; the OpenAI clients' own seam for tests takes
   a function that returns an attested HTTP client, and nothing less.
-- With `TransportMode.EHBP`, a request body is sealed to the HPKE key of the
+- With `Transport.Ehbp`, a request body is sealed to the HPKE key of the
   verification that the request was sent under, and to no other key: the key
   comes only from the verification, never from the network. The sealing
   itself belongs to the EHBP client library; write no EHBP cryptography or
   framing here. A request with a body leaves sealed or not at all, cleartext
-  HTTP is for a loopback base URL only, and a response that was not sealed
+  HTTP is for a loopback proxy URL only, and a response that was not sealed
   is never presented as the enclave's.
 - The router list is untrusted: it only proposes hosts, and each is verified
   against the router's pin like any enclave. Nothing read from it may relax
@@ -108,7 +108,7 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   An attestation document is not tied to the host that served it, so a
   listed host is only ever reached over connections that are pinned to its
   attested TLS key, in both transport modes, and is never named to a proxy:
-  with a proxy base URL the router client uses the fallback router and does
+  with a proxy URL the router client uses the fallback router and does
   not fetch the list.
 - A request body is changed only to add the user cache secret or, on the
   gateway route, to replace it with the cache salt, by rewriting those

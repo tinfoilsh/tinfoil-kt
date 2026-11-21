@@ -149,7 +149,7 @@ public class Client private constructor(
                 // Today the recommended route is one of Tinfoil's routers,
                 // over connections that are pinned to its attested key.
                 val route = RouterOpenAIClient.create(apiKey, routeSettings, openAISettings, connect)
-                return@creating Client(route, PreparedOpenAIOptions.apiUrl(route.httpClient.baseUrl, null))
+                return@creating Client(route, PreparedOpenAIOptions.apiUrl(route.httpClient.baseUrl))
             }
         }
     }

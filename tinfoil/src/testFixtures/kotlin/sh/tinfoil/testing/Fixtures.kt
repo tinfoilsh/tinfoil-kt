@@ -22,7 +22,7 @@ import sh.tinfoil.Pin
 import sh.tinfoil.Policy
 import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.SoftwareIdentity
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.Trust
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
@@ -357,8 +357,7 @@ public class TestEnclave(
     internal suspend fun client(
         enclave: String = host,
         trust: Trust = Trust.RepoPin("tinfoilsh/example"),
-        transportMode: TransportMode = TransportMode.TLS,
-        baseUrl: String? = null,
+        transport: Transport = Transport.Tls,
         attestationRelay: String? = relayHost,
         userCacheSecret: String? = null,
         policy: Policy = Policy(),
@@ -367,8 +366,7 @@ public class TestEnclave(
         internals: Internals = internals(),
     ): EnclaveHttpClient = EnclaveHttpClient.create(enclave, trust, internals) {
         this.policy = policy
-        this.transportMode = transportMode
-        this.baseUrl = baseUrl
+        this.transport = transport
         this.attestationRelay = attestationRelay
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck

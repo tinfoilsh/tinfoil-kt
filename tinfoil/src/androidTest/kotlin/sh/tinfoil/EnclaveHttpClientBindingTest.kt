@@ -51,12 +51,11 @@ class EnclaveHttpClientBindingTest {
             },
             "an enclave that is a URL" to { EnclaveHttpClient.create("https://$nowhere/", trust) },
             "a proxy over HTTP that is not on this machine" to {
-                EnclaveHttpClient.create(nowhere, trust) {
-                    transportMode = TransportMode.EHBP
-                    baseUrl = "http://proxy.invalid/"
-                }
+                EnclaveHttpClient.create(nowhere, trust) { transport = Transport.Ehbp("http://proxy.invalid/") }
             },
-            "a proxy" to { EnclaveHttpClient.create(nowhere, trust) { baseUrl = "https://proxy.invalid/" } },
+            "a proxy on the enclave's origin" to {
+                EnclaveHttpClient.create(nowhere, trust) { transport = Transport.Ehbp("https://$nowhere/relay") }
+            },
         )
         for ((name, create) in refused) {
             assertFailsWith<ConfigurationException>(name) { create() }

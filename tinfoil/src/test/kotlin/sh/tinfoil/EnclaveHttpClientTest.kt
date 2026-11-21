@@ -80,7 +80,7 @@ class EnclaveHttpClientTest {
         assertEquals(enclave.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
         assertEquals(enclave.host, client.enclave)
         assertEquals(Trust.RepoPin("tinfoilsh/example"), client.trust)
-        assertEquals(TransportMode.TLS, client.transportMode)
+        assertEquals(Transport.Tls, client.transport)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
         assertSame(client.current, client.ensureVerified(), "a valid verification is reused")
         assertEquals(1, enclave.fetches)
@@ -88,13 +88,16 @@ class EnclaveHttpClientTest {
     }
 
     @Test
-    fun aBaseUrlOnTheEnclavesOriginIsKept() = test {
-        val client = enclave.client(baseUrl = "https://LOCALHOST:${enclave.port}/v1/")
-
-        assertEquals("https://localhost:${enclave.port}/v1/".toHttpUrl(), client.baseUrl)
-        enclave.server.enqueue(ok())
-        client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build()).close()
-        assertEquals("/v1/models", enclave.server.takeRequest().path)
+    fun aProxyOnTheEnclavesOwnOriginIsRefused() = test {
+        for (url in listOf("https://${enclave.host}/relay", "https://LOCALHOST:${enclave.port}", "https://${enclave.host}/")) {
+            val error = assertFailsWith<ConfigurationException>(url) { enclave.client(transport = Transport.Ehbp(url)) }
+            assertTrue(error.detail.contains("leave proxyUrl null to connect directly"), error.detail)
+        }
+        val defaultPort = assertFailsWith<ConfigurationException> {
+            enclave.client(enclave = "enclave.example", transport = Transport.Ehbp("https://enclave.example:443/relay"))
+        }
+        assertTrue(defaultPort.detail.contains("enclave's own origin"), defaultPort.detail)
+        assertNothingWasSent()
     }
 
     @Test
@@ -114,32 +117,26 @@ class EnclaveHttpClientTest {
             "an empty list of registries" to { enclave.client(trust = Trust.ProjectPin("org/project", emptyList())) },
             "an either pin without a project" to { enclave.client(trust = Trust.EitherPin("org/repo", "")) },
             "a negative freshness bound" to { enclave.client(policy = Policy(freshnessMaxAge = (-1).seconds)) },
-            "an empty base URL" to { enclave.client(baseUrl = "") },
-            "an empty base URL for a proxy" to { enclave.client(transportMode = TransportMode.EHBP, baseUrl = "") },
-            "an empty relay" to { enclave.client(attestationRelay = "") },
-            "an empty cache secret" to { enclave.client(userCacheSecret = "") },
+            "an empty proxy URL" to { enclave.client(transport = Transport.Ehbp("")) },
             "a proxy over HTTP that is not on this machine" to {
-                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "http://proxy.example/")
+                enclave.client(transport = Transport.Ehbp("http://proxy.example/"))
             },
             "a proxy with credentials" to {
-                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "https://user:hunter2@proxy.example/")
+                enclave.client(transport = Transport.Ehbp("https://user:hunter2@proxy.example/"))
             },
+            "a proxy with an empty user" to { enclave.client(transport = Transport.Ehbp("https://@proxy.example/")) },
             "a proxy with a query" to {
-                enclave.client(transportMode = TransportMode.EHBP, baseUrl = "https://proxy.example/?key=hunter2")
+                enclave.client(transport = Transport.Ehbp("https://proxy.example/?key=hunter2"))
             },
-            "a proxy base URL over TLS" to { enclave.client(baseUrl = "https://proxy.example/") },
-            "a base URL on another port" to { enclave.client(baseUrl = "https://localhost:1/") },
-            "an HTTP base URL" to { enclave.client(baseUrl = "http://${enclave.host}/") },
-            "a base URL with credentials" to { enclave.client(baseUrl = "https://user:hunter2@${enclave.host}/") },
-            "a base URL with an empty user" to { enclave.client(baseUrl = "https://@${enclave.host}/") },
-            "a base URL with a query" to { enclave.client(baseUrl = "$origin/v1?key=hunter2") },
-            "a base URL with an empty query" to { enclave.client(baseUrl = "$origin/v1?") },
-            "a base URL with a fragment" to { enclave.client(baseUrl = "$origin/v1#hunter2") },
-            "a base URL with an empty fragment" to { enclave.client(baseUrl = "$origin/#") },
-            "a base URL without a scheme" to { enclave.client(baseUrl = "${enclave.host}/v1") },
-            "a base URL without slashes" to { enclave.client(baseUrl = "https:${enclave.host}/v1") },
-            "a base URL in another scheme" to { enclave.client(baseUrl = "ftp://${enclave.host}/") },
-            "a base URL with a backslash" to { enclave.client(baseUrl = "https://${enclave.host}\\@evil.example/") },
+            "a proxy with an empty query" to { enclave.client(transport = Transport.Ehbp("https://proxy.example/v1?")) },
+            "a proxy with a fragment" to { enclave.client(transport = Transport.Ehbp("https://proxy.example/v1#hunter2")) },
+            "a proxy with an empty fragment" to { enclave.client(transport = Transport.Ehbp("https://proxy.example/#")) },
+            "a proxy without a scheme" to { enclave.client(transport = Transport.Ehbp("proxy.example/v1")) },
+            "a relative proxy" to { enclave.client(transport = Transport.Ehbp("/v1")) },
+            "a proxy without slashes" to { enclave.client(transport = Transport.Ehbp("https:proxy.example/v1")) },
+            "a proxy in another scheme" to { enclave.client(transport = Transport.Ehbp("ftp://proxy.example/")) },
+            "a proxy with a backslash" to { enclave.client(transport = Transport.Ehbp("https://proxy.example\\@evil.example/")) },
+            "a proxy on the enclave's origin" to { enclave.client(transport = Transport.Ehbp(origin)) },
             "a relay that is a URL" to { enclave.client(attestationRelay = "https://relay.example/x") },
             "a relay that is not ASCII" to { enclave.client(attestationRelay = "\u212Aelay.example") },
             "an enclave that is not ASCII" to { enclave.client(enclave = "\u212Aexample.com") },
@@ -163,7 +160,7 @@ class EnclaveHttpClientTest {
     @Test
     fun anEmptyStringOptionIsRefusedByNameAndNotReadAsNotSet() = test {
         val refused: Map<String, suspend () -> Unit> = mapOf(
-            "baseUrl" to { enclave.client(baseUrl = "") },
+            "proxy URL" to { enclave.client(transport = Transport.Ehbp("")) },
             "attestationRelay" to { enclave.client(attestationRelay = "") },
             "userCacheSecret" to { enclave.client(userCacheSecret = "") },
             "enclave" to { enclave.client(enclave = "") },
@@ -174,7 +171,7 @@ class EnclaveHttpClientTest {
             assertNothingWasSent()
         }
         // Null is how an option is left unset.
-        val client = enclave.client(baseUrl = null, userCacheSecret = null)
+        val client = enclave.client(transport = Transport.Tls, userCacheSecret = null)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
     }
 

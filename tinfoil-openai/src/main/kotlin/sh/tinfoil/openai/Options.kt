@@ -13,7 +13,7 @@ import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.RouterOptions
 import sh.tinfoil.TinfoilOptionsDsl
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.RouteSettings
@@ -82,16 +82,15 @@ public sealed interface OpenAIOptions {
  *
  * ```
  * val client = EnclaveOpenAIClient.create("enclave.example.com", pin, apiKey) {
- *     transportMode = TransportMode.EHBP
+ *     transport = Transport.Ehbp()
  *     tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
  *     openAI { maxRetries(0) }
  * }
  * ```
  *
- * Two options mean more here than [EnclaveOptions] says. [baseUrl] is also
- * where the OpenAI client's requests are sent, used as it is given: the
- * OpenAI API's paths, such as `chat/completions`, are joined under it. Null
- * selects `https://<enclave>/v1/`. [userCacheSecret] is added to the chat,
+ * Two options mean more here than [EnclaveOptions] says. The OpenAI
+ * client's requests are sent to `v1/` under the HTTP client's base URL: the
+ * proxy URL of a [Transport.Ehbp], or `https://<enclave>/`. [userCacheSecret] is added to the chat,
  * completions and responses requests that the OpenAI client sends; a
  * request that sets `user_cache_secret` itself, as an additional body
  * property, keeps its own.
@@ -111,11 +110,10 @@ public sealed class EnclaveOpenAIOptions : EnclaveOptions(), OpenAIOptions
  * }
  * ```
  *
- * Two options mean more here than [RouterOptions] says. [baseUrl], a proxy,
- * which requires [TransportMode.EHBP], is also where the OpenAI client's
- * requests are sent, used as it is given: the OpenAI API's paths, such as
- * `chat/completions`, are joined under it. Null selects the router's
- * `https://<router>/v1/`. [userCacheSecret] is added to the chat,
+ * Two options mean more here than [RouterOptions] says. The OpenAI
+ * client's requests are sent to `v1/` under the HTTP client's base URL: the
+ * proxy URL of a [Transport.Ehbp], or the router's `https://<router>/`.
+ * [userCacheSecret] is added to the chat,
  * completions and responses requests that the OpenAI client sends; a
  * request that sets `user_cache_secret` itself, as an additional body
  * property, keeps its own, so a server can give each of its users a prompt

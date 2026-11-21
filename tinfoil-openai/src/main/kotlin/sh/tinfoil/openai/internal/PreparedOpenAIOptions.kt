@@ -81,14 +81,12 @@ internal class PreparedOpenAIOptions private constructor(
         }
 
         /**
-         * Where an OpenAI client sends its requests: the [configured] base
-         * URL as it was given or, when there is none, the OpenAI API under
-         * the enclave's origin, [origin].
+         * Where an OpenAI client sends its requests: the OpenAI API under
+         * [base], the attested client's base URL, which ends with `/`.
          */
-        fun apiUrl(origin: HttpUrl, configured: String?): HttpUrl =
-            if (configured == null) origin.newBuilder().encodedPath(API_PATH).build() else origin
+        fun apiUrl(base: HttpUrl): HttpUrl = checkNotNull(base.resolve(API_PATH))
 
-        private const val API_PATH = "/v1/"
+        private const val API_PATH = "v1/"
 
         private fun invalid(e: RuntimeException): ConfigurationException = CrossArtifact.configurationException(
             "the OpenAI options do not make a client: ${e.message ?: e.javaClass.simpleName}",
