@@ -42,7 +42,11 @@ import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.internal.verification.Attestor
 import sh.tinfoil.internal.verification.VerifierOptions
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.ServerSocket
+import javax.net.ServerSocketFactory
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
@@ -88,9 +92,34 @@ public fun HeldCertificate.serverHandshake(): HandshakeCertificates =
 /** A started HTTPS server that presents [certificate]. */
 public fun httpsServer(certificate: HeldCertificate, port: Int = 0): MockWebServer =
     MockWebServer().apply {
+        serverSocketFactory = ReusingServerSockets
         useHttps(certificate.serverHandshake().sslSocketFactory(), false)
         start(port)
     }
+
+/**
+ * Makes listening sockets that can be bound again at once to the address of
+ * one that was closed, as a test enclave's server is when its key rotates.
+ * MockWebServer turns address reuse off for a socket on an ephemeral port,
+ * and the sockets that it accepts inherit that, so a connection that is
+ * still closing would hold the port; these sockets keep reuse on.
+ */
+private object ReusingServerSockets : ServerSocketFactory() {
+    override fun createServerSocket(): ServerSocket = object : ServerSocket() {
+        override fun setReuseAddress(on: Boolean) {
+            super.setReuseAddress(true)
+        }
+    }
+
+    override fun createServerSocket(port: Int): ServerSocket =
+        createServerSocket().apply { bind(InetSocketAddress(port)) }
+
+    override fun createServerSocket(port: Int, backlog: Int): ServerSocket =
+        createServerSocket().apply { bind(InetSocketAddress(port), backlog) }
+
+    override fun createServerSocket(port: Int, backlog: Int, address: InetAddress?): ServerSocket =
+        createServerSocket().apply { bind(InetSocketAddress(address, port), backlog) }
+}
 
 public const val TLS_KEY_FORMAT: String = Attestor.TLS_KEY_FORMAT
 public const val HPKE_KEY_FORMAT: String = Attestor.HPKE_KEY_FORMAT
