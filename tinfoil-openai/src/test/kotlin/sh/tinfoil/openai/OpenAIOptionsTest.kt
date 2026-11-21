@@ -175,7 +175,6 @@ class OpenAIOptionsTest {
         options.transport = Transport.Ehbp("https://elsewhere.invalid/v1/")
         options.attestationRelay = "relay.invalid"
         options.policy = Policy(freshnessMaxAge = Duration.INFINITE)
-        options.userCacheSecret = "a-secret-that-was-set-too-late"
         options.verificationCheck = VerificationCheck { throw IllegalStateException("set too late") }
         options.onVerificationResult = null
         options.tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
@@ -279,16 +278,16 @@ class OpenAIOptionsTest {
             openAI {
                 // The receiver here is the OpenAI SDK's builder alone.
                 maxRetries(0)
-                route!!.userCacheSecret = "set-by-name"
+                route!!.policy = Policy(freshnessMaxAge = Duration.INFINITE)
                 ran.incrementAndGet()
             }
         }
 
-        assertNull(settings.userCacheSecret, "the nested block has not run when the options are copied")
+        assertEquals(Policy(), settings.policy, "the nested block has not run when the options are copied")
         openAI.configure.forEach { it(ClientOptions.builder()) }
         assertEquals(1, ran.get())
-        assertEquals("set-by-name", route!!.userCacheSecret)
-        assertNull(settings.userCacheSecret, "and what it sets on the outer options later reaches no client")
+        assertEquals(Policy(freshnessMaxAge = Duration.INFINITE), route!!.policy)
+        assertEquals(Policy(), settings.policy, "and what it sets on the outer options later reaches no client")
     }
 
     private companion object {

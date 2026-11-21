@@ -89,11 +89,9 @@ class EhbpClientTest {
 
     private fun test(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
-    private suspend fun direct(userCacheSecret: String? = null): EnclaveHttpClient =
-        enclave.client(transport = Transport.Ehbp(), userCacheSecret = userCacheSecret)
+    private suspend fun direct(): EnclaveHttpClient = enclave.client(transport = Transport.Ehbp())
 
-    private suspend fun proxied(userCacheSecret: String? = null): EnclaveHttpClient =
-        enclave.client(transport = Transport.Ehbp(proxyUrl), userCacheSecret = userCacheSecret)
+    private suspend fun proxied(): EnclaveHttpClient = enclave.client(transport = Transport.Ehbp(proxyUrl))
 
     private fun EnclaveHttpClient.post(body: String, path: String = "v1/echo"): Request =
         Request.Builder().url(baseUrl.resolve(path)!!).post(body.toRequestBody(JSON)).build()
@@ -144,7 +142,9 @@ class EhbpClientTest {
     @Test
     fun aBodyWhoseLengthChangesAfterItWasJudgedNeverLeavesInTheClear() = test {
         val marker = "plaintext-marker-5e1f0a"
-        for (client in listOf(direct("cache-secret-0a1b2c"), proxied())) {
+        val router = enclave.router(transport = Transport.Ehbp(), userCacheSecret = "cache-secret-0a1b2c")
+        val proxied = proxied()
+        for ((baseUrl, execute) in listOf(router.baseUrl to router::execute, proxied.baseUrl to proxied::execute)) {
             for (path in listOf("v1/echo", "v1/chat/completions")) {
                 // However often the body is asked before it admits to a
                 // length, as a file does that is written while it is sent.
@@ -160,7 +160,7 @@ class EhbpClientTest {
                         }
                     }
                     val outcome = runCatching {
-                        client.execute(Request.Builder().url(client.baseUrl.resolve(path)!!).post(body).build()).close()
+                        execute(Request.Builder().url(baseUrl.resolve(path)!!).post(body).build()).close()
                     }
                     // The first answer stands: a body that said that it was
                     // empty is not sealed, and what it writes is not sent.
@@ -481,10 +481,12 @@ class EhbpClientTest {
     }
 
     @Test
-    fun theUserCacheSecretIsAddedBeforeTheBodyIsSealed() = test {
-        val client = proxied(userCacheSecret = CACHE_SECRET)
+    fun aRouterClientAddsTheUserCacheSecretBeforeTheBodyIsSealed() = test {
+        val client = enclave.router(transport = Transport.Ehbp(proxyUrl), userCacheSecret = CACHE_SECRET)
 
-        client.execute(client.post("""{"model":"m","prompt":"$MARKER"}""", path = "v1/chat/completions")).close()
+        val chat = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
+            .post("""{"model":"m","prompt":"$MARKER"}""".toRequestBody(JSON)).build()
+        client.execute(chat).close()
 
         val received = atProxy.received.single()
         assertEquals("""{"model":"m","prompt":"$MARKER","user_cache_secret":"$CACHE_SECRET"}""", received.text)
@@ -1004,7 +1006,7 @@ class EhbpClientTest {
     fun aKeyThatTheEnclaveNoLongerHoldsIsVerifiedAgainAndTheRequestReplayedOnce() = test {
         val results = CopyOnWriteArrayList<Result<Verification>>()
         val client = enclave.client(
-            transport = Transport.Ehbp(proxyUrl), userCacheSecret = CACHE_SECRET,
+            transport = Transport.Ehbp(proxyUrl),
             onVerificationResult = { results += it },
         )
         val attested = key
@@ -1019,7 +1021,7 @@ class EhbpClientTest {
         assertEquals(2, atProxy.received.size, "the request was sent once more, and only once")
         val (rejected, accepted) = atProxy.received
         assertNull(rejected.plaintext, "the enclave could not open the body that was sealed to the old key")
-        assertEquals("""{"model":"m","prompt":"$MARKER","user_cache_secret":"$CACHE_SECRET"}""", accepted.text)
+        assertEquals("""{"model":"m","prompt":"$MARKER"}""", accepted.text)
         for (received in atProxy.received) {
             assertTrue(received.sealed)
             assertFalse(received.wire.containsText(MARKER), "a body went out unsealed")

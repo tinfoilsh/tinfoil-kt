@@ -162,7 +162,6 @@ class EnclaveHttpClientTest {
         val refused: Map<String, suspend () -> Unit> = mapOf(
             "proxy URL" to { enclave.client(transport = Transport.Ehbp("")) },
             "attestationRelay" to { enclave.client(attestationRelay = "") },
-            "userCacheSecret" to { enclave.client(userCacheSecret = "") },
             "enclave" to { enclave.client(enclave = "") },
         )
         for ((option, create) in refused) {
@@ -171,7 +170,7 @@ class EnclaveHttpClientTest {
             assertNothingWasSent()
         }
         // Null is how an option is left unset.
-        val client = enclave.client(transport = Transport.Tls, userCacheSecret = null)
+        val client = enclave.client(transport = Transport.Tls)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
     }
 

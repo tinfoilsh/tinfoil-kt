@@ -116,17 +116,25 @@ public class RouterHttpClient private constructor(
      * The client's user cache secret is added to the body of a `POST` whose
      * path ends in `/chat/completions`, `/completions` or `/responses`, as
      * the member `user_cache_secret`, if the body is one JSON object in
-     * which that member is absent or the empty string. The rest of the body
-     * is sent byte for byte as it was given. A member whose name differs
-     * from `user_cache_secret` only by case is left as it was written, and
-     * the client's member, with exactly that name, is added beside it. A non-empty `user_cache_secret`
-     * string in the body is the request's own scope and is kept, so a server
-     * can give each of its users a cache of their own. Any other body that
-     * can be examined is sent unchanged, without the client's secret. A
-     * request to one of those paths whose body cannot be examined, because
-     * it is duplex or is a stream of more than 64 MiB that can be written
-     * only once, is refused with a [ConfigurationException] before anything
-     * is sent; see [EnclaveHttpClient.execute].
+     * which that member is absent or the empty string, before the body is
+     * sealed. The rest of the body is sent byte for byte as it was given,
+     * and the request's `Content-Length` is that of the new body. Only a
+     * member with exactly that name counts: one whose name differs from it
+     * only by case, such as `User_Cache_Secret`, is left as it was written,
+     * and the client's member is added beside it. A non-empty
+     * `user_cache_secret` string in the body is the request's own scope and
+     * is kept, so a server can give each of its users a cache of their own.
+     * Any other body is sent unchanged: one that is not a JSON object in
+     * UTF-8, one that names the member more than once or with a value that
+     * is not a string, and a body of more than 64 MiB that declares its
+     * length or can be written again, which a router refuses for its size.
+     * To decide, the body is read into memory before the request is sent:
+     * it is written once, then, and what it wrote is what is sent. A
+     * request to one of those paths whose body cannot be examined is
+     * refused with a [ConfigurationException] before anything is sent, so
+     * that it does not land in the cache that the API key's other clients
+     * share: a duplex body, and a body that declares no length, can be
+     * written only once and is longer than 64 MiB.
      *
      * @throws ConfigurationException for a request that is refused.
      * @throws NetworkException if the router has to be verified again and
@@ -261,7 +269,7 @@ public class RouterHttpClient private constructor(
             // The router's config trust is Tinfoil's public registry.
             val verifier = internals.newVerifier(null, VerifierInputs.policy(settings.policy))
             val relay = requireNotEmpty(settings.attestationRelay, "attestationRelay")
-            val secret = UserCacheSecret.orProcessDefault(settings.userCacheSecret)
+            val secret = UserCacheSecret.resolve(settings.userCacheSecret, internals.processSecret)
             val open = { host: String ->
                 EnclaveConnection.create(
                     host, RouterDiscovery.ROUTER_PIN, transport, relay, verifier, secret, verificationCheck,

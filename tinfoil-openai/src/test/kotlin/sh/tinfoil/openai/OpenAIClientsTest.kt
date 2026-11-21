@@ -91,14 +91,12 @@ class OpenAIClientsTest {
     private suspend fun enclaveClient(
         host: String = enclave.host,
         transport: Transport = Transport.Tls,
-        userCacheSecret: String? = null,
         apiKey: String = KEY,
         tinfoilEvents: Set<TinfoilEvent> = emptySet(),
         configure: (ClientOptions.Builder.() -> Unit)? = null,
     ): EnclaveOpenAIClient = EnclaveOpenAIClient.create(host, Trust.RepoPin("tinfoilsh/example"), apiKey, enclave.connections()::enclave) {
         this.transport = transport
         attestationRelay = enclave.relayHost
-        this.userCacheSecret = userCacheSecret
         this.tinfoilEvents = tinfoilEvents
         configure?.let { openAI(it) }
     }.also { closeables += it }
@@ -715,7 +713,7 @@ class OpenAIClientsTest {
     @Test
     fun aKeyRotationUnderARequestIsAnsweredByVerifyingAgainAndSendingOnce() = test {
         val sleeper = NoSleep()
-        val client = enclaveClient(userCacheSecret = "scope-0123456789", configure = { sleeper(sleeper) })
+        val client = enclaveClient(configure = { sleeper(sleeper) })
         enclave.server.enqueue(completion("before"))
         client.openAI.chat().completions().create(params())
         val old = enclave.certificate.fingerprint
@@ -732,7 +730,7 @@ class OpenAIClientsTest {
         assertEquals(0, sleeper.sleeps.get(), "the attested client sent it again, not the OpenAI SDK")
         val request = enclave.server.takeRequest()
         assertEquals("0", request.getHeader("X-Stainless-Retry-Count"))
-        assertTrue(request.body.readUtf8().endsWith(""","user_cache_secret":"scope-0123456789"}"""), "the same body is sent again")
+        assertFalse(request.body.readUtf8().contains("user_cache_secret"), "an enclave client adds no cache secret")
     }
 
     @Test
@@ -824,7 +822,7 @@ class OpenAIClientsTest {
         val sealing = SealingDispatcher({ key }) { it.reply(completionJson("sealed answer")) }
         enclave.endorsedHpke = { key.publicKey }
         enclave.server.dispatcher = sealing
-        val client = enclaveClient(transport = Transport.Ehbp(), userCacheSecret = "scope-0123456789")
+        val client = enclaveClient(transport = Transport.Ehbp())
         val prompt = "a-prompt-that-must-not-be-seen-on-the-wire"
 
         val answer = client.openAI.chat().completions().create(params(prompt))
@@ -836,7 +834,7 @@ class OpenAIClientsTest {
         assertEquals("Bearer $KEY", received.request.getHeader("Authorization"))
         assertFalse(received.wire.containsText(prompt), "the prompt was sent in the clear")
         val text = assertNotNull(received.text)
-        assertTrue(text.contains(prompt) && text.endsWith(""","user_cache_secret":"scope-0123456789"}"""), text)
+        assertTrue(text.contains(prompt) && !text.contains("user_cache_secret"), text)
     }
 
     @Test

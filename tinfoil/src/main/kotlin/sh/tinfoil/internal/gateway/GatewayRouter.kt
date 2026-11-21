@@ -662,7 +662,7 @@ internal class GatewayRouter private constructor(
             Urls.requireRelay(relay)
             // The caller's map is read once, here.
             val gatewayPolicy = GatewayPolicy(HashMap(modelPins), pinnedModelsOnly, policy, internals.newVerifier)
-            val secret = UserCacheSecret.orProcessDefault(userCacheSecret)
+            val secret = UserCacheSecret.resolve(userCacheSecret, internals.processSecret)
             val open = { replica: ReplicaKey ->
                 EnclaveConnection.create(
                     enclave = replica.host,

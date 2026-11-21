@@ -63,16 +63,6 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
     public var policy: Policy = Policy()
 
     /**
-     * The prompt-cache scope of the client's requests, for an enclave that
-     * is one of Tinfoil's routers; other enclaves do not read it. Null
-     * sends none. It is added to the JSON body of a `POST` to a chat,
-     * completions or responses path, and such a request is refused if its
-     * body cannot be examined; see [EnclaveHttpClient.execute]. Use an
-     * opaque random value, not a user ID or an API key.
-     */
-    public var userCacheSecret: String? = null
-
-    /**
      * Called with each verification that passes the trust argument and
      * [policy], before the enclave's keys are used; it throws to reject the enclave. It must not
      * call back into the client.
@@ -93,7 +83,7 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transport, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
+        transport, attestationRelay, policy, null, verificationCheck, onVerificationResult,
     )
 }
 
@@ -156,11 +146,14 @@ public abstract class RouterOptions @InternalTinfoilApi protected constructor() 
      * JSON body of a `POST` to a chat, completions or responses path, and
      * such a request is refused if its body cannot be examined; see
      * [RouterHttpClient.execute]. Requests with the same secret, under the
-     * same API key, share cached prompt prefixes. Null selects a
+     * same API key, share cached prompt prefixes. Null or empty selects a
      * random secret that is generated once in each process, kept only in
-     * memory, and shared by every client in the process that is given none.
-     * Set one to keep the scope across processes or devices. Use an opaque
-     * random value, not a user ID or an API key.
+     * memory, and shared by every client in the process that is given none;
+     * no environment variable or file is read, and nothing is written. Set
+     * one to keep the scope across processes or devices, and a non-empty
+     * `user_cache_secret` in a request's body to give each of a server's
+     * users a scope of their own. Use an opaque random value, not a user ID
+     * or an API key.
      */
     public var userCacheSecret: String? = null
 
@@ -256,8 +249,9 @@ public abstract class GatewayOptions @InternalTinfoilApi protected constructor()
      * so a server can give each of its users a cache of their own. Null
      * selects a random secret that is generated once in each process,
      * kept only in memory, and shared by every client in the process that
-     * is given none. Set one to keep the scope across processes or devices.
-     * Use an opaque random value, not a user ID or an API key: the gateway
+     * is given none, and an empty one selects it too; no environment
+     * variable or file is read, and nothing is written. Set one to keep the
+     * scope across processes or devices. Use an opaque random value, not a user ID or an API key: the gateway
      * sees a cache prefix that is keyed on it, and could test guesses of a
      * secret that can be guessed, and then of the prompt.
      */

@@ -104,7 +104,6 @@ class GatewayHttpClientTest {
             "invalid base URL" to { gateway.client(baseUrl = "wss://${gateway.host}/v1/") },
             "user cache secret is not well-formed" to { gateway.client(userCacheSecret = "half\ud800") },
             "baseUrl must not be empty" to { gateway.client(baseUrl = "") },
-            "userCacheSecret must not be empty" to { gateway.client(userCacheSecret = "") },
         )
         for ((message, create) in refused) {
             val error = assertFailsWith<ConfigurationException>(message) { create() }

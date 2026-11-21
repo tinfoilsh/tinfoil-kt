@@ -110,11 +110,12 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   attested TLS key, in both transport modes, and is never named to a proxy:
   with a proxy URL the router client uses the fallback router and does
   not fetch the list.
-- A request body is changed only to add the user cache secret or, on the
-  gateway route, to replace it with the cache salt, by rewriting those
+- A request body is changed only to add the user cache secret, on the
+  router route, or to replace it with the cache salt, on the gateway route, by rewriting those
   members in the text of a body that a strict JSON scanner accepts as one
-  object; every other byte is the caller's. On the router and enclave
-  routes, a body that the scanner does not accept is sent unchanged; on the
+  object; every other byte is the caller's. The enclave client never
+  changes a body. On the router route, a body that the scanner does not
+  accept is sent unchanged; on the
   gateway route, a JSON body that is not strictly one JSON value is refused.
 - The gateway and its catalog are untrusted: they only propose replicas.
   Each replica is verified against its model's pin, or for a model without
@@ -147,6 +148,11 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   the OpenAI SDK sends a request again after those.
 - The OpenAI SDK's client is exposed as it is. Do not wrap its services or
   re-declare its calls.
+- The process's cache secret, which the router and gateway clients use when
+  they are given none, comes from a secure random number generator and
+  nowhere else: no environment variable, file or other source is read, and
+  it is never written. If the generator fails, its exception reaches the
+  caller unchanged and nothing is kept; no predictable value is ever used.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
 - A `create` function takes what it requires as parameters and everything

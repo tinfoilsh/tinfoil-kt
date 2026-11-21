@@ -518,6 +518,8 @@ internal class Internals(
      */
     val newVerifier: (VerifierOptions.ConfigTrust?, VerifierOptions.Policy) -> AttestationVerifier =
         { config, policy -> GoAttestationVerifier.create(config, policy) },
+    /** Where the router and gateway clients take the process's cache secret from. */
+    val processSecret: UserCacheSecret.ProcessSecret = UserCacheSecret.PROCESS,
 )
 
 private fun <T : Throwable> T.alsoSuppressing(earlier: Throwable?): T = apply {

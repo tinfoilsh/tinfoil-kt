@@ -10,7 +10,6 @@ import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.transport.AttestedCall
-import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.verification.VerifierInputs
 import java.io.IOException
 
@@ -173,28 +172,9 @@ public class EnclaveHttpClient private constructor(
      * that writes another number of bytes than the length that it declared
      * fails the request with an [IOException].
      *
-     * When the client has a user cache secret, it is added to the body of a
-     * `POST` whose path ends in `/chat/completions`, `/completions` or
-     * `/responses`, as the member `user_cache_secret`, if the body is one
-     * JSON object in which that member is absent or the empty string. The
-     * rest of the body is sent byte for byte as it was given, and the
-     * request's `Content-Length` is that of the new body. Only a member
-     * with exactly that name counts: one whose name differs from it only by
-     * case, such as `User_Cache_Secret`, is left as it was written, and the
-     * client's member is added beside it. A non-empty
-     * `user_cache_secret` string in the body is the request's own scope and
-     * is kept. Any other body is sent unchanged: one that is not a JSON
-     * object in UTF-8, one that names the member more than once or with a
-     * value that is not a string,
-     * and a body of more than 64 MiB that declares its length or can be
-     * written again, which a router refuses for its size. To decide, the
-     * body is read into memory before the request is sent: it is written
-     * once, then, and what it wrote is what is sent. A request
-     * to one of those paths whose body cannot be examined is refused with a
-     * [ConfigurationException] before anything is sent, so that it does not
-     * land in the cache that the API key's other clients share: a duplex
-     * body, and a body that declares no length, can be written only once
-     * and is longer than 64 MiB.
+     * The client never adds or changes a `user_cache_secret` member: a
+     * request to Tinfoil's router that should have a prompt-cache scope of
+     * its own carries one in its body.
      *
      * The HTTP client may send a request again by itself, always to the same
      * URL and only over a connection that passes the same checks: when a
@@ -273,7 +253,6 @@ public class EnclaveHttpClient private constructor(
      *   being able to read it.
      * - The HTTP client never sends a sealed body again by itself; a
      *   request without a body may be sent again as described above.
-     * - The user cache secret is added to a body before it is sealed.
      * - A request is also refused before any I/O if it asks for a protocol
      *   upgrade, with an `Upgrade` header or `Connection: upgrade`, or is a
      *   `CONNECT`; if it sets a header whose name starts with `Ehbp-`, or
@@ -450,7 +429,8 @@ public class EnclaveHttpClient private constructor(
             return EnclaveHttpClient(
                 EnclaveConnection.create(
                     enclave, inputs.pin, settings.transport, settings.attestationRelay,
-                    verifier, UserCacheSecret.of(settings.userCacheSecret),
+                    // The client never adds or changes a request's cache secret.
+                    verifier, null,
                     settings.verificationCheck, settings.onVerificationResult, internals,
                     refuseProxyOnEnclaveOrigin = true,
                 ),

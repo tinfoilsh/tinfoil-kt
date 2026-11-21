@@ -35,6 +35,7 @@ import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.LeafKeyPin
 import sh.tinfoil.internal.transport.TlsTrust
+import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.internal.verification.Attestor
 import sh.tinfoil.internal.verification.VerifierOptions
@@ -297,7 +298,7 @@ public class TestEnclave(
 
     /** What each client asked of the verifier library's constructor. */
     internal val verifierRequests = CopyOnWriteArrayList<VerifierRequest>()
-    private val clients = CopyOnWriteArrayList<EnclaveHttpClient>()
+    private val clients = CopyOnWriteArrayList<AutoCloseable>()
 
     init {
         relay.dispatcher = object : Dispatcher() {
@@ -336,13 +337,34 @@ public class TestEnclave(
         )
 
     /** Internals under which this enclave is the router that is chosen when [listUrl] names none that verifies. */
-    internal fun routerInternals(listUrl: HttpUrl): Internals = Internals(
+    internal fun routerInternals(
+        listUrl: HttpUrl = NO_LIST,
+        processSecret: UserCacheSecret.ProcessSecret = UserCacheSecret.PROCESS,
+        note: ((String) -> Unit)? = null,
+    ): Internals = Internals(
         http = HttpSettings(trust = authority.trust),
         clock = clock,
         retryDelay = 1.milliseconds,
         discovery = RouterDiscovery.Settings(listUrl = listUrl, fallback = host),
-        newVerifier = standInVerifiers(verifier, verifierRequests),
+        newVerifier = standInVerifiers(if (note == null) verifier else NotingVerifier(verifier, note), verifierRequests),
+        processSecret = processSecret,
     )
+
+    /**
+     * A router client for which this enclave is the router: the one that is
+     * chosen when the list names none that verifies.
+     */
+    internal suspend fun router(
+        transport: Transport = Transport.Tls,
+        userCacheSecret: String? = null,
+        onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+        internals: Internals = routerInternals(),
+    ): RouterHttpClient = RouterHttpClient.create(internals) {
+        this.transport = transport
+        attestationRelay = relayHost
+        this.userCacheSecret = userCacheSecret
+        this.onVerificationResult = onVerificationResult
+    }.also { clients += it }
 
     /**
      * What makes clients as [internals] has them made, telling [note], when
@@ -359,7 +381,6 @@ public class TestEnclave(
         trust: Trust = Trust.RepoPin("tinfoilsh/example"),
         transport: Transport = Transport.Tls,
         attestationRelay: String? = relayHost,
-        userCacheSecret: String? = null,
         policy: Policy = Policy(),
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
@@ -368,7 +389,6 @@ public class TestEnclave(
         this.policy = policy
         this.transport = transport
         this.attestationRelay = attestationRelay
-        this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
         this.onVerificationResult = onVerificationResult
     }.also { clients += it }
@@ -379,3 +399,6 @@ public class TestEnclave(
         relay.shutdown()
     }
 }
+
+/** A list URL that nothing answers, so that discovery falls back. */
+private val NO_LIST: HttpUrl = "https://localhost:1/routers".toHttpUrl()

@@ -89,20 +89,13 @@ class CallerThreadTest {
     }
 
     @Test
-    fun anEnclaveClientCallsTheVerifierAndReadsBodiesOffTheCallersThread() {
+    fun aRouterClientCallsTheVerifierAndReadsBodiesOffTheCallersThread() {
         val enclave = TestEnclave().also { closeables += it }
         enclave.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = MockResponse()
         }
         fromCaller {
-            val client = EnclaveHttpClient.create(
-                enclave.host,
-                Trust.RepoPin("tinfoilsh/example"),
-                enclave.internals(note = ::note),
-            ) {
-                attestationRelay = enclave.relayHost
-                userCacheSecret = "a-cache-secret"
-            }
+            val client = enclave.router(userCacheSecret = "a-cache-secret", internals = enclave.routerInternals(note = ::note))
             client.ensureVerified()
             client.reverify()
             for (path in listOf("/v1/chat/completions", "/v1/embeddings")) {

@@ -817,7 +817,6 @@ class RouterHttpClientTest {
             "a cache secret that is not well-formed text" to { client(userCacheSecret = "hunter2\ud800") },
             "proxy URL must not be empty" to { client(transport = Transport.Ehbp("")) },
             "attestationRelay must not be empty" to { client(attestationRelay = "") },
-            "userCacheSecret must not be empty" to { client(userCacheSecret = "") },
         )
         for ((name, create) in refused) {
             val error = try {
