@@ -725,21 +725,27 @@ class OpenAIClientsTest {
     @Test
     fun aKeyRotationUnderARequestIsAnsweredByVerifyingAgainAndSendingOnce() = test {
         val sleeper = NoSleep()
+        // The enclave's key is the server's throughout; the verification in
+        // the middle endorses another, as one from before a rotation would.
+        val held = enclave.certificate.fingerprint
+        val stale = enclave.authority.issue().fingerprint
+        val endorsements = ArrayDeque(listOf(held, stale, held))
+        enclave.endorsed = { endorsements.removeFirst() }
         val client = enclaveClient(configure = { sleeper(sleeper) })
         enclave.server.enqueue(completion("before"))
         client.openAI.chat().completions().create(params())
-        val old = enclave.certificate.fingerprint
+        client.enclaveHttp.reverify()
+        assertEquals(stale, client.enclaveHttp.current?.tlsPublicKeyFingerprint)
 
-        enclave.rotateKey()
         enclave.server.enqueue(completion("after"))
         val answer = client.openAI.chat().completions().create(params())
 
         assertEquals("after", answer.choices().single().message().content().get())
-        assertEquals(2, enclave.fetches, "the enclave was verified again")
-        assertEquals(enclave.certificate.fingerprint, client.enclaveHttp.current?.tlsPublicKeyFingerprint)
-        assertTrue(old != enclave.certificate.fingerprint)
-        assertEquals(1, enclave.server.requestCount, "the request reached the enclave once, under the new key")
+        assertEquals(3, enclave.fetches, "the enclave was verified again")
+        assertEquals(held, client.enclaveHttp.current?.tlsPublicKeyFingerprint)
+        assertEquals(2, enclave.server.requestCount, "the second request reached the enclave once, under the held key")
         assertEquals(0, sleeper.sleeps.get(), "the attested client sent it again, not the OpenAI SDK")
+        enclave.server.takeRequest()
         val request = enclave.server.takeRequest()
         assertEquals("0", request.getHeader("X-Stainless-Retry-Count"))
         assertFalse(request.body.readUtf8().contains("user_cache_secret"), "an enclave client adds no cache secret")
