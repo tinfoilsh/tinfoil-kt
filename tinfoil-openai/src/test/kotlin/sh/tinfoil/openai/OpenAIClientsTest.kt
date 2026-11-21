@@ -94,7 +94,7 @@ class OpenAIClientsTest {
     private suspend fun enclaveHttp(host: String = enclave.host, transport: Transport = Transport.Tls): EnclaveHttpClient =
         enclave.connections().enclave(host, Trust.RepoPin("tinfoilsh/example")) {
             this.transport = transport
-            attestationRelay = enclave.relayHost
+            fetchAttestation = enclave.relayFetcher
         }.also { closeables += it }
 
     private suspend fun enclaveClient(
@@ -117,8 +117,8 @@ class OpenAIClientsTest {
         userCacheSecret: String? = null,
         configure: (ClientOptions.Builder.() -> Unit)? = null,
     ): Client {
-        val http = enclave.routerConnections(elsewhere.url("/routers")).router {
-            attestationRelay = enclave.relayHost
+        val http = enclave.routerConnections().router {
+            fetchAttestation = enclave.relayFetcher
             this.userCacheSecret = userCacheSecret
         }.also { closeables += it }
         return Client.create(http, KEY) { configure?.let { openAI(it) } }.also { closeables += it }

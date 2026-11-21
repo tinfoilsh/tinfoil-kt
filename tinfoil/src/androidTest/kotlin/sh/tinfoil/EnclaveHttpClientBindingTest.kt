@@ -46,8 +46,8 @@ class EnclaveHttpClientBindingTest {
                     policy = Policy(artifacts = ArtifactTrust.EndorsedArtifacts(listOf("not a key")))
                 }
             },
-            "a relay that is a URL" to {
-                EnclaveHttpClient.create(nowhere, trust) { attestationRelay = "https://relay.invalid/path" }
+            "a relay with a query" to {
+                EnclaveHttpClient.create(nowhere, trust) { fetchAttestation = AttestationRelay("https://relay.invalid/path?x") }
             },
             "an enclave that is a URL" to { EnclaveHttpClient.create("https://$nowhere/", trust) },
             "a proxy over HTTP that is not on this machine" to {

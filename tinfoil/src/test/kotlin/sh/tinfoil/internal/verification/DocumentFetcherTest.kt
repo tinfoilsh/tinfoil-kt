@@ -33,11 +33,11 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-class AttestationFetcherTest {
+class DocumentFetcherTest {
     private val authority = TestAuthority()
     private val server = httpsServer(authority.issue())
     private val plain = MockWebServer().apply { start() }
-    private val fetcher = AttestationFetcher(HttpSettings(authority.trust))
+    private val fetcher = DocumentFetcher(HttpSettings(authority.trust))
 
     @AfterTest
     fun shutDown() {
@@ -98,16 +98,16 @@ class AttestationFetcherTest {
         assertEquals("found", fetcher.fetch(server.https()).decodeToString())
         assertEquals(listOf("/.well-known/tinfoil-attestation?nonce=00", "/a", "/b"), List(3) { server.takeRequest().path })
 
-        repeat(AttestationFetcher.MAX_REDIRECTS) { server.enqueue(redirect("/hop$it")) }
+        repeat(DocumentFetcher.MAX_REDIRECTS) { server.enqueue(redirect("/hop$it")) }
         server.enqueue(MockResponse().setBody("at the limit"))
         assertEquals("at the limit", fetcher.fetch(server.https()).decodeToString())
 
         val before = server.requestCount
-        repeat(AttestationFetcher.MAX_REDIRECTS + 1) { server.enqueue(redirect("/hop$it")) }
+        repeat(DocumentFetcher.MAX_REDIRECTS + 1) { server.enqueue(redirect("/hop$it")) }
         val error = assertFailsWith<NetworkException> { fetcher.fetch(server.https()) }
         assertTrue(error.detail.contains("stopped after 10 redirects"), error.detail)
         assertNull(error.status)
-        assertEquals(AttestationFetcher.MAX_REDIRECTS + 1, server.requestCount - before)
+        assertEquals(DocumentFetcher.MAX_REDIRECTS + 1, server.requestCount - before)
     }
 
     @Test
@@ -126,7 +126,7 @@ class AttestationFetcherTest {
 
     @Test
     fun theBodyIsCappedWhileItStreamsWhateverLengthIsDeclared() = runBlocking<Unit> {
-        val capped = AttestationFetcher(HttpSettings(authority.trust), maxBodyBytes = 1000)
+        val capped = DocumentFetcher(HttpSettings(authority.trust), maxBodyBytes = 1000)
         try {
             server.enqueue(MockResponse().setBody("x".repeat(1000)))
             assertEquals(1000, capped.fetch(server.https()).size, "a body of exactly the cap")
@@ -151,14 +151,14 @@ class AttestationFetcherTest {
 
     @Test
     fun theDefaultLimitsAreThoseOfTheContract() {
-        assertEquals(32L * 1024 * 1024, AttestationFetcher.MAX_BODY_BYTES)
-        assertEquals(30.seconds, AttestationFetcher.TIMEOUT)
-        assertEquals(10, AttestationFetcher.MAX_REDIRECTS)
+        assertEquals(32L * 1024 * 1024, DocumentFetcher.MAX_BODY_BYTES)
+        assertEquals(30.seconds, DocumentFetcher.TIMEOUT)
+        assertEquals(10, DocumentFetcher.MAX_REDIRECTS)
     }
 
     @Test
     fun oneTimeoutCoversTheWholeFetch() = runBlocking<Unit> {
-        val hurried = AttestationFetcher(HttpSettings(authority.trust), timeout = 600.milliseconds)
+        val hurried = DocumentFetcher(HttpSettings(authority.trust), timeout = 600.milliseconds)
         try {
             server.enqueue(MockResponse().setBody("late").setHeadersDelay(3, TimeUnit.SECONDS))
             val slowHeaders = assertFailsWith<NetworkException> { hurried.fetch(server.https()) }

@@ -15,7 +15,6 @@ import sh.tinfoil.internal.requireNotEmpty
 import sh.tinfoil.internal.transport.AttestedCall
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
-import sh.tinfoil.internal.verification.AttestationFetcher
 import sh.tinfoil.internal.verification.VerifierInputs
 import java.io.IOException
 import kotlin.coroutines.coroutineContext
@@ -187,8 +186,10 @@ public class RouterHttpClient private constructor(
          * Creates a client for one of Tinfoil's routers, verified before
          * this returns.
          *
-         * The router is the first on Tinfoil's router list that verifies
-         * and holds its attested TLS key. The list is only a proposal, and
+         * The router is the first that verifies and holds its attested TLS
+         * key in a shuffled copy of Tinfoil's router list, or of the list
+         * that [fetchRouterList][RouterOptions.fetchRouterList] obtains. The
+         * list is only a proposal, and
          * is not trusted. Each router on it is verified against Tinfoil's
          * router by name, exactly as an enclave that the caller names would
          * be. A host could pass that by handing on a genuine router's
@@ -196,12 +197,15 @@ public class RouterHttpClient private constructor(
          * the document endorses, on a connection that is opened to check
          * that and carries no request. The client's later connections to
          * the router are pinned to that key in both transport modes. So
-         * whatever the list says, no request, header or body is written to
-         * a host that does not hold a verified router's TLS key; a forged
-         * list can only cost time, or decide which genuine router is
-         * chosen.
+         * whatever the list says, no request, header or body is written
+         * directly to a host that does not hold a verified router's TLS
+         * key; a forged list can only cost time, or decide which genuine
+         * router is chosen. Through a [proxy][Transport.Ehbp.proxyUrl], the
+         * proxy opens the connection to the chosen host, and the list's
+         * source is trusted not to name an impostor; see
+         * [RouterListFetcher].
          *
-         * Routers are tried in the order of the list, one at a time and
+         * Routers are tried in that order, one at a time and
          * once each, for at most 30 seconds in all, the fetch of the list
          * included. A router that cannot be reached, does not verify, does
          * not present its attested key or is rejected by
@@ -213,9 +217,8 @@ public class RouterHttpClient private constructor(
          * first fails; if that fails too, this fails with its error. Its
          * connections are pinned to its attested key like any router's.
          *
-         * With a [base URL][RouterOptions.baseUrl], which is a proxy, or an
-         * [attestation relay][RouterOptions.attestationRelay], the list is
-         * not fetched and the client uses `inference.tinfoil.sh`.
+         * Discovery always runs, whatever the transport and the fetchers.
+         * The caller's cancellation ends it, and does not fall back.
          *
          * Everything is an option, set in the block that [options] is and
          * described by [RouterOptions]:
@@ -268,11 +271,10 @@ public class RouterHttpClient private constructor(
             val proxy = (transport as? Transport.Ehbp)?.proxyUrl?.also { Urls.routeUrl(it, "proxy URL") }
             // The router's config trust is Tinfoil's public registry.
             val verifier = internals.newVerifier(null, VerifierInputs.policy(settings.policy))
-            val relay = requireNotEmpty(settings.attestationRelay, "attestationRelay")
             val secret = UserCacheSecret.resolve(settings.userCacheSecret, internals.processSecret)
             val open = { host: String ->
                 EnclaveConnection.create(
-                    host, RouterDiscovery.ROUTER_PIN, transport, relay, verifier, secret, verificationCheck,
+                    host, RouterDiscovery.ROUTER_PIN, transport, settings.fetchAttestation, verifier, secret, verificationCheck,
                     onVerificationResult, internals,
                     // The caller named no host, so a direct connection to
                     // the router is pinned in both transport modes.
@@ -281,12 +283,9 @@ public class RouterHttpClient private constructor(
             }
             val fallback = open(internals.discovery.fallback)
 
-            // A proxy forwards each request, with its headers, to the host
-            // that the request names, over a connection that only the proxy
-            // sees. A listed host could not be held to its attested key
-            // there, so none is used.
+            // Discovery always runs, whatever the transport and the fetchers.
             val discovered = try {
-                if (relay == null && proxy == null) discover(open, internals) else null
+                discover(open, settings.fetchRouterList, internals)
             } catch (e: Throwable) {
                 fallback.close()
                 throw e
@@ -310,18 +309,26 @@ public class RouterHttpClient private constructor(
             return@creating RouterHttpClient(connection)
         }
 
-        private suspend fun discover(open: (String) -> EnclaveConnection, internals: Internals): EnclaveConnection? {
-            // The list is fetched as attestation documents are: over HTTPS
-            // only, within a time and a size, on connections of its own.
-            val fetcher = AttestationFetcher(
-                internals.http,
-                timeout = RouterDiscovery.LIST_TIMEOUT,
-                maxBodyBytes = RouterDiscovery.MAX_LIST_BYTES,
-            )
+        private suspend fun discover(
+            open: (String) -> EnclaveConnection,
+            option: RouterListFetcher?,
+            internals: Internals,
+        ): EnclaveConnection? {
+            // A fetched list is fetched as attestation documents are: over
+            // HTTPS, or HTTP to a relay on this machine, within a time and a
+            // size, on connections of its own.
+            val fetcher = lazy { RouterDiscovery.listFetcher(internals.http) }
+            val list: suspend () -> List<String> = when (option) {
+                null -> { -> RouterDiscovery.parse(fetcher.value.fetch(internals.discovery.listUrl)) }
+                is RouterListRelay -> { -> RouterDiscovery.parse(fetcher.value.fetch(option.listUrl, allowLoopbackHttp = true)) }
+                else -> option::fetchRouterList
+            }
             try {
-                return RouterDiscovery(internals.discovery, fetcher::fetch).discover(open)
+                return RouterDiscovery(internals.discovery, list).discover(open)
             } finally {
-                fetcher.close()
+                if (fetcher.isInitialized()) {
+                    fetcher.value.close()
+                }
             }
         }
     }

@@ -8,7 +8,11 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.internal.transport.Urls
-import java.io.IOException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import sh.tinfoil.internal.transport.HttpSettings
+import sh.tinfoil.internal.verification.DocumentFetcher
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import kotlin.time.Duration
@@ -16,8 +20,9 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 /**
- * Chooses one of Tinfoil's routers: the first on Tinfoil's router list that
- * verifies and that holds the TLS key that its attestation endorses.
+ * Chooses one of Tinfoil's routers: the first in a shuffled copy of the
+ * router list that verifies and that holds the TLS key that its attestation
+ * endorses.
  *
  * The list is not trusted. It only proposes hosts, and a host has to pass
  * two checks before it is chosen. Its attestation document is verified
@@ -36,8 +41,11 @@ import kotlin.time.TimeSource
  * It cannot have a request, a header or a body written to a host that does
  * not hold a verified router's TLS key. That holds only for connections
  * that this SDK opens itself. A proxy opens its own, to the host that a
- * request names, so a client that sends through a proxy is never given a
- * host from the list; see [sh.tinfoil.RouterHttpClient.create].
+ * request names, and cannot be held to the attested key: through a proxy,
+ * the list's source is trusted not to name a host that passes on another
+ * router's document, which would receive the request headers, though not
+ * the sealed bodies. That risk is accepted; see
+ * [sh.tinfoil.RouterListFetcher].
  *
  * The time is bounded as a whole: the fetch of the list, every
  * verification and every such connection share one budget, however long
@@ -45,8 +53,11 @@ import kotlin.time.TimeSource
  */
 internal class RouterDiscovery(
     private val settings: Settings,
-    /** Fetches the list; a fetch that fails, with an [IOException], leaves no candidates. */
-    private val fetchList: suspend (HttpUrl) -> ByteArray,
+    /**
+     * Obtains the list. Whatever it throws, but the cancellation of the
+     * caller, leaves no candidates.
+     */
+    private val listRouters: suspend () -> List<String>,
 ) {
     /** Where discovery looks, and for how long. */
     internal class Settings(
@@ -54,6 +65,8 @@ internal class RouterDiscovery(
         val fallback: String = FALLBACK_ROUTER,
         val budget: Duration = BUDGET,
         val timeSource: TimeSource = TimeSource.Monotonic,
+        /** The order in which the candidates are tried: a uniform shuffle of a copy of them. */
+        val order: (List<String>) -> List<String> = { it.shuffled() },
     )
 
     /**
@@ -119,15 +132,24 @@ internal class RouterDiscovery(
         }
     }
 
+    /**
+     * The candidates, in the order in which they are tried. A list that
+     * cannot be obtained proposes nothing, whatever the reason, except the
+     * caller's cancellation, and the end of the budget, which end discovery.
+     */
     private suspend fun routers(): List<String> {
-        val body = try {
-            fetchList(settings.listUrl)
-        } catch (_: IOException) {
-            // What a fetch that failed throws. Anything else is a fault in
-            // this SDK, and must not pass for a list that proposes nothing.
+        val listed = try {
+            listRouters()
+        } catch (e: CancellationException) {
+            // The caller's cancellation, or the budget's end, ends
+            // discovery. A cancellation that the list's source threw while
+            // neither has happened is its own failure.
+            currentCoroutineContext().ensureActive()
+            return emptyList()
+        } catch (_: Exception) {
             return emptyList()
         }
-        return candidates(body)
+        return candidates(listed, settings.order)
     }
 
     internal companion object {
@@ -157,29 +179,34 @@ internal class RouterDiscovery(
         /** How many routers of a list are tried at most. */
         const val MAX_CANDIDATES: Int = 64
 
+        /** What fetches a router list, directly or through a relay. */
+        fun listFetcher(settings: HttpSettings): DocumentFetcher =
+            DocumentFetcher(settings, timeout = LIST_TIMEOUT, maxBodyBytes = MAX_LIST_BYTES)
+
         /**
-         * The hosts that [list] proposes, in its order: the strings of a
-         * JSON array that are a host with an optional port, as an enclave is
-         * named, each once, and no more than [MAX_CANDIDATES] of them.
-         * Numbers, booleans and nulls in the array are skipped. A text that
-         * is anything but one flat JSON array in UTF-8 proposes nothing.
+         * The strings of [list], a JSON array, in its order. Numbers,
+         * booleans and nulls in the array are skipped. A text that is
+         * anything but one flat JSON array in UTF-8 proposes nothing.
          */
-        fun candidates(list: ByteArray): List<String> {
-            val strings = try {
-                val text = Charsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(list))
-                    .toString()
-                flatArrayStrings(text) ?: return emptyList()
-            } catch (_: Exception) {
-                return emptyList()
-            }
+        fun parse(list: ByteArray): List<String> = try {
+            val text = Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(list))
+                .toString()
+            flatArrayStrings(text) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        /**
+         * The hosts that [listed] proposes, in its order: the strings that
+         * are a host with an optional port, as an enclave is named, each
+         * once. [listed] itself is not changed.
+         */
+        fun hosts(listed: List<String>): List<String> {
             val hosts = LinkedHashMap<String, String>()
-            for (host in strings) {
-                if (hosts.size >= MAX_CANDIDATES) {
-                    break
-                }
+            for (host in listed) {
                 try {
                     Urls.enclaveUrl(host)
                 } catch (_: ConfigurationException) {
@@ -190,6 +217,14 @@ internal class RouterDiscovery(
             }
             return hosts.values.toList()
         }
+
+        /**
+         * The candidates to try: the valid hosts of [listed], in the order
+         * that [order] gives a copy of them, and no more than
+         * [MAX_CANDIDATES].
+         */
+        fun candidates(listed: List<String>, order: (List<String>) -> List<String>): List<String> =
+            order(hosts(listed)).take(MAX_CANDIDATES)
 
         /**
          * The strings in [text] if it is a JSON array whose elements are all

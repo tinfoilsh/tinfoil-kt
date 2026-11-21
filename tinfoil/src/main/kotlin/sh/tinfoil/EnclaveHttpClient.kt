@@ -428,7 +428,7 @@ public class EnclaveHttpClient private constructor(
             val verifier = internals.newVerifier(inputs.config, VerifierInputs.policy(settings.policy))
             return EnclaveHttpClient(
                 EnclaveConnection.create(
-                    enclave, inputs.pin, settings.transport, settings.attestationRelay,
+                    enclave, inputs.pin, settings.transport, settings.fetchAttestation,
                     // The client never adds or changes a request's cache secret.
                     verifier, null,
                     settings.verificationCheck, settings.onVerificationResult, internals,

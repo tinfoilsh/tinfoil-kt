@@ -107,10 +107,20 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   against the router's pin like any enclave. Nothing read from it may relax
   a check, choose a pin, or be parsed with code that recurses on its input.
   An attestation document is not tied to the host that served it, so a
-  listed host is only ever reached over connections that are pinned to its
-  attested TLS key, in both transport modes, and is never named to a proxy:
-  with a proxy URL the router client uses the fallback router and does
-  not fetch the list.
+  listed host is reached directly only over connections that are pinned to
+  its attested TLS key, in both transport modes. Discovery always runs, a
+  proxy and the fetchers included; through an EHBP proxy a chosen router is
+  named to the proxy, so the list's source is trusted with the request
+  headers there, a risk that the spec accepts and the docs state.
+- Attestation documents and router lists that `fetchAttestation` and
+  `fetchRouterList` obtain are untrusted, as fetched ones are: a document is
+  verified against its nonce, the trust and the policy, and a list only
+  proposes hosts. A fetcher's error is classified where it is called: an
+  SDK exception keeps its category, anything else is a `NetworkException`
+  that keeps it as its cause, and a `CancellationException` is the caller's
+  only when the caller's coroutine is cancelled. A timeout of the SDK's own
+  is never left to pass for the caller's cancellation. Relay URLs follow
+  the rules for proxy URLs and are checked when the relay is made.
 - A request body is changed only to add the user cache secret, on the
   router route, or to replace it with the cache salt, on the gateway route, by rewriting those
   members in the text of a body that a strict JSON scanner accepts as one

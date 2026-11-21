@@ -47,6 +47,15 @@ class DocumentationExamplesTest {
         return client
     }
 
+    private suspend fun relays(): RouterHttpClient {
+        val client = RouterHttpClient.create {
+            transport = Transport.Ehbp(proxyUrl = "https://app.example/tinfoil/proxy")
+            fetchAttestation = AttestationRelay("https://app.example/tinfoil")
+            fetchRouterList = RouterListRelay("https://app.example/tinfoil")
+        }
+        return client
+    }
+
     @Test
     fun theExamplesNameTheTransportThatTheyAskFor() {
         assertEquals(Transport.Ehbp("https://proxy.example.com/"), Transport.Ehbp(proxyUrl = "https://proxy.example.com/"))

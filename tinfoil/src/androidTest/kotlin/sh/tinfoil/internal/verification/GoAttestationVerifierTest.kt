@@ -58,11 +58,7 @@ class GoAttestationVerifierTest {
 
         assertEquals(
             "https://enclave.example/.well-known/tinfoil-attestation?nonce=${hex(nonce)}",
-            verifier.attestationUrl("enclave.example", null, nonce),
-        )
-        assertEquals(
-            "https://relay.example:8443/.well-known/tinfoil-attestation?nonce=${hex(nonce)}&enclave=enclave.example",
-            verifier.attestationUrl("enclave.example", "relay.example:8443", nonce),
+            verifier.attestationUrl("enclave.example", nonce),
         )
     }
 
@@ -72,13 +68,12 @@ class GoAttestationVerifierTest {
         val nonce = verifier.newNonce()
 
         val refused = listOf<() -> Any>(
-            { verifier.attestationUrl("https://enclave.example", null, nonce) },
-            { verifier.attestationUrl("", null, nonce) },
-            { verifier.attestationUrl("enclave.example/path", null, nonce) },
-            { verifier.attestationUrl("user@enclave.example", null, nonce) },
-            { verifier.attestationUrl("enclave.example", "https://relay.example", nonce) },
-            { verifier.attestationUrl("enclave.example", null, nonce.copyOf(31)) },
-            { verifier.attestationUrl("enclave.example", null, ByteArray(0)) },
+            { verifier.attestationUrl("https://enclave.example", nonce) },
+            { verifier.attestationUrl("", nonce) },
+            { verifier.attestationUrl("enclave.example/path", nonce) },
+            { verifier.attestationUrl("user@enclave.example", nonce) },
+            { verifier.attestationUrl("enclave.example", nonce.copyOf(31)) },
+            { verifier.attestationUrl("enclave.example", ByteArray(0)) },
         )
         for (call in refused) {
             val error = assertFailsWith<ConfigurationException> { call() }

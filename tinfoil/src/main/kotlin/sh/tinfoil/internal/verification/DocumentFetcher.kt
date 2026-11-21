@@ -16,24 +16,27 @@ import sh.tinfoil.TinfoilException
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.SdkIdentity
 import sh.tinfoil.internal.transport.HttpSettings
+import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.awaitAndRead
 import java.io.IOException
+import java.net.Proxy
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Fetches attestation documents. A document proves itself, so the fetch
- * trusts nothing that it reads; its limits keep a hostile server from costing
- * more than a bounded wait and a bounded amount of memory: HTTPS only, every
- * redirect included; a bounded number of redirects; one timeout for the whole
- * fetch; and a cap on the body that is enforced while it streams, whatever
- * length the server declares.
+ * Fetches attestation documents, router lists and catalogs. A document
+ * proves itself, so the fetch trusts nothing that it reads; its limits keep a
+ * hostile server from costing more than a bounded wait and a bounded amount
+ * of memory: HTTPS only, every redirect included, except for a relay on this
+ * machine, which may be reached over HTTP; a bounded number of redirects;
+ * one timeout for the whole fetch; and a cap on the body that is enforced
+ * while it streams, whatever length the server declares.
  *
  * Each fetch has a connection pool of its own, which is emptied afterwards:
  * a fetch never shares a connection with attested traffic, and never reuses
  * one that may still reach an instance that has since been replaced.
  */
-internal class AttestationFetcher(
+internal class DocumentFetcher(
     settings: HttpSettings = HttpSettings(),
     private val timeout: Duration = TIMEOUT,
     private val maxBodyBytes: Long = MAX_BODY_BYTES,
@@ -41,7 +44,9 @@ internal class AttestationFetcher(
     private val accepted: IntRange = SUCCESS,
 ) {
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))
+        // Cleartext only for a start URL that [fetch] lets through: a relay
+        // on this machine. Every redirect must be HTTPS.
+        .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT))
         // Redirects are followed here, one checked step at a time.
         .followRedirects(false)
         .followSslRedirects(false)
@@ -51,20 +56,26 @@ internal class AttestationFetcher(
         .build()
 
     /**
-     * The body of a GET of [url], which must be HTTPS. A failure to get it
+     * The body of a GET of [url], which must be HTTPS, or HTTP to
+     * `localhost` or a loopback IP address when [allowLoopbackHttp] is set,
+     * for a relay on this machine, which is then reached directly, whatever
+     * HTTP proxy the system is configured with. A failure to get it
      * is a [NetworkException] that keeps its cause, with the status when a
      * server answered with one that is not accepted. Cancelling the coroutine cancels
      * the fetch. Any thread may call it: the fetch, and the closing of its
      * connections, run on background threads.
      */
     @Throws(TinfoilException::class)
-    suspend fun fetch(url: HttpUrl): ByteArray {
-        if (!url.isHttps) {
+    suspend fun fetch(url: HttpUrl, allowLoopbackHttp: Boolean = false): ByteArray {
+        val local = Urls.isLoopback(url)
+        if (!url.isHttps && !(allowLoopbackHttp && local)) {
             throw ConfigurationException("attestation must be fetched over HTTPS")
         }
         return withContext(Background.dispatcher) {
             val pool = ConnectionPool()
-            val fetching = client.newBuilder().connectionPool(pool).build()
+            val fetching = client.newBuilder().connectionPool(pool)
+                .apply { if (local) proxy(Proxy.NO_PROXY) }
+                .build()
             try {
                 withTimeoutOrNull(timeout) { follow(fetching, url) }
                     ?: throw NetworkException("GET ${describe(url)} timed out after $timeout")

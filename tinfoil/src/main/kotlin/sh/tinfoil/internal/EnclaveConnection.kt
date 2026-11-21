@@ -14,6 +14,7 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import sh.tinfoil.AttestationException
+import sh.tinfoil.AttestationFetcher
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
@@ -35,7 +36,8 @@ import sh.tinfoil.internal.transport.TransportProtocol
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.transport.await
-import sh.tinfoil.internal.verification.AttestationFetcher
+import sh.tinfoil.internal.verification.DocumentFetcher
+import sh.tinfoil.internal.verification.DocumentSources
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.internal.verification.GoAttestationVerifier
 import sh.tinfoil.internal.verification.VerifierOptions
@@ -63,7 +65,6 @@ internal class EnclaveConnection(
     val baseUrl: HttpUrl,
     /** The proxy URL as the caller gave it, or null for a direct connection. */
     private val proxyUrl: String?,
-    private val relay: String?,
     private val attestor: Attestor,
     private val protocol: TransportProtocol,
     private val onVerificationResult: ((Result<Verification>) -> Unit)?,
@@ -359,7 +360,7 @@ internal class EnclaveConnection(
     /** Verifies the enclave and publishes the result. */
     private suspend fun runRefresh(once: Boolean): Outcome {
         val verification = try {
-            if (once) attestor.attestOnce(enclave, relay, pin) else attestor.attest(enclave, relay, pin)
+            if (once) attestor.attestOnce(enclave, pin) else attestor.attest(enclave, pin)
         } catch (e: CancellationException) {
             throw e
         } catch (e: TinfoilException) {
@@ -426,7 +427,7 @@ internal class EnclaveConnection(
             enclave: String,
             pin: Pin,
             transport: Transport,
-            attestationRelay: String?,
+            fetchAttestation: AttestationFetcher?,
             verifier: AttestationVerifier,
             cacheSecret: UserCacheSecret?,
             verificationCheck: VerificationCheck?,
@@ -455,23 +456,21 @@ internal class EnclaveConnection(
                 )
             }
             val proxied = base != null && Origin.of(base) != Origin.of(enclaveUrl)
-            val relay = requireNotEmpty(attestationRelay, "attestationRelay")?.also(Urls::requireRelay)
-            val fetcher = lazy { AttestationFetcher(internals.http) }
+            val fetcher = lazy { DocumentFetcher(internals.http) }
             val attestor = Attestor(
                 verifier = verifier,
-                fetch = { url -> fetcher.value.fetch(url) },
+                fetch = DocumentSources.of(fetchAttestation, verifier) { fetcher.value },
                 check = verificationCheck,
                 clock = internals.clock,
                 retryDelay = internals.retryDelay,
             )
-            attestor.checkOptions(enclave, relay, pin)
+            attestor.checkOptions(enclave, pin)
 
             return EnclaveConnection(
                 enclave = enclave,
                 pin = pin,
                 baseUrl = base ?: enclaveUrl,
                 proxyUrl = (transport as? Transport.Ehbp)?.proxyUrl,
-                relay = relay,
                 attestor = attestor,
                 protocol = when (transport) {
                     Transport.Tls -> PinnedTls(internals.http)

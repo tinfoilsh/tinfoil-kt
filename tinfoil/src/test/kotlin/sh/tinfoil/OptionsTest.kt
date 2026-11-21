@@ -61,11 +61,11 @@ class OptionsTest {
     )
 
     private fun EnclaveOptions.forTheTestEnclave() {
-        attestationRelay = enclave.relayHost
+        fetchAttestation = enclave.relayFetcher
     }
 
     private fun RouterOptions.forTheTestEnclave() {
-        attestationRelay = enclave.relayHost
+        fetchAttestation = enclave.relayFetcher
     }
 
     private fun GatewayOptions.forTheTestGateway() {
@@ -155,7 +155,8 @@ class OptionsTest {
     fun aBlockThatSetsNothingLeavesEveryOptionAtItsDefault() {
         for (settings in listOf(enclaveSettings { }, routerSettings { })) {
             assertEquals(Transport.Tls, settings.transport)
-            assertNull(settings.attestationRelay)
+            assertNull(settings.fetchAttestation)
+            assertNull(settings.fetchRouterList)
             assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)

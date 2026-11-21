@@ -23,8 +23,8 @@ internal class GoAttestationVerifier private constructor(
 ) : AttestationVerifier {
     override fun newNonce(): ByteArray = Companion.newNonce()
 
-    override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String {
-        val url = calling { Mobile.attestationURL(host, relay.orEmpty(), nonce) }
+    override fun attestationUrl(host: String, nonce: ByteArray): String {
+        val url = calling { Mobile.attestationURL(host, "", nonce) }
         // The library returns only HTTPS URLs; anything else is not one to
         // fetch evidence from.
         if (url == null || !url.startsWith("https://")) {

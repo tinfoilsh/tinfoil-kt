@@ -47,11 +47,15 @@ public class EnclaveOptions internal constructor() {
     public var transport: Transport = Transport.Tls
 
     /**
-     * A host, with an optional port, that fetches the enclave's attestation
-     * document on the client's behalf. It is not trusted: the document is
-     * verified whoever delivers it.
+     * How the client obtains the enclave's attestation documents: null, the
+     * default, fetches them directly from the enclave; an
+     * [AttestationRelay] fetches them through a relay, such as one on the
+     * application's own origin; and a function of the caller's can obtain
+     * them any other way. It is used for every verification, the first and
+     * every later one. A document is verified however it was obtained; see
+     * [AttestationFetcher].
      */
-    public var attestationRelay: String? = null
+    public var fetchAttestation: AttestationFetcher? = null
 
     /**
      * The checks that apply on top of the trust argument of
@@ -82,7 +86,7 @@ public class EnclaveOptions internal constructor() {
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transport, attestationRelay, policy, null, verificationCheck, onVerificationResult,
+        transport, fetchAttestation, null, policy, null, verificationCheck, onVerificationResult,
     )
 }
 
@@ -113,23 +117,37 @@ public class RouterOptions internal constructor() {
      * only bodies, and works through a proxy, its
      * [proxyUrl][Transport.Ehbp.proxyUrl], which forwards each request to
      * the router that the request's `X-Tinfoil-Enclave-Url` header names.
-     * With a proxy the router list is not consulted, and the router is
-     * always `inference.tinfoil.sh`: the proxy opens the connection to the
-     * host that the header names and passes it every header, the API key
-     * included, and this SDK cannot hold that connection to the attested
-     * key, so the header never names a host that an untrusted list
-     * proposed. The router is still verified directly, or through
-     * [attestationRelay], and not through the proxy.
+     * Discovery runs as without one, and the router that it chooses is
+     * verified through [fetchAttestation], or directly, and not through the
+     * proxy. The proxy opens the connection to the host that the header
+     * names, and this SDK cannot hold that connection to the attested key:
+     * the source of the router list is then trusted not to name a host that
+     * would relay another router's attestation, since such a host would
+     * receive every header, the API key included, though not the sealed
+     * bodies. See [RouterListFetcher].
      */
     public var transport: Transport = Transport.Tls
 
     /**
-     * A host, with an optional port, that fetches attestation documents on
-     * the client's behalf. It is not trusted: a document is verified whoever
-     * delivers it. With a relay the router list is not consulted: the client
-     * uses `inference.tinfoil.sh`, verified through the relay.
+     * How the client obtains attestation documents: null, the default,
+     * fetches them directly from each router; an [AttestationRelay]
+     * fetches them through a relay, such as one on the application's own
+     * origin; and a function of the caller's can obtain them any other way.
+     * It is used for each router that discovery tries, for the fallback,
+     * and whenever the chosen router is verified again. A document is
+     * verified however it was obtained; see [AttestationFetcher].
      */
-    public var attestationRelay: String? = null
+    public var fetchAttestation: AttestationFetcher? = null
+
+    /**
+     * How the client obtains its list of candidate routers: null, the
+     * default, fetches Tinfoil's list from `https://atc.tinfoil.sh/routers`;
+     * a [RouterListRelay] fetches it through a relay; and a function of the
+     * caller's can obtain it any other way. Discovery runs on the list as on
+     * Tinfoil's; see [RouterListFetcher] for what the list's source is
+     * trusted with.
+     */
+    public var fetchRouterList: RouterListFetcher? = null
 
     /**
      * The checks that apply on top of the router's fixed trust, its
@@ -177,7 +195,7 @@ public class RouterOptions internal constructor() {
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transport, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
+        transport, fetchAttestation, fetchRouterList, policy, userCacheSecret, verificationCheck, onVerificationResult,
     )
 }
 

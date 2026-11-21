@@ -92,7 +92,7 @@ class MainThreadSafetyTest {
     private val verifier = object : AttestationVerifier {
         override fun newNonce(): ByteArray = ByteArray(32)
 
-        override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String =
+        override fun attestationUrl(host: String, nonce: ByteArray): String =
             "https://$host/.well-known/tinfoil-attestation"
 
         override fun checkPinVerifiability(pin: Pin) = Unit

@@ -62,7 +62,7 @@ class OpenAIOptionsTest {
     private suspend fun enclaveHttp(transport: Transport = Transport.Tls): EnclaveHttpClient =
         enclave.connections().enclave(enclave.host, Trust.RepoPin("tinfoilsh/example")) {
             this.transport = transport
-            attestationRelay = enclave.relayHost
+            fetchAttestation = enclave.relayFetcher
         }.also { closeables += it }
 
     private fun completion(): MockResponse = MockResponse().setHeader("Content-Type", "application/json").setBody(COMPLETION)

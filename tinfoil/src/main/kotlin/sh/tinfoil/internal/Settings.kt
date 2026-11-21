@@ -2,10 +2,12 @@
 
 package sh.tinfoil.internal
 
+import sh.tinfoil.AttestationFetcher
 import sh.tinfoil.Catalog
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.ModelPin
 import sh.tinfoil.Policy
+import sh.tinfoil.RouterListFetcher
 import sh.tinfoil.Transport
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
@@ -19,7 +21,8 @@ import sh.tinfoil.VerificationCheck
 /** The options of a client for one enclave, or for a router that is chosen. */
 internal class RouteSettings(
     val transport: Transport = Transport.Tls,
-    val attestationRelay: String? = null,
+    val fetchAttestation: AttestationFetcher? = null,
+    val fetchRouterList: RouterListFetcher? = null,
     val policy: Policy = Policy(),
     val userCacheSecret: String? = null,
     val verificationCheck: VerificationCheck? = null,

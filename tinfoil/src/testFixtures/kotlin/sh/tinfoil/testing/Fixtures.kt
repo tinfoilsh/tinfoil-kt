@@ -13,6 +13,8 @@ import okhttp3.mockwebserver.RecordedRequest
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import sh.tinfoil.AttestationException
+import sh.tinfoil.AttestationFetcher
+import sh.tinfoil.AttestationRelay
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.CryptoMaterial
 import sh.tinfoil.EnclaveHttpClient
@@ -142,18 +144,12 @@ internal class FakeVerifier(
     override fun newNonce(): ByteArray =
         ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
 
-    override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String {
-        for (authority in listOfNotNull(host, relay)) {
-            if (authority.isEmpty() || authority.any { it in "/@?# " }) {
-                throw ConfigurationException("invalid host: want a host with an optional port")
-            }
+    override fun attestationUrl(host: String, nonce: ByteArray): String {
+        if (host.isEmpty() || host.any { it in "/@?# " }) {
+            throw ConfigurationException("invalid host: want a host with an optional port")
         }
         val hex = nonce.joinToString("") { "%02x".format(it) }
-        return if (relay == null) {
-            "https://$host/.well-known/tinfoil-attestation?nonce=$hex"
-        } else {
-            "https://$relay/.well-known/tinfoil-attestation?nonce=$hex&enclave=$host"
-        }
+        return "https://$host/.well-known/tinfoil-attestation?nonce=$hex"
     }
 
     override fun checkPinVerifiability(pin: Pin) {
@@ -185,9 +181,9 @@ internal class NotingVerifier(
         return inner.newNonce()
     }
 
-    override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String {
+    override fun attestationUrl(host: String, nonce: ByteArray): String {
         note("attestationUrl")
-        return inner.attestationUrl(host, relay, nonce)
+        return inner.attestationUrl(host, nonce)
     }
 
     override fun checkPinVerifiability(pin: Pin) {
@@ -271,6 +267,9 @@ public class TestEnclave(
     public val port: Int = server.port
     public val host: String = "localhost:$port"
     public val relayHost: String = "localhost:${relay.port}"
+
+    /** What fetches this enclave's attestation documents through [relay]. */
+    public val relayFetcher: AttestationRelay = AttestationRelay("https://$relayHost")
 
     /** How long a verification stays fresh on [clock]. */
     public val lifetimeSeconds: Long = 3600L
@@ -363,7 +362,7 @@ public class TestEnclave(
         internals: Internals = routerInternals(),
     ): RouterHttpClient = RouterHttpClient.create(internals) {
         this.transport = transport
-        attestationRelay = relayHost
+        fetchAttestation = relayFetcher
         this.userCacheSecret = userCacheSecret
         this.onVerificationResult = onVerificationResult
     }.also { clients += it }
@@ -376,13 +375,13 @@ public class TestEnclave(
         TestConnections(internals(note = note))
 
     /** What makes clients as [routerInternals] has them made. */
-    public fun routerConnections(listUrl: HttpUrl): TestConnections = TestConnections(routerInternals(listUrl))
+    public fun routerConnections(listUrl: HttpUrl = NO_LIST): TestConnections = TestConnections(routerInternals(listUrl))
 
     internal suspend fun client(
         enclave: String = host,
         trust: Trust = Trust.RepoPin("tinfoilsh/example"),
         transport: Transport = Transport.Tls,
-        attestationRelay: String? = relayHost,
+        fetchAttestation: AttestationFetcher? = relayFetcher,
         policy: Policy = Policy(),
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
@@ -390,7 +389,7 @@ public class TestEnclave(
     ): EnclaveHttpClient = EnclaveHttpClient.create(enclave, trust, internals) {
         this.policy = policy
         this.transport = transport
-        this.attestationRelay = attestationRelay
+        this.fetchAttestation = fetchAttestation
         this.verificationCheck = verificationCheck
         this.onVerificationResult = onVerificationResult
     }.also { clients += it }

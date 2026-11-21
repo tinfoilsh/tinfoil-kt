@@ -71,7 +71,7 @@ class OpenAICallerThreadTest {
 
         fromCaller {
             val http = enclave.connections(::note).enclave(enclave.host, Trust.RepoPin("tinfoilsh/example")) {
-                attestationRelay = enclave.relayHost
+                fetchAttestation = enclave.relayFetcher
             }
             Client.create(http, "a-key") { openAI { note("configure") } }.close()
             http.close()

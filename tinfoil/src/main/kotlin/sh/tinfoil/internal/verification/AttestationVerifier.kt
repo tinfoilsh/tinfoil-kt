@@ -24,11 +24,11 @@ internal interface AttestationVerifier {
 
     /**
      * The HTTPS URL to GET [host]'s attestation document from with [nonce],
-     * through [relay] when it is not null. Both are a host with an optional
-     * port, not a URL.
+     * directly from the enclave. [host] is a host with an optional port, not
+     * a URL.
      */
     @Throws(ConfigurationException::class, AttestationException::class)
-    fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String
+    fun attestationUrl(host: String, nonce: ByteArray): String
 
     /**
      * Throws the [ConfigurationException] that [verify] would throw for

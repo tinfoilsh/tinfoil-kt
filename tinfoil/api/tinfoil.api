@@ -42,6 +42,19 @@ public final class sh/tinfoil/AttestationException : sh/tinfoil/TinfoilException
 	public fun isRetryable ()Z
 }
 
+public abstract interface class sh/tinfoil/AttestationFetcher {
+	public abstract fun fetchAttestation (Ljava/lang/String;[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class sh/tinfoil/AttestationRelay : sh/tinfoil/AttestationFetcher {
+	public fun <init> (Ljava/lang/String;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public fun fetchAttestation (Ljava/lang/String;[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getUrl ()Lokhttp3/HttpUrl;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface class sh/tinfoil/AttestedHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
 	public abstract fun getBaseUrl ()Lokhttp3/HttpUrl;
 }
@@ -129,12 +142,12 @@ public final class sh/tinfoil/EnclaveHttpClient$Companion {
 }
 
 public final class sh/tinfoil/EnclaveOptions {
-	public final fun getAttestationRelay ()Ljava/lang/String;
+	public final fun getFetchAttestation ()Lsh/tinfoil/AttestationFetcher;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
-	public final fun setAttestationRelay (Ljava/lang/String;)V
+	public final fun setFetchAttestation (Lsh/tinfoil/AttestationFetcher;)V
 	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
 	public final fun setTransport (Lsh/tinfoil/Transport;)V
@@ -286,14 +299,29 @@ public final class sh/tinfoil/RouterHttpClient$Companion {
 	public static synthetic fun create$default (Lsh/tinfoil/RouterHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
+public abstract interface class sh/tinfoil/RouterListFetcher {
+	public abstract fun fetchRouterList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class sh/tinfoil/RouterListRelay : sh/tinfoil/RouterListFetcher {
+	public fun <init> (Ljava/lang/String;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public fun fetchRouterList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getUrl ()Lokhttp3/HttpUrl;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class sh/tinfoil/RouterOptions {
-	public final fun getAttestationRelay ()Ljava/lang/String;
+	public final fun getFetchAttestation ()Lsh/tinfoil/AttestationFetcher;
+	public final fun getFetchRouterList ()Lsh/tinfoil/RouterListFetcher;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getUserCacheSecret ()Ljava/lang/String;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
-	public final fun setAttestationRelay (Ljava/lang/String;)V
+	public final fun setFetchAttestation (Lsh/tinfoil/AttestationFetcher;)V
+	public final fun setFetchRouterList (Lsh/tinfoil/RouterListFetcher;)V
 	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
 	public final fun setTransport (Lsh/tinfoil/Transport;)V

@@ -111,7 +111,7 @@ class EhbpClientTest {
     private fun unverified(transport: Transport = Transport.Ehbp(proxyUrl)): EnclaveHttpClient =
         EnclaveHttpClient.unverified(
             enclave.host, Trust.RepoPin("tinfoilsh/example"),
-            RouteSettings(transport, enclave.relayHost),
+            RouteSettings(transport, enclave.relayFetcher),
             enclave.internals(),
         )
 

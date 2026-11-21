@@ -18,7 +18,7 @@ import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.transport.HttpSettings
-import sh.tinfoil.internal.verification.AttestationFetcher
+import sh.tinfoil.internal.verification.DocumentFetcher
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.testing.FakeVerifier
 import sh.tinfoil.testing.ENCAPSULATED_KEY_HEADER
@@ -42,6 +42,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -171,13 +172,16 @@ class RouterHttpClientTest {
             fallback = fallbackHost,
             budget = budget,
             timeSource = timeSource,
+            // The list's order, so that a test knows which router is tried first.
+            order = { it },
         ),
         newVerifier = standInVerifiers(verifier, verifierRequests),
     )
 
     private suspend fun client(
         transport: Transport = Transport.Tls,
-        attestationRelay: String? = null,
+        fetchAttestation: AttestationFetcher? = null,
+        fetchRouterList: RouterListFetcher? = null,
         policy: Policy = Policy(),
         userCacheSecret: String? = null,
         verificationCheck: VerificationCheck? = null,
@@ -185,7 +189,8 @@ class RouterHttpClientTest {
         internals: Internals = internals(),
     ): RouterHttpClient = RouterHttpClient.create(internals) {
         this.transport = transport
-        this.attestationRelay = attestationRelay
+        this.fetchAttestation = fetchAttestation
+        this.fetchRouterList = fetchRouterList
         this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
@@ -227,8 +232,8 @@ class RouterHttpClientTest {
         val list = listServer.takeRequest()
         assertEquals("/routers", list.path)
         assertEquals("GET", list.method)
-        assertEquals("tinfoil-kt", list.getHeader(AttestationFetcher.SDK_NAME_HEADER))
-        assertNotNull(list.getHeader(AttestationFetcher.SDK_VERSION_HEADER))
+        assertEquals("tinfoil-kt", list.getHeader(DocumentFetcher.SDK_NAME_HEADER))
+        assertNotNull(list.getHeader(DocumentFetcher.SDK_VERSION_HEADER))
         assertEquals(1, listServer.requestCount)
 
         client.execute(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build()).use {
@@ -297,7 +302,8 @@ class RouterHttpClientTest {
 
     @Test
     fun theListProposesHostsAsEnclavesAreNamedEachOnceAndNoMoreThanItsCap() {
-        fun candidates(text: String) = RouterDiscovery.candidates(text.toByteArray())
+        fun candidates(bytes: ByteArray) = RouterDiscovery.candidates(RouterDiscovery.parse(bytes)) { it }
+        fun candidates(text: String) = candidates(text.toByteArray())
 
         assertEquals(
             listOf("a.example", "b.example:8443", "192.0.2.1", "[2001:db8::1]:443", "xn--bcher-kva.example", "c.example."),
@@ -324,8 +330,8 @@ class RouterHttpClientTest {
         assertEquals(emptyList<String>(), candidates("[]"))
         assertEquals(emptyList<String>(), candidates("[".repeat(500_000)), "nesting that never closes")
         assertEquals(emptyList<String>(), candidates("[".repeat(200_000) + "]".repeat(200_000)))
-        assertEquals(emptyList<String>(), RouterDiscovery.candidates("[\"a.example\"]".toByteArray() + byteArrayOf(0xff.toByte())))
-        assertEquals(emptyList<String>(), RouterDiscovery.candidates(byteArrayOf('['.code.toByte(), '"'.code.toByte(), 0xc0.toByte(), 0x80.toByte(), '"'.code.toByte(), ']'.code.toByte())))
+        assertEquals(emptyList<String>(), candidates("[\"a.example\"]".toByteArray() + byteArrayOf(0xff.toByte())))
+        assertEquals(emptyList<String>(), candidates(byteArrayOf('['.code.toByte(), '"'.code.toByte(), 0xc0.toByte(), 0x80.toByte(), '"'.code.toByte(), ']'.code.toByte())))
 
         val many = (1..10_000).joinToString(",", "[", "]") { "\"router$it.example\"" }
         assertEquals((1..RouterDiscovery.MAX_CANDIDATES).map { "router$it.example" }, candidates(many))
@@ -557,7 +563,7 @@ class RouterHttpClientTest {
         }
         val list = "[\"${bad.host}\",\"${unreachable.host}\",\"${good.host}\",\"${later.host}\"]".toByteArray()
 
-        val chosen = RouterDiscovery(settings.discovery) { list }.discover(open)
+        val chosen = RouterDiscovery(settings.discovery) { RouterDiscovery.parse(list) }.discover(open)
 
         assertEquals(listOf(bad.host, unreachable.host, good.host), opened.map { it.enclave })
         assertSame(opened[2], chosen)
@@ -566,15 +572,13 @@ class RouterHttpClientTest {
 
         // With no router that verifies, there is nothing to return.
         opened.clear()
-        assertNull(RouterDiscovery(settings.discovery) { "[\"${bad.host}\"]".toByteArray() }.discover(open))
+        assertNull(RouterDiscovery(settings.discovery) { listOf(bad.host) }.discover(open))
         assertEquals(listOf(true), opened.map { it.isClosed })
         assertNull(RouterDiscovery(settings.discovery) { throw NetworkException("no list") }.discover(open))
         assertEquals(1, opened.size, "a list that cannot be fetched proposes nothing")
-        // Only what a failed fetch throws is taken for that. Anything else
-        // is a fault, and is not passed over as a list that proposes nothing.
-        assertFailsWith<IllegalStateException> {
-            RouterDiscovery(settings.discovery) { throw IllegalStateException("broken") }.discover(open)
-        }
+        // Whatever the list's source throws, it proposes nothing.
+        assertNull(RouterDiscovery(settings.discovery) { throw IllegalStateException("broken") }.discover(open))
+        assertNull(RouterDiscovery(settings.discovery) { throw kotlinx.coroutines.CancellationException("its own") }.discover(open))
         assertEquals(1, opened.size)
     }
 
@@ -654,10 +658,10 @@ class RouterHttpClientTest {
     }
 
     @Test
-    fun aRouterClientSendsThroughAProxyOnlyToTheFallbackRouterAndNeverReadsTheList() = test {
+    fun throughAProxyDiscoveryRunsAndTheChosenRouterIsNamedToTheProxy() = test {
         val listed = Router()
         serveList(listed.host)
-        val atProxy = SealingDispatcher({ fallback.key }) { it.reply("through the proxy") }
+        val atProxy = SealingDispatcher({ listed.key }) { it.reply("through the proxy") }
         val proxy = MockWebServer().apply {
             dispatcher = atProxy
             start()
@@ -667,12 +671,13 @@ class RouterHttpClientTest {
         val client = client(transport = Transport.Ehbp("http://localhost:${proxy.port}/v1/"))
 
         // The proxy forwards a request, headers and all, to the host that
-        // the request names, so that host is never one that a list proposed.
-        assertEquals(fallback.host, client.enclave)
-        assertEquals(0, listServer.requestCount, "the list is not fetched")
-        assertEquals(0, listed.fetches.get(), "no listed router is contacted")
+        // the request names, which the list proposed: the list's source is
+        // trusted with the headers there.
+        assertEquals(listed.host, client.enclave)
+        assertEquals(1, listServer.requestCount, "the list is fetched")
         assertEquals("http://localhost:${proxy.port}/v1/", client.baseUrl.toString())
-        assertEquals(1, fallback.fetches.get(), "the router is verified directly, and not through the proxy")
+        assertEquals(1, listed.fetches.get(), "the router is verified directly, and not through the proxy")
+        assertEquals(0, fallback.fetches.get())
         assertEquals(0, proxy.requestCount, "creating the client sends the proxy nothing")
         val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
             .post("""{"prompt":"plaintext-marker-0c77d1"}""".toRequestBody()).build()
@@ -685,30 +690,12 @@ class RouterHttpClientTest {
         assertEquals("/v1/chat/completions", sealed.request.path)
         assertFalse(bodyless.sealed)
         for (received in atProxy.received) {
-            assertEquals("https://${fallback.host}", received.request.getHeader(ENCLAVE_URL_HEADER))
+            assertEquals("https://${listed.host}", received.request.getHeader(ENCLAVE_URL_HEADER))
         }
         assertEquals(0, fallback.requests.size + listed.requests.size, "requests go to the proxy only")
         assertFailsWith<ConfigurationException> {
             client.execute(Request.Builder().url("https://${fallback.host}/v1/models").build())
         }
-    }
-
-    @Test
-    fun aBaseUrlOnTheFallbackRoutersOwnOriginIsADirectConnectionThatIsPinned() = test {
-        serveList(Router().host)
-
-        val client = client(transport = Transport.Ehbp("https://${fallback.host}/v1/"))
-
-        assertEquals(fallback.host, client.enclave)
-        assertEquals(0, listServer.requestCount)
-        client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build()).use {
-            assertNull(it.request.header(ENCLAVE_URL_HEADER))
-        }
-        fallback.presentAnotherKey()
-        assertFailsWith<AttestationException> {
-            client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build())
-        }
-        assertEquals(1, fallback.requests.size)
     }
 
     @Test
@@ -811,12 +798,13 @@ class RouterHttpClientTest {
             },
             "a proxy with a query" to { client(transport = Transport.Ehbp("https://proxy.example/?key=hunter2")) },
             "a proxy that is not a URL" to { client(transport = Transport.Ehbp("hunter2")) },
-            "a relay that is a URL" to { client(attestationRelay = "https://relay.example/hunter2") },
-            "a relay with user information" to { client(attestationRelay = "hunter2@relay.example") },
+            "a relay with a query" to { client(fetchAttestation = AttestationRelay("https://relay.example/?hunter2")) },
+            "a relay with user information" to { client(fetchAttestation = AttestationRelay("https://hunter2@relay.example/")) },
+            "a list relay over HTTP off this machine" to { client(fetchRouterList = RouterListRelay("http://relay.example/hunter2")) },
             "a negative freshness bound" to { client(policy = Policy(freshnessMaxAge = (-1).seconds)) },
             "a cache secret that is not well-formed text" to { client(userCacheSecret = "hunter2\ud800") },
             "proxy URL must not be empty" to { client(transport = Transport.Ehbp("")) },
-            "attestationRelay must not be empty" to { client(attestationRelay = "") },
+            "attestation relay URL must not be empty" to { client(fetchAttestation = AttestationRelay("")) },
         )
         for ((name, create) in refused) {
             val error = try {
@@ -837,7 +825,7 @@ class RouterHttpClientTest {
             assertEquals(0, verifier.verifications.get(), name)
         }
         // Null is how an option is left unset.
-        assertEquals(router.host, client(transport = Transport.Ehbp(null), attestationRelay = null, userCacheSecret = null).enclave)
+        assertEquals(router.host, client(transport = Transport.Ehbp(null), fetchAttestation = null, userCacheSecret = null).enclave)
     }
 
     @Test
@@ -853,20 +841,233 @@ class RouterHttpClientTest {
         assertEquals(0, listServer.requestCount)
     }
 
-    @Test
-    fun withARelayTheFallbackIsVerifiedThroughItAndTheListIsNotConsulted() = test {
-        val listed = Router()
-        serveList(listed.host)
-        val relay = httpsServer(authority.issue()).also { server -> closeables += AutoCloseable { server.shutdown() } }
-        relay.enqueue(MockResponse().setBody(fallback.certificate.fingerprint))
+    // Attestation and router-list fetchers.
 
-        val client = client(attestationRelay = "localhost:${relay.port}")
+    /** A relay on this machine's loopback address, over HTTPS, that serves each router's document from its own server. */
+    private inner class Relay {
+        val server: MockWebServer = httpsServer(authority.issue()).also { server -> closeables += AutoCloseable { server.shutdown() } }
+        val url = "https://localhost:${server.port}/tinfoil"
+        val requests = CopyOnWriteArrayList<RecordedRequest>()
+
+        /** The routers by host, whose documents the relay serves, and the list that it serves. */
+        val routers = java.util.concurrent.ConcurrentHashMap<String, Router>()
+
+        @Volatile
+        var list: MockResponse = MockResponse().setResponseCode(404)
+
+        init {
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    requests += request
+                    val url = request.requestUrl!!
+                    return when (url.encodedPath) {
+                        "/tinfoil/routers" -> list
+                        "/tinfoil/.well-known/tinfoil-attestation" ->
+                            routers[url.queryParameter("enclave")]?.let { MockResponse().setBody(it.certificate.fingerprint) }
+                                ?: MockResponse().setResponseCode(502)
+                        else -> MockResponse().setResponseCode(404)
+                    }
+                }
+            }
+        }
+
+        fun serve(vararg served: Router) = apply { served.forEach { routers[it.host] = it } }
+    }
+
+    @Test
+    fun withARelayDiscoveryStillRunsAndEveryDocumentComesThroughIt() = test {
+        val bad = Router().unverifiable()
+        val listed = Router()
+        serveList(bad.host, listed.host)
+        val relay = Relay().serve(listed, fallback)
+
+        val client = client(fetchAttestation = AttestationRelay(relay.url))
+
+        assertEquals(listed.host, client.enclave, "the router list was consulted")
+        assertEquals(1, listServer.requestCount)
+        client.reverify()
+        val fetched = relay.requests.map { it.requestUrl!!.queryParameter("enclave") }
+        assertEquals(listOf(bad.host, listed.host, listed.host), fetched, "every candidate, and the verification again")
+        assertEquals(0, bad.fetches.get() + listed.fetches.get() + fallback.fetches.get(), "nothing was fetched directly")
+        for (request in relay.requests) {
+            assertEquals("tinfoil-kt", request.getHeader("Tinfoil-SDK"))
+            assertNotNull(request.getHeader("Tinfoil-SDK-Version"))
+            assertNull(request.getHeader("Authorization"))
+            assertTrue(Regex("[0-9a-f]{64}").matches(request.requestUrl!!.queryParameter("nonce")!!))
+        }
+    }
+
+    @Test
+    fun aCallersFetcherIsUsedForEveryCandidateTheFallbackAndEveryLaterVerification() = test {
+        val listed = Router().unverifiable()
+        serveList(listed.host)
+        val asked = CopyOnWriteArrayList<String>()
+        val byHost = mapOf(fallback.host to fallback, listed.host to listed)
+        val fetcher = AttestationFetcher { host, nonce ->
+            assertEquals(32, nonce.size)
+            asked += host
+            byHost.getValue(host).let { if (it === listed) "not a document".toByteArray() else it.certificate.fingerprint.toByteArray() }
+        }
+
+        val client = client(fetchAttestation = fetcher)
+        client.reverify()
 
         assertEquals(fallback.host, client.enclave)
-        val fetch = relay.takeRequest()
-        assertEquals(fallback.host, fetch.requestUrl!!.queryParameter("enclave"))
+        assertEquals(listOf(listed.host, fallback.host, fallback.host), asked.toList())
+        assertEquals(0, listed.fetches.get() + fallback.fetches.get(), "nothing was fetched directly")
+    }
+
+    @Test
+    fun aCallersFetchersFailuresAreClassified() = test {
+        serveList()
+        val cause = IllegalStateException("the relay is down")
+        val network = assertFailsWith<NetworkException> {
+            client(fetchAttestation = { _, _ -> throw cause })
+        }
+        // The fetcher's error is the cause. Under a JVM with assertions on,
+        // coroutines may rethrow a copy of it, with the original as its cause.
+        val kept = assertIs<IllegalStateException>(network.cause)
+        assertTrue(kept === cause || kept.cause === cause, "$kept")
+        assertTrue(network.detail.contains("the relay is down"), network.detail)
+
+        val own = ConfigurationException("not a host that this app expects")
+        val configuration = assertFailsWith<ConfigurationException> { client(fetchAttestation = { _, _ -> throw own }) }
+        assertSame(own, configuration, "an SDK error keeps its category, and is not wrapped")
+
+        val cancelled = assertFailsWith<NetworkException> {
+            client(fetchAttestation = { _, _ -> throw kotlinx.coroutines.CancellationException("its own") })
+        }
+        assertIs<kotlinx.coroutines.CancellationException>(cancelled.cause, "a fetcher's own cancellation is not the caller's")
+
+        val refused = assertFailsWith<AttestationException> {
+            client(fetchAttestation = { _, _ -> "a document that does not verify".toByteArray() })
+        }
+        assertEquals(VerificationLayer.QUOTE, refused.layer)
+    }
+
+    @Test
+    fun aFetcherThatTakesTooLongTimesOutAsANetworkFailure() = test {
+        val error = assertFailsWith<NetworkException> {
+            sh.tinfoil.internal.verification.DocumentSources.fromCaller(
+                { _, _ -> kotlinx.coroutines.delay(60_000); ByteArray(0) },
+                "enclave.example",
+                ByteArray(32),
+                timeout = 50.milliseconds,
+            )
+        }
+        assertIs<kotlinx.coroutines.TimeoutCancellationException>(error.cause)
+        assertTrue(error.detail.contains("timed out"), error.detail)
+    }
+
+    @Test
+    fun theCallersCancellationPassesThroughAndDiscoveryDoesNotFallBack() = test {
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val creating = async {
+            client(
+                fetchRouterList = {
+                    entered.complete(Unit)
+                    kotlinx.coroutines.awaitCancellation()
+                },
+            )
+        }
+        entered.await()
+        creating.cancel()
+        assertFailsWith<kotlinx.coroutines.CancellationException> { creating.await() }
+        assertEquals(0, fallback.fetches.get(), "the fallback was not tried")
+    }
+
+    @Test
+    fun aCallersRouterListIsTriedInTheOrderThatDiscoveryGivesACopyOfIt() = test {
+        val bad = Router().unverifiable()
+        val good = Router()
+        val listed = listOf(bad.host, good.host, "not a host/")
+        val given = ArrayList(listed)
+        val ordered = CopyOnWriteArrayList<List<String>>()
+        val internals = internals().let {
+            sh.tinfoil.internal.Internals(
+                http = it.http,
+                clock = it.clock,
+                retryDelay = it.retryDelay,
+                discovery = RouterDiscovery.Settings(
+                    listUrl = listServer.url("/routers"),
+                    fallback = fallback.host,
+                    order = { candidates -> ordered += candidates; candidates.reversed() },
+                ),
+                newVerifier = it.newVerifier,
+            )
+        }
+
+        val client = client(fetchRouterList = { given }, internals = internals)
+
+        assertEquals(good.host, client.enclave, "the order that discovery gave is the one that is tried")
+        assertEquals(listOf(listOf(bad.host, good.host)), ordered.toList(), "the valid hosts, as a copy")
+        assertEquals(listed, given, "the caller's list is not changed")
+        assertEquals(0, listServer.requestCount, "Tinfoil's list is not fetched")
+        assertEquals(0, bad.fetches.get())
+    }
+
+    @Test
+    fun theDefaultOrderIsAUniformShuffleOfACopy() {
+        val hosts = (1..8).map { "router$it.example" }
+        val orders = (1..400).map { RouterDiscovery.Settings().order(hosts) }
+        for (order in orders) {
+            assertEquals(hosts.toSet(), order.toSet())
+        }
+        assertEquals((1..8).map { "router$it.example" }, hosts)
+        val firsts = orders.groupingBy { it.first() }.eachCount()
+        assertEquals(hosts.toSet(), firsts.keys, "every router comes first sometimes")
+        assertTrue(firsts.values.all { it in 20..90 }, "about one in eight each time: $firsts")
+    }
+
+    @Test
+    fun aCallersRouterListThatFailsCountsAsEmptyAndTinfoilsIsNotFetched() = test {
+        serveList(Router().host)
+
+        val client = client(fetchRouterList = { throw java.io.IOException("no list") })
+
+        assertEquals(fallback.host, client.enclave)
         assertEquals(0, listServer.requestCount)
-        assertEquals(0, listed.fetches.get() + fallback.fetches.get())
+    }
+
+    @Test
+    fun aRelayedRouterListIsReadAsTinfoilsIs() = test {
+        val listed = Router()
+        val relay = Relay()
+        relay.list = MockResponse().setBody("[\"${listed.host}\"]")
+
+        val client = client(fetchRouterList = RouterListRelay(relay.url))
+
+        assertEquals(listed.host, client.enclave)
+        assertEquals("/tinfoil/routers", relay.requests.single().path)
+        assertEquals(0, listServer.requestCount)
+
+        for (list in listOf(MockResponse().setBody("{\"routers\":[]}"), MockResponse().setResponseCode(500),
+            MockResponse().setBody("[\"" + "a".repeat(2 shl 20) + "\"]"))) {
+            relay.list = list
+            assertEquals(fallback.host, client(fetchRouterList = RouterListRelay(relay.url)).enclave)
+        }
+    }
+
+    @Test
+    fun withAProxyAndBothRelaysDiscoveryRunsRequestsGoToTheProxyAndFetchesToTheRelays() = test {
+        val listed = Router()
+        val relay = Relay().serve(listed)
+        relay.list = MockResponse().setBody("[\"${listed.host}\"]")
+        val proxy = httpsServer(authority.issue()).also { server -> closeables += AutoCloseable { server.shutdown() } }
+        proxy.dispatcher = listed.sealing
+
+        val client = client(
+            transport = Transport.Ehbp("https://localhost:${proxy.port}/"),
+            fetchAttestation = AttestationRelay(relay.url),
+            fetchRouterList = RouterListRelay(relay.url),
+        )
+
+        assertEquals(listed.host, client.enclave, "discovery ran")
+        val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
+            .post("""{"prompt":"hi"}""".toRequestBody()).build()
+        assertEquals("sealed by ${listed.host}", client.execute(request).use { it.body!!.string() })
+        assertEquals("https://${listed.host}", listed.sealing.received.single().request.getHeader(ENCLAVE_URL_HEADER))
+        assertEquals(0, listServer.requestCount + listed.fetches.get() + listed.requests.size)
     }
 
     // The cache secret.

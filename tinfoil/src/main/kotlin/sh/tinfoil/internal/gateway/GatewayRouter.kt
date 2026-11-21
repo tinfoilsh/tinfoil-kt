@@ -21,6 +21,7 @@ import okio.BufferedSource
 import okio.ForwardingSource
 import okio.buffer
 import sh.tinfoil.AttestationException
+import sh.tinfoil.AttestationRelay
 import sh.tinfoil.Catalog
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.ExperimentalTinfoilApi
@@ -46,7 +47,7 @@ import sh.tinfoil.internal.transport.SettledBody
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.transport.closeQuietly
-import sh.tinfoil.internal.verification.AttestationFetcher
+import sh.tinfoil.internal.verification.DocumentFetcher
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.internal.verification.VerifierInputs
 import sh.tinfoil.internal.verification.VerifierOptions
@@ -217,7 +218,7 @@ internal class GatewayRouter private constructor(
 
     // Made here, so that closing the client always finds it. It holds no
     // thread or connection until it fetches.
-    private val catalogFetcher: AttestationFetcher? =
+    private val catalogFetcher: DocumentFetcher? =
         if (suppliedCatalog == null) GatewayCatalog.fetcher(internals.http) else null
     private val fetchedCatalog: CatalogCache? = catalogFetcher?.let { fetcher ->
         CatalogCache({ GatewayCatalog.fetch(relay, fetcher) }, catalogScope, internals.timeSource)
@@ -660,6 +661,7 @@ internal class GatewayRouter private constructor(
             val authority = if (base.host.contains(':')) "[${base.host}]" else base.host
             val relay = if (base.port == HttpUrl.defaultPort(base.scheme)) authority else "$authority:${base.port}"
             Urls.requireRelay(relay)
+            val relayAtOrigin = AttestationRelay("https://$relay")
             // The caller's map is read once, here.
             val gatewayPolicy = GatewayPolicy(HashMap(modelPins), pinnedModelsOnly, policy, internals.newVerifier)
             val secret = UserCacheSecret.resolve(userCacheSecret, internals.processSecret)
@@ -668,7 +670,8 @@ internal class GatewayRouter private constructor(
                     enclave = replica.host,
                     pin = GatewayPolicy.pinOf(replica.reference),
                     transport = Transport.Ehbp(proxyUrl = base.toString()),
-                    attestationRelay = relay,
+                    // The gateway relays attestation documents at its origin.
+                    fetchAttestation = relayAtOrigin,
                     verifier = gatewayPolicy.verifierFor(replica),
                     // The router scopes the cache itself.
                     cacheSecret = null,

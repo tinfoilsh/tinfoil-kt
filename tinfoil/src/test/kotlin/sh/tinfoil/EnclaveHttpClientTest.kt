@@ -137,8 +137,6 @@ class EnclaveHttpClientTest {
             "a proxy in another scheme" to { enclave.client(transport = Transport.Ehbp("ftp://proxy.example/")) },
             "a proxy with a backslash" to { enclave.client(transport = Transport.Ehbp("https://proxy.example\\@evil.example/")) },
             "a proxy on the enclave's origin" to { enclave.client(transport = Transport.Ehbp(origin)) },
-            "a relay that is a URL" to { enclave.client(attestationRelay = "https://relay.example/x") },
-            "a relay that is not ASCII" to { enclave.client(attestationRelay = "\u212Aelay.example") },
             "an enclave that is not ASCII" to { enclave.client(enclave = "\u212Aexample.com") },
             "an enclave that a resolver reads as an address" to { enclave.client(enclave = "127.1:${enclave.port}") },
         )
@@ -161,7 +159,6 @@ class EnclaveHttpClientTest {
     fun anEmptyStringOptionIsRefusedByNameAndNotReadAsNotSet() = test {
         val refused: Map<String, suspend () -> Unit> = mapOf(
             "proxy URL" to { enclave.client(transport = Transport.Ehbp("")) },
-            "attestationRelay" to { enclave.client(attestationRelay = "") },
             "enclave" to { enclave.client(enclave = "") },
         )
         for ((option, create) in refused) {
