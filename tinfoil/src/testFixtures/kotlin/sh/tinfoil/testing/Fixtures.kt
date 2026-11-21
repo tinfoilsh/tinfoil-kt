@@ -314,7 +314,7 @@ public class TestEnclave(
     public fun rotateKey() {
         server.shutdown()
         certificate = authority.issue()
-        server = httpsServer(certificate, port)
+        server = sameAddress { httpsServer(certificate, port) }
     }
 
     public fun url(path: String = "/"): HttpUrl = "https://$host$path".toHttpUrl()
@@ -403,3 +403,21 @@ public class TestEnclave(
 
 /** A list URL that nothing answers, so that discovery falls back. */
 private val NO_LIST: HttpUrl = "https://localhost:1/routers".toHttpUrl()
+
+/**
+ * What [start] makes on a port that was just released, tried again for a
+ * while: on some systems the port is not free again at once.
+ */
+internal fun <T> sameAddress(start: () -> T): T {
+    var attempts = 0
+    while (true) {
+        try {
+            return start()
+        } catch (e: java.net.BindException) {
+            if (++attempts >= 100) {
+                throw e
+            }
+            Thread.sleep(50)
+        }
+    }
+}
