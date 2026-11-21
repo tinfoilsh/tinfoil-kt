@@ -10,7 +10,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.EnclaveHttpClient
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
-import sh.tinfoil.Pin
+import sh.tinfoil.Trust
 import sh.tinfoil.TransportMode
 import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.RouteSettings
@@ -130,14 +130,14 @@ public class EnclaveOpenAIClient private constructor(
 
     public companion object {
         /**
-         * Creates an [EnclaveHttpClient] for [enclave], verified against
-         * [pin] before this returns, and an OpenAI client over it.
+         * Creates an [EnclaveHttpClient] for [enclave], verified under
+         * [trust] before this returns, and an OpenAI client over it.
          *
          * Everything else is an option, set in the one block that [options]
          * is and described by [EnclaveOpenAIOptions]:
          *
          * ```
-         * val client = EnclaveOpenAIClient.create("enclave.example.com", pin, apiKey) {
+         * val client = EnclaveOpenAIClient.create("enclave.example.com", Trust.RepoPin("org/repo"), apiKey) {
          *     transportMode = TransportMode.EHBP
          *     openAI { maxRetries(0) }
          * }
@@ -157,7 +157,7 @@ public class EnclaveOpenAIClient private constructor(
          *
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
-         * @param pin What the enclave must be running; see
+         * @param trust Who vouches for the config that the enclave runs; see
          *   [EnclaveHttpClient.create].
          * @param apiKey The API key, sent as a bearer token with every
          *   request, to the enclave only. It must not be empty or blank. It
@@ -174,10 +174,10 @@ public class EnclaveOpenAIClient private constructor(
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             apiKey: String,
             options: EnclaveOpenAIOptions.() -> Unit = {},
-        ): EnclaveOpenAIClient = create(enclave, pin, apiKey, CrossArtifact::enclaveHttpClient, options)
+        ): EnclaveOpenAIClient = create(enclave, trust, apiKey, CrossArtifact::enclaveHttpClient, options)
 
         /**
          * [create] with [connect] in place of what makes the HTTP client,
@@ -186,31 +186,31 @@ public class EnclaveOpenAIClient private constructor(
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             apiKey: String,
-            connect: suspend (enclave: String, pin: Pin, settings: RouteSettings) -> EnclaveHttpClient,
+            connect: suspend (enclave: String, trust: Trust, settings: RouteSettings) -> EnclaveHttpClient,
             options: EnclaveOpenAIOptions.() -> Unit,
         ): EnclaveOpenAIClient {
             val (route, openAISettings) = enclaveOpenAISettings(options)
-            return create(enclave, pin, apiKey, route, openAISettings, connect)
+            return create(enclave, trust, apiKey, route, openAISettings, connect)
         }
 
         /** [create] with options that were read already. */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             apiKey: String,
             route: RouteSettings,
             openAISettings: OpenAISettings,
-            connect: suspend (enclave: String, pin: Pin, settings: RouteSettings) -> EnclaveHttpClient,
+            connect: suspend (enclave: String, trust: Trust, settings: RouteSettings) -> EnclaveHttpClient,
         ): EnclaveOpenAIClient = CrossArtifact.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
             val prepared = PreparedOpenAIOptions.prepare(apiKey, openAISettings)
             val httpClient = try {
-                connect(enclave, pin, route)
+                connect(enclave, trust, route)
             } catch (e: Throwable) {
                 prepared.discard()
                 throw e

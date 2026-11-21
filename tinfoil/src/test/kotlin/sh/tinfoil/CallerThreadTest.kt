@@ -19,7 +19,6 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import okio.BufferedSink
 import sh.tinfoil.internal.Background
-import sh.tinfoil.testing.NotingVerifier
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.TestGateway
 import java.util.concurrent.CopyOnWriteArrayList
@@ -95,12 +94,13 @@ class CallerThreadTest {
         enclave.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = MockResponse()
         }
-        val verifier = Verifier.appraisingWith(NotingVerifier(enclave.verifier, ::note))
-
         fromCaller {
-            val client = EnclaveHttpClient.create(enclave.host, Pin(repo = "tinfoilsh/example"), enclave.internals()) {
+            val client = EnclaveHttpClient.create(
+                enclave.host,
+                Trust.RepoPin("tinfoilsh/example"),
+                enclave.internals(note = ::note),
+            ) {
                 attestationRelay = enclave.relayHost
-                this.verifier = verifier
                 userCacheSecret = "a-cache-secret"
             }
             client.ensureVerified()
@@ -118,10 +118,8 @@ class CallerThreadTest {
     fun aGatewayClientCallsTheVerifierAndReadsBodiesOffTheCallersThread() {
         val gateway = TestGateway().also { closeables += it }
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
-        val verifier = Verifier.appraisingWith(NotingVerifier(gateway.verifier, ::note))
-
         fromCaller {
-            val client = gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m")), verifier = verifier)
+            val client = gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m")), note = ::note)
             client.models()
             client.ensureVerified("m")
             val chat = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)

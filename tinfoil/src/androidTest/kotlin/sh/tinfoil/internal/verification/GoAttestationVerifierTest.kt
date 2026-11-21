@@ -6,7 +6,7 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
 import sh.tinfoil.VerificationLayer
-import sh.tinfoil.Verifier
+import sh.tinfoil.Trust
 import sh.tinfoil.go.mobile.Mobile
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -36,7 +36,7 @@ class GoAttestationVerifierTest {
 
         assertEquals(loaded("UsageErrorPrefix"), VerifierErrors.USAGE_PREFIX)
         assertEquals(loaded("VerificationErrorPrefix"), VerifierErrors.VERIFICATION_PREFIX)
-        assertEquals(loaded("PublicRegistryID"), Verifier.PUBLIC_REGISTRY_ID)
+        assertEquals(loaded("PublicRegistryID"), Trust.PUBLIC_REGISTRY_ID)
         assertEquals(loaded("VerificationSchemaVersion"), VerificationPayload.SUPPORTED_SCHEMA_VERSION.toLong())
     }
 
@@ -122,11 +122,6 @@ class GoAttestationVerifierTest {
 
         assertContentEquals(nonceBefore, nonce)
         assertContentEquals("{}".toByteArray(), document)
-    }
-
-    @Test
-    fun theDefaultPolicyAuthorizesNoConfigItself() {
-        assertFalse(GoAttestationVerifier.create().callerAuthorizesConfig)
     }
 
     @Test

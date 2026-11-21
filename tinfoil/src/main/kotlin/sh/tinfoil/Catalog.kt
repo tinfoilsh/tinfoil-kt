@@ -58,10 +58,7 @@ public class Catalog(entries: Map<String, CatalogEntry>) {
 
 /**
  * Pins a model of the gateway to the repository that its replicas must run.
- *
- * Two pins are equal when they name the same repository and have the same
- * verifier: a [Verifier] is equal only to itself, so that means the same
- * instance, or none in both.
+ * Two pins are equal when they name the same repository and policy.
  *
  * Experimental: the gateway route is new, and this API may change or be
  * removed in a later release.
@@ -74,18 +71,19 @@ public class ModelPin(
      */
     public val repo: String,
     /**
-     * The trust policy for this model's replicas. Null uses the policy of
-     * the client that the pin is given to.
+     * The policy for this model's replicas. Null uses the policy of the
+     * client that the pin is given to; a policy replaces that one entirely,
+     * so a value that it leaves at its default takes the default, not the
+     * client's.
      */
-    public val verifier: Verifier? = null,
+    public val policy: Policy? = null,
 ) {
     override fun equals(other: Any?): Boolean =
-        this === other || (other is ModelPin && repo == other.repo && verifier === other.verifier)
+        this === other || (other is ModelPin && repo == other.repo && policy == other.policy)
 
-    override fun hashCode(): Int = Objects.hash(repo, verifier)
+    override fun hashCode(): Int = Objects.hash(repo, policy)
 
-    override fun toString(): String =
-        "ModelPin(repo=$repo, verifier=${if (verifier == null) "the client's" else "its own"})"
+    override fun toString(): String = "ModelPin(repo=$repo, policy=${policy ?: "the client's"})"
 }
 
 /**

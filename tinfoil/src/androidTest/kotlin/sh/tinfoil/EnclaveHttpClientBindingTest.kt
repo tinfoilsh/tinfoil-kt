@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 @RunWith(AndroidJUnit4::class)
 class EnclaveHttpClientBindingTest {
     private val nowhere = "enclave.invalid"
-    private val pin = Pin(repo = "tinfoilsh/example")
+    private val trust = Trust.RepoPin("tinfoilsh/example")
 
     /** The observer is told once a verification is over, which can be just after its caller is. */
     private fun <T> awaitOne(results: List<T>): T {
@@ -33,24 +33,30 @@ class EnclaveHttpClientBindingTest {
     fun theVerifiersOwnRulesRefuseOptionsBeforeAnyIo() = runBlocking<Unit> {
         val results = CopyOnWriteArrayList<Result<Verification>>()
         val refused: List<Pair<String, suspend () -> Unit>> = listOf(
-            "a pin that names nothing, under the default trust" to {
-                EnclaveHttpClient.create(nowhere, Pin.NONE) { onVerificationResult = { results += it } }
+            "a malformed repository" to {
+                EnclaveHttpClient.create(nowhere, Trust.RepoPin("not a repository")) { onVerificationResult = { results += it } }
             },
-            "a malformed pin" to { EnclaveHttpClient.create(nowhere, Pin(repo = "not a repository")) },
+            "a malformed project" to { EnclaveHttpClient.create(nowhere, Trust.ProjectPin("not a project")) },
+            "keys that are not keys" to { EnclaveHttpClient.create(nowhere, Trust.SignedBy(listOf("not a key"))) },
+            "a config that is not a config" to {
+                EnclaveHttpClient.create(nowhere, Trust.EmbeddedConfig("not: a config".toByteArray()))
+            },
+            "freshness keys that are not keys" to {
+                EnclaveHttpClient.create(nowhere, trust) {
+                    policy = Policy(artifacts = ArtifactTrust.EndorsedArtifacts(listOf("not a key")))
+                }
+            },
             "a relay that is a URL" to {
-                EnclaveHttpClient.create(nowhere, pin) { attestationRelay = "https://relay.invalid/path" }
+                EnclaveHttpClient.create(nowhere, trust) { attestationRelay = "https://relay.invalid/path" }
             },
-            "an enclave that is a URL" to { EnclaveHttpClient.create("https://$nowhere/", pin) },
-            "a pin for a verifier that authorizes configs itself" to {
-                EnclaveHttpClient.create(nowhere, pin) { verifier = Verifier(configAuthorizer = { }) }
-            },
+            "an enclave that is a URL" to { EnclaveHttpClient.create("https://$nowhere/", trust) },
             "a proxy over HTTP that is not on this machine" to {
-                EnclaveHttpClient.create(nowhere, pin) {
+                EnclaveHttpClient.create(nowhere, trust) {
                     transportMode = TransportMode.EHBP
                     baseUrl = "http://proxy.invalid/"
                 }
             },
-            "a proxy" to { EnclaveHttpClient.create(nowhere, pin) { baseUrl = "https://proxy.invalid/" } },
+            "a proxy" to { EnclaveHttpClient.create(nowhere, trust) { baseUrl = "https://proxy.invalid/" } },
         )
         for ((name, create) in refused) {
             assertFailsWith<ConfigurationException>(name) { create() }
@@ -63,7 +69,7 @@ class EnclaveHttpClientBindingTest {
         val results = CopyOnWriteArrayList<Result<Verification>>()
 
         val error = assertFailsWith<NetworkException> {
-            EnclaveHttpClient.create(nowhere, pin) { onVerificationResult = { results += it } }
+            EnclaveHttpClient.create(nowhere, trust) { onVerificationResult = { results += it } }
         }
 
         assertTrue(error.cause != null, "the cause is kept")
@@ -72,10 +78,8 @@ class EnclaveHttpClientBindingTest {
     }
 
     @Test
-    fun aVerifierThatAuthorizesConfigsItselfNeedsNoPin() = runBlocking<Unit> {
-        // Accepted as an option; it then fails on the network, not on the pin.
-        assertFailsWith<NetworkException> {
-            EnclaveHttpClient.create(nowhere, Pin.NONE) { verifier = Verifier(configAuthorizer = { }) }
-        }
+    fun aConfigThatTheCallerApprovesNeedsNoPin() = runBlocking<Unit> {
+        // Accepted as a trust argument; it then fails on the network, not on the pin.
+        assertFailsWith<NetworkException> { EnclaveHttpClient.create(nowhere, Trust.AuthorizedBy { }) }
     }
 }

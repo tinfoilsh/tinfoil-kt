@@ -21,9 +21,6 @@ internal class GoAttestationVerifier private constructor(
     // tracks itself; holding it here ties its lifetime to the verifier's.
     @Suppress("unused") private val configAuthorizer: ConfigAuthorizerBridge?,
 ) : AttestationVerifier {
-    override val callerAuthorizesConfig: Boolean
-        get() = verifier.callerAuthorizesConfig()
-
     override fun newNonce(): ByteArray = Companion.newNonce()
 
     override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String {

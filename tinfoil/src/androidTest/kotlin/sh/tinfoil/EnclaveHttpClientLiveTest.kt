@@ -29,7 +29,7 @@ import kotlin.time.Duration.Companion.seconds
 @RunWith(AndroidJUnit4::class)
 class EnclaveHttpClientLiveTest {
     private val enclave = "inference.tinfoil.sh"
-    private val pin = Pin(repo = "tinfoilsh/confidential-model-router")
+    private val trust = Trust.RepoPin("tinfoilsh/confidential-model-router")
 
     @Before
     fun requireOptIn() {
@@ -53,7 +53,7 @@ class EnclaveHttpClientLiveTest {
         val seen = CopyOnWriteArrayList<Verification>()
         val results = CopyOnWriteArrayList<Result<Verification>>()
 
-        EnclaveHttpClient.create(enclave = enclave, pin = pin) {
+        EnclaveHttpClient.create(enclave = enclave, trust = trust) {
             verificationCheck = VerificationCheck { seen += it }
             onVerificationResult = { results += it }
         }.use { client ->
@@ -72,7 +72,7 @@ class EnclaveHttpClientLiveTest {
 
             assertEquals("https://$enclave/", client.baseUrl.toString())
             assertEquals(enclave, client.enclave)
-            assertEquals(pin, client.pin)
+            assertEquals(trust, client.trust)
 
             val models = Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build()
             val body = client.execute(models).use { response ->
@@ -96,7 +96,7 @@ class EnclaveHttpClientLiveTest {
         val results = CopyOnWriteArrayList<Result<Verification>>()
 
         val error = assertFailsWith<AttestationException> {
-            EnclaveHttpClient.create(enclave = enclave, pin = Pin(repo = "tinfoilsh/not-the-router")) {
+            EnclaveHttpClient.create(enclave = enclave, trust = Trust.RepoPin("tinfoilsh/not-the-router")) {
                 onVerificationResult = { results += it }
             }
         }
@@ -107,7 +107,7 @@ class EnclaveHttpClientLiveTest {
 
     @Test
     fun aRequestToAnotherOriginIsRefusedByAVerifiedClient() = live {
-        EnclaveHttpClient.create(enclave = enclave, pin = pin).use { client ->
+        EnclaveHttpClient.create(enclave = enclave, trust = trust).use { client ->
             assertFailsWith<ConfigurationException> {
                 client.execute(Request.Builder().url("https://example.com/").build())
             }

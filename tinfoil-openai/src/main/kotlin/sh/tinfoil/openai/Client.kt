@@ -12,7 +12,6 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.NetworkException
 import sh.tinfoil.RouterHttpClient
-import sh.tinfoil.Verifier
 import sh.tinfoil.internal.CrossArtifact
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.openai.internal.PreparedOpenAIOptions
@@ -128,22 +127,21 @@ public class Client private constructor(
         public suspend fun create(
             apiKey: String,
             options: OpenAIOptions.() -> Unit = {},
-        ): Client = create(apiKey, null, CrossArtifact::routerHttpClient, options)
+        ): Client = create(apiKey, CrossArtifact::routerHttpClient, options)
 
         /**
-         * [create] with a trust policy, and with [connect] in place of what
+         * [create] with [connect] in place of what
          * makes the HTTP client, which tests replace.
          */
         @JvmSynthetic
         internal suspend fun create(
             apiKey: String,
-            verifier: Verifier?,
             connect: suspend (settings: RouteSettings) -> RouterHttpClient,
             options: OpenAIOptions.() -> Unit,
         ): Client {
             val openAISettings = openAISettings(options)
             // The route's options, of which this client sets the one.
-            val (routeSettings, _) = routerOpenAISettings { this.verifier = verifier }
+            val (routeSettings, _) = routerOpenAISettings { }
             return CrossArtifact.creating {
                 // Checking the options, which calls into the verifier
                 // library, and everything after it run on a background

@@ -137,16 +137,16 @@ val client = RouterOpenAIClient.create(apiKey) {
 }
 ```
 
-`EnclaveOpenAIClient` sends to an enclave that you name, verified against
-what you pin it to:
+`EnclaveOpenAIClient` sends to an enclave that you name, verified under the
+trust that you name for it (see [What is trusted](#what-is-trusted)):
 
 ```kotlin
-import sh.tinfoil.Pin
+import sh.tinfoil.Trust
 import sh.tinfoil.openai.EnclaveOpenAIClient
 
 val client = EnclaveOpenAIClient.create(
     enclave = "inference.tinfoil.sh",
-    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
     apiKey = apiKey,
 )
 println(client.httpClient.current?.codeDigest)
@@ -155,6 +155,39 @@ println(client.httpClient.current?.codeDigest)
 Both send to `https://<enclave>/v1/`, or to `baseUrl` as it is given. Their
 `httpClient` is the attested HTTP client itself, for requests that the
 OpenAI SDK has no call for.
+
+### What is trusted
+
+An enclave that you name is verified under a trust argument, which names
+who vouches for the config that it runs. It is one of the variants of
+`Trust`:
+
+| Variant | Accepts |
+|---|---|
+| `Trust.RepoPin(repo)` | v2 collateral for a GitHub repository, `owner/name[@tag][@sha256:digest]` |
+| `Trust.ProjectPin(project, registryIds)` | v3 collateral for a config registry project, `org/project[@revision][@sha256:digest]`, endorsed by the public registry (`registryIds = null`) or by exactly the registries listed; an empty list is refused |
+| `Trust.SignedBy(keys, project)` | v3 configs whose endorsements your keys sign, optionally only those of one project |
+| `Trust.AuthorizedBy(authorize)` | v3 configs that your `ConfigAuthorizer` approves |
+| `Trust.EmbeddedConfig(bytes, name)` | v3 collateral for exactly the config bytes that you supply |
+| `Trust.EitherPin(repo, project)` | either of the first two, for the migration from v2 to v3 collateral |
+
+The router's trust is fixed to its repository, and the gateway's to the
+repository of each model. Every client also takes a `policy`, which is plain
+data: register pins, the freshness bound, and who vouches for the runtime
+and platform artifacts, Tinfoil's endorsements or your own:
+
+```kotlin
+val client = EnclaveHttpClient.create("enclave.example.com", Trust.ProjectPin("org/project")) {
+    policy = Policy(
+        freshnessMaxAge = 1.days,
+        artifacts = ArtifactTrust.EndorsedArtifacts(freshnessKeys = listOf(freshnessKeyPem)),
+    )
+}
+```
+
+A client checks its trust argument and its policy before any network I/O,
+and refuses one that no verification could pass with a
+`ConfigurationException`.
 
 ### Gateway (experimental)
 
@@ -260,11 +293,11 @@ a request only to the service that it verified:
 ```kotlin
 import okhttp3.Request
 import sh.tinfoil.EnclaveHttpClient
-import sh.tinfoil.Pin
+import sh.tinfoil.Trust
 
 val client = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
-    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
 )
 
 val request = Request.Builder()
@@ -325,7 +358,7 @@ private through a proxy that you set as `baseUrl`:
 ```kotlin
 val client = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
-    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
 ) {
     transportMode = TransportMode.EHBP
     baseUrl = "https://proxy.example.com/"

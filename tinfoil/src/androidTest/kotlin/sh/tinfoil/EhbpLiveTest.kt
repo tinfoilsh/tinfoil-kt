@@ -79,7 +79,7 @@ class EhbpLiveTest {
 
     @Test
     fun theRouterVerifiesAndAnswersSealedRequests() = live {
-        EnclaveHttpClient.create(enclave = enclave, pin = Pin(repo = router)) {
+        EnclaveHttpClient.create(enclave = enclave, trust = Trust.RepoPin(router)) {
             transportMode = TransportMode.EHBP
         }.use { client ->
             val verified = assertNotNull(client.current)
@@ -117,7 +117,6 @@ class EhbpLiveTest {
             val verified = assertNotNull(client.current)
             Log.i(TAG, "discovered ${client.enclave} for sealed requests")
             assertEquals(TransportMode.EHBP, client.transportMode)
-            assertEquals(Pin(repo = router, project = router), client.pin)
             assertTrue(Regex("[0-9a-f]{64}").matches(verified.hpkePublicKey.orEmpty()), "$verified")
             assertEquals("https://${client.enclave}/", client.baseUrl.toString())
 
@@ -127,7 +126,7 @@ class EhbpLiveTest {
 
     @Test
     fun aTokenIsNotOfferedOverPinnedTls() = live {
-        EnclaveHttpClient.create(enclave = enclave, pin = Pin(repo = router)).use { client ->
+        EnclaveHttpClient.create(enclave = enclave, trust = Trust.RepoPin(router)).use { client ->
             assertFailsWith<ConfigurationException> {
                 client.executeRecoverable(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build())
             }

@@ -2,6 +2,10 @@ package sh.tinfoil
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.runner.RunWith
+import sh.tinfoil.internal.RouterDiscovery
+import sh.tinfoil.internal.verification.AttestationVerifier
+import sh.tinfoil.internal.verification.GoAttestationVerifier
+import sh.tinfoil.internal.verification.VerifierInputs
 import java.security.KeyPairGenerator
 import java.security.spec.ECGenParameterSpec
 import java.util.Base64
@@ -13,7 +17,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -21,9 +24,9 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.nanoseconds
 
 /**
- * Exercises [Verifier] through the native verifier library: each option
- * reaching it, the checks that a client makes before any I/O, and a config
- * authorizer called back during verification.
+ * Exercises the trust argument and the policy through the native verifier
+ * library: each value reaching it, the checks that a client makes before any
+ * I/O, and a config authorizer called back during verification.
  */
 @RunWith(AndroidJUnit4::class)
 class VerifierBindingTest {
@@ -39,175 +42,128 @@ class VerifierBindingTest {
         return "-----BEGIN PUBLIC KEY-----\n$encoded\n-----END PUBLIC KEY-----\n"
     }
 
-    private fun assertRefused(expected: String, build: () -> Verifier) {
+    /**
+     * A verifier as a client builds it from [trust], or from the router's
+     * trust when it is null, and [policy], with its pin checked.
+     */
+    private fun verifier(trust: Trust? = null, policy: Policy = Policy()): AttestationVerifier {
+        val inputs = trust?.let(VerifierInputs::of)
+        return GoAttestationVerifier.create(inputs?.config, VerifierInputs.policy(policy)).also {
+            it.checkPinVerifiability(inputs?.pin ?: RouterDiscovery.ROUTER_PIN)
+        }
+    }
+
+    private fun assertRefused(expected: String, build: () -> Unit) {
         val error = assertFailsWith<ConfigurationException> { build() }
         assertTrue(error.detail.contains(expected), "${error.detail} should mention $expected")
     }
 
     /** A verifier that reaches [authorizer] for the fixture document. */
-    private fun authorizedBy(authorizer: ConfigAuthorizer): Verifier = Verifier(
-        embeddedReferences = EmbeddedReferences(runtime = fixture.runtime, platform = fixture.platform),
-        configAuthorizer = authorizer,
+    private fun authorizedBy(authorizer: ConfigAuthorizer): AttestationVerifier = verifier(
+        Trust.AuthorizedBy(authorizer),
+        Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = fixture.runtime, platform = fixture.platform)),
     )
 
-    private fun verifyFixture(verifier: Verifier): AttestationException =
-        assertFailsWith<AttestationException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin.NONE) }
+    private fun verifyFixture(verifier: AttestationVerifier): AttestationException =
+        assertFailsWith<AttestationException> { verifier.verify(fixture.document, fixture.nonce, Pin.NONE) }
 
     @Test
     fun thePublicRegistryIsAccepted() {
-        assertTrue(Verifier.PUBLIC_REGISTRY_ID.startsWith("https://"), Verifier.PUBLIC_REGISTRY_ID)
-        Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID))
-        Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID, "https://registry.tinfoil.sh/scopes/9c4a7f21e0b836d56a13c8fe42d907ab"))
-    }
-
-    @Test
-    fun acceptsEachOption() {
-        val register = "ab".repeat(48)
-        assertFalse(Verifier().backend.callerAuthorizesConfig)
-        Verifier(pinnedRegisters = Measurement(tdx, listOf("", "", "", "", register)), freshnessMaxAge = 1.hours)
-        Verifier(pinnedRegisters = Measurement(snp, listOf(register)))
-        Verifier(freshnessMaxAge = 1.nanoseconds)
-        Verifier(freshnessMaxAge = 7.days)
-        Verifier(configSigningKeysPem = listOf(key))
-        Verifier(configSigningKeysPem = listOf(key, publicKeyPem()))
-        Verifier(freshnessSigningKeysPem = listOf(key))
-        assertFalse(
-            Verifier(embeddedReferences = EmbeddedReferences(runtime = fixture.runtime, platform = fixture.platform))
-                .backend.callerAuthorizesConfig,
-        )
-
-        val bytes = Verifier(
-            embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(fixture.config, name = "/org/project/v1")),
-        )
-        assertTrue(bytes.backend.callerAuthorizesConfig)
-
-        val reference = Verifier(
-            embeddedReferences = EmbeddedReferences(
-                config = EmbeddedConfig.Reference(
-                    digest = fixture.sha256Hex(fixture.config),
-                    runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", fixture.sha256Hex(fixture.runtime)),
-                ),
+        assertTrue(Trust.PUBLIC_REGISTRY_ID.startsWith("https://"), Trust.PUBLIC_REGISTRY_ID)
+        verifier(Trust.ProjectPin("org/project", listOf(Trust.PUBLIC_REGISTRY_ID)))
+        verifier(
+            Trust.ProjectPin(
+                "org/project",
+                listOf(Trust.PUBLIC_REGISTRY_ID, "https://registry.tinfoil.sh/scopes/9c4a7f21e0b836d56a13c8fe42d907ab"),
             ),
         )
-        assertTrue(reference.backend.callerAuthorizesConfig)
-
-        val everything = Verifier(
-            embeddedReferences = EmbeddedReferences(EmbeddedConfig.Bytes(fixture.config), fixture.runtime, fixture.platform),
-        )
-        assertTrue(everything.backend.callerAuthorizesConfig)
-
-        assertTrue(Verifier(configAuthorizer = { }).backend.callerAuthorizesConfig)
     }
 
     @Test
-    fun refusesInvalidOptions() {
-        assertRefused("must not be empty") { Verifier(configRegistryIds = emptyList()) }
-        assertRefused("registry URI") { Verifier(configRegistryIds = listOf("not a registry")) }
-        assertRefused("must not be empty") { Verifier(configSigningKeysPem = emptyList()) }
-        assertRefused("PEM PUBLIC KEY") { Verifier(configSigningKeysPem = listOf("not a key")) }
-        assertRefused("PEM PUBLIC KEY") { Verifier(configSigningKeysPem = listOf("junk\n$key")) }
-        assertRefused("single PEM block") { Verifier(configSigningKeysPem = listOf(key + key)) }
-        assertRefused("must not be empty") { Verifier(freshnessSigningKeysPem = emptyList()) }
-        assertRefused("PEM PUBLIC KEY") { Verifier(freshnessSigningKeysPem = listOf("not a key")) }
-        assertRefused("at least one component") { Verifier(embeddedReferences = EmbeddedReferences()) }
+    fun acceptsEachTrustAndPolicy() {
+        val register = "ab".repeat(48)
+        verifier()
+        verifier(policy = Policy(pinnedRegisters = Measurement(tdx, listOf("", "", "", "", register)), freshnessMaxAge = 1.hours))
+        verifier(policy = Policy(pinnedRegisters = Measurement(snp, listOf(register))))
+        verifier(policy = Policy(freshnessMaxAge = 1.nanoseconds))
+        verifier(policy = Policy(freshnessMaxAge = 7.days))
+        verifier(policy = Policy(artifacts = ArtifactTrust.EndorsedArtifacts(listOf(key))))
+        verifier(policy = Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = fixture.runtime, platform = fixture.platform)))
+        verifier(policy = Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = fixture.runtime, freshnessKeys = listOf(key))))
+        verifier(Trust.RepoPin("org/repo@v1"))
+        verifier(Trust.ProjectPin("org/project@v1"))
+        verifier(Trust.EitherPin("org/repo", "org/project"))
+        verifier(Trust.SignedBy(listOf(key)))
+        verifier(Trust.SignedBy(listOf(key, publicKeyPem()), "org/project"))
+        verifier(Trust.EmbeddedConfig(fixture.config, name = "/org/project/v1"))
+        verifier(Trust.EmbeddedConfig(fixture.config))
+        verifier(Trust.AuthorizedBy { })
+    }
+
+    @Test
+    fun refusesInvalidValues() {
+        assertRefused("must not be empty") { verifier(Trust.SignedBy(emptyList())) }
+        assertRefused("registry URI") { verifier(Trust.ProjectPin("org/project", listOf("not a registry"))) }
+        assertRefused("PEM PUBLIC KEY") { verifier(Trust.SignedBy(listOf("not a key"))) }
+        assertRefused("PEM PUBLIC KEY") { verifier(Trust.SignedBy(listOf("junk\n$key"))) }
+        assertRefused("single PEM block") { verifier(Trust.SignedBy(listOf(key + key))) }
+        assertRefused("must not be empty") { verifier(policy = Policy(artifacts = ArtifactTrust.EndorsedArtifacts(emptyList()))) }
+        assertRefused("PEM PUBLIC KEY") { verifier(policy = Policy(artifacts = ArtifactTrust.EndorsedArtifacts(listOf("not a key")))) }
+        assertRefused("runtime or a platform") { verifier(policy = Policy(artifacts = ArtifactTrust.EmbeddedArtifacts())) }
+        assertRefused("must not be empty") { verifier(Trust.EmbeddedConfig(ByteArray(0))) }
         assertRefused("must not be empty") {
-            Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(ByteArray(0))))
+            verifier(policy = Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = ByteArray(0))))
         }
-        assertRefused("must not be empty") { Verifier(embeddedReferences = EmbeddedReferences(runtime = ByteArray(0))) }
-        assertRefused("must not be empty") { Verifier(embeddedReferences = EmbeddedReferences(platform = ByteArray(0))) }
-        assertRefused("cvm-version") {
-            Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes("not: a config".toByteArray())))
+        assertRefused("must not be empty") {
+            verifier(policy = Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(platform = ByteArray(0))))
         }
-        assertRefused("config digest") {
-            Verifier(
-                embeddedReferences = EmbeddedReferences(
-                    config = EmbeddedConfig.Reference("", RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")),
-                ),
-            )
-        }
-        assertRefused("pinned registers") { Verifier(pinnedRegisters = Measurement("bogus", listOf("aa"))) }
-        assertRefused("pinned registers") { Verifier(pinnedRegisters = Measurement(tdx, listOf("aa"))) }
-        assertRefused("pinned registers") { Verifier(pinnedRegisters = Measurement(snp, listOf("not hex"))) }
+        assertRefused("cvm-version") { verifier(Trust.EmbeddedConfig("not: a config".toByteArray())) }
+        assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement("bogus", listOf("aa")))) }
+        assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement(tdx, listOf("aa")))) }
+        assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement(snp, listOf("not hex")))) }
     }
 
     /** The verifier library takes no empty string for "not set": it refuses each as a value that is not valid. */
     @Test
     fun refusesEmptyStrings() {
-        val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab".repeat(32))
-        val digest = "cd".repeat(32)
-        fun reference(runtime: RuntimeReference) =
-            Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Reference(digest, runtime)))
-        reference(runtime)
-        assertRefused("registry URI") { Verifier(configRegistryIds = listOf("")) }
-        assertRefused("registry URI") { Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID, "")) }
-        assertRefused("PEM PUBLIC KEY") { Verifier(configSigningKeysPem = listOf("")) }
-        assertRefused("PEM PUBLIC KEY") { Verifier(configSigningKeysPem = listOf(key, "")) }
-        assertRefused("PEM PUBLIC KEY") { Verifier(freshnessSigningKeysPem = listOf("")) }
-        assertRefused("runtime repository") { reference(RuntimeReference("", runtime.tag, runtime.digest)) }
-        assertRefused("runtime tag") { reference(RuntimeReference(runtime.repo, "", runtime.digest)) }
-        assertRefused("runtime digest") { reference(RuntimeReference(runtime.repo, runtime.tag, "")) }
+        assertRefused("registry URI") { verifier(Trust.ProjectPin("org/project", listOf(""))) }
+        assertRefused("registry URI") { verifier(Trust.ProjectPin("org/project", listOf(Trust.PUBLIC_REGISTRY_ID, ""))) }
+        assertRefused("PEM PUBLIC KEY") { verifier(Trust.SignedBy(listOf(""))) }
+        assertRefused("PEM PUBLIC KEY") { verifier(Trust.SignedBy(listOf(key, ""))) }
+        assertRefused("PEM PUBLIC KEY") { verifier(policy = Policy(artifacts = ArtifactTrust.EndorsedArtifacts(listOf("")))) }
     }
 
     @Test
-    fun refusesConflictingTrustSources() {
-        assertRefused("alternatives") {
-            Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID), configSigningKeysPem = listOf(key))
-        }
-        assertRefused("alternatives") {
-            Verifier(
-                configSigningKeysPem = listOf(key),
-                embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(fixture.config)),
-            )
-        }
+    fun refusesFreshnessKeysWithoutAnEndorsedArtifactToApprove() {
         assertRefused("no endorsed artifact") {
-            Verifier(
-                freshnessSigningKeysPem = listOf(key),
-                embeddedReferences = EmbeddedReferences(EmbeddedConfig.Bytes(fixture.config), fixture.runtime, fixture.platform),
+            verifier(
+                policy = Policy(
+                    artifacts = ArtifactTrust.EmbeddedArtifacts(fixture.runtime, fixture.platform, freshnessKeys = listOf(key)),
+                ),
             )
-        }
-        assertRefused("alternatives") {
-            Verifier(configSigningKeysPem = listOf(key), configAuthorizer = { })
-        }
-        assertRefused("alternatives") {
-            Verifier(
-                embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(fixture.config)),
-                configAuthorizer = { },
-            )
-        }
-        assertRefused("alternatives") {
-            Verifier(configRegistryIds = listOf(Verifier.PUBLIC_REGISTRY_ID), configAuthorizer = { })
         }
     }
 
     @Test
-    fun refusesAnAgeThatIsNotPositiveOrHasNoCountOfNanoseconds() {
-        for (age in listOf(Duration.ZERO, 0.4.nanoseconds, (-1).hours, Duration.INFINITE, (300 * 365).days)) {
-            assertRefused("freshness maximum age") { Verifier(freshnessMaxAge = age) }
+    fun refusesAnAgeThatIsNegativeOrHasNoCountOfNanoseconds() {
+        for (age in listOf((-1).hours, (-1).nanoseconds, Duration.INFINITE, (300 * 365).days)) {
+            assertRefused("freshness maximum age") { verifier(policy = Policy(freshnessMaxAge = age)) }
         }
     }
 
     /** A pin that a verifier can never accept is refused before any I/O. */
     @Test
-    fun aPinIsCheckedAgainstThePolicy() {
-        val authorized = Verifier(configAuthorizer = { })
-        authorized.backend.checkPinVerifiability(Pin.NONE)
-        val unauthenticated = assertFailsWith<ConfigurationException> {
-            authorized.backend.checkPinVerifiability(Pin(project = "org/repo"))
+    fun aPinIsCheckedAgainstTheConfigTrust() {
+        verifier(Trust.AuthorizedBy { }).checkPinVerifiability(Pin.NONE)
+        verifier(Trust.EmbeddedConfig(fixture.config)).checkPinVerifiability(Pin.NONE)
+        verifier(Trust.SignedBy(listOf(key))).checkPinVerifiability(Pin.NONE)
+        assertRefused("reference") { verifier(Trust.RepoPin("not a reference")) }
+        assertRefused("reference") { verifier(Trust.ProjectPin("not a reference")) }
+        // The public registry needs a pin to say whose config to accept.
+        val unpinned = assertFailsWith<ConfigurationException> {
+            GoAttestationVerifier.create().checkPinVerifiability(Pin.NONE)
         }
-        assertTrue(unauthenticated.detail.contains("config authorizer cannot authenticate"), unauthenticated.detail)
-
-        val embedded = Verifier(
-            embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(fixture.config, name = "/org/project/v1")),
-        )
-        embedded.backend.checkPinVerifiability(Pin(project = "org/project@v1"))
-        val mismatch = assertFailsWith<ConfigurationException> {
-            embedded.backend.checkPinVerifiability(Pin(project = "org/other"))
-        }
-        assertTrue(mismatch.detail.contains("does not match"), mismatch.detail)
-        val wrongNamespace = assertFailsWith<ConfigurationException> {
-            embedded.backend.checkPinVerifiability(Pin(repo = "org/project"))
-        }
-        assertTrue(wrongNamespace.detail.contains("registry collateral only"), wrongNamespace.detail)
+        assertEquals("configuration error", unpinned.category)
     }
 
     /**
@@ -265,10 +221,12 @@ class VerifierBindingTest {
     /** Without an authorizer the same document is refused, so the tests above do reach it. */
     @Test
     fun theFixtureIsRefusedWithoutAnAuthorizer() {
-        val verifier = Verifier(
-            embeddedReferences = EmbeddedReferences(runtime = fixture.runtime, platform = fixture.platform),
+        val verifier = GoAttestationVerifier.create(
+            policy = VerifierInputs.policy(
+                Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = fixture.runtime, platform = fixture.platform)),
+            ),
         )
-        assertFailsWith<TinfoilException> { verifier.backend.verify(fixture.document, fixture.nonce, Pin.NONE) }
+        assertFailsWith<TinfoilException> { verifier.verify(fixture.document, fixture.nonce, Pin.NONE) }
     }
 
     /**

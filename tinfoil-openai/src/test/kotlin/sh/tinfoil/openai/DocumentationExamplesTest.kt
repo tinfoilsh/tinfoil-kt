@@ -7,7 +7,7 @@ import kotlinx.coroutines.future.await
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.ModelPin
-import sh.tinfoil.Pin
+import sh.tinfoil.Trust
 import sh.tinfoil.TransportMode
 import sh.tinfoil.tinfoilException
 import java.time.Duration
@@ -63,7 +63,7 @@ class DocumentationExamplesTest {
     private suspend fun enclave(apiKey: String) {
         val client = EnclaveOpenAIClient.create(
             enclave = "inference.tinfoil.sh",
-            pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+            trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
             apiKey = apiKey,
         )
         println(client.httpClient.current?.codeDigest)

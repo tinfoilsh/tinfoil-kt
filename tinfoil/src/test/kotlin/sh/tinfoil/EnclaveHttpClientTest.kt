@@ -19,6 +19,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
 import okio.BufferedSink
 import sh.tinfoil.internal.verification.AttestationVerifier
+import sh.tinfoil.internal.verification.VerifierOptions
 import sh.tinfoil.testing.RawTlsServer
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.awaitUntil
@@ -40,6 +41,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 class EnclaveHttpClientTest {
@@ -77,7 +79,7 @@ class EnclaveHttpClientTest {
         assertEquals(1, enclave.fetches)
         assertEquals(enclave.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
         assertEquals(enclave.host, client.enclave)
-        assertEquals(Pin(repo = "tinfoilsh/example"), client.pin)
+        assertEquals(Trust.RepoPin("tinfoilsh/example"), client.trust)
         assertEquals(TransportMode.TLS, client.transportMode)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
         assertSame(client.current, client.ensureVerified(), "a valid verification is reused")
@@ -107,8 +109,11 @@ class EnclaveHttpClientTest {
             "an enclave with a query" to { enclave.client(enclave = "${enclave.host}?x") },
             "an enclave with an empty port" to { enclave.client(enclave = "localhost:") },
             "an enclave with a backslash" to { enclave.client(enclave = "localhost\\x") },
-            "a pin that names nothing" to { enclave.client(pin = Pin.NONE) },
-            "a pin of empty strings" to { enclave.client(pin = Pin(repo = "", project = "")) },
+            "a repo pin without a repo" to { enclave.client(trust = Trust.RepoPin("")) },
+            "a project pin without a project" to { enclave.client(trust = Trust.ProjectPin("")) },
+            "an empty list of registries" to { enclave.client(trust = Trust.ProjectPin("org/project", emptyList())) },
+            "an either pin without a project" to { enclave.client(trust = Trust.EitherPin("org/repo", "")) },
+            "a negative freshness bound" to { enclave.client(policy = Policy(freshnessMaxAge = (-1).seconds)) },
             "an empty base URL" to { enclave.client(baseUrl = "") },
             "an empty base URL for a proxy" to { enclave.client(transportMode = TransportMode.EHBP, baseUrl = "") },
             "an empty relay" to { enclave.client(attestationRelay = "") },
@@ -161,8 +166,6 @@ class EnclaveHttpClientTest {
             "baseUrl" to { enclave.client(baseUrl = "") },
             "attestationRelay" to { enclave.client(attestationRelay = "") },
             "userCacheSecret" to { enclave.client(userCacheSecret = "") },
-            "Pin.repo" to { enclave.client(pin = Pin(repo = "")) },
-            "Pin.project" to { enclave.client(pin = Pin(project = "")) },
             "enclave" to { enclave.client(enclave = "") },
         )
         for ((option, create) in refused) {
@@ -176,27 +179,33 @@ class EnclaveHttpClientTest {
     }
 
     @Test
-    fun thePinThatNamesNothingIsRefusedUnderTheDefaultTrustAndAcceptedWithAVerifierThatAuthorizesConfigs() = test {
-        val refused = assertFailsWith<ConfigurationException> { enclave.client(pin = Pin.NONE) }
-        assertEquals("configuration error", refused.category)
-        assertNothingWasSent()
-
+    fun aConfigThatTheCallerApprovesIsVerifiedWithoutAPin() = test {
         val pins = CopyOnWriteArrayList<Pin>()
         val inner = enclave.verifier.verify
         enclave.verifier.verify = { document, nonce, pin -> inner(document, nonce, pin.also { pins += it }) }
-        val authorizing = object : AttestationVerifier by enclave.verifier {
-            override val callerAuthorizesConfig: Boolean = true
-
-            override fun checkPinVerifiability(pin: Pin) = Unit
-        }
-        val client = EnclaveHttpClient.create(enclave.host, Pin.NONE, enclave.internals()) {
-            attestationRelay = enclave.relayHost
-            verifier = Verifier.appraisingWith(authorizing)
-        }
-        client.use {
-            assertSame(Pin.NONE, it.pin)
+        val authorize = ConfigAuthorizer { }
+        enclave.client(trust = Trust.AuthorizedBy(authorize)).use {
+            assertEquals(Trust.AuthorizedBy(authorize), it.trust)
             assertEquals(listOf(Pin.NONE), pins.toList())
         }
+        val request = enclave.verifierRequests.last()
+        assertSame(authorize, assertIs<VerifierOptions.ConfigTrust.Authorizer>(request.config).authorizer)
+    }
+
+    @Test
+    fun theTrustAndThePolicyBuildTheVerifier() = test {
+        val policy = Policy(
+            pinnedRegisters = Measurement("https://tinfoil.sh/predicate/tdx-guest/v2", listOf("ab")),
+            freshnessMaxAge = 1.hours,
+            artifacts = ArtifactTrust.EndorsedArtifacts(listOf("key")),
+        )
+        enclave.client(trust = Trust.ProjectPin("org/project", listOf("registry")), policy = policy).close()
+
+        val request = enclave.verifierRequests.single()
+        assertEquals(listOf("registry"), assertIs<VerifierOptions.ConfigTrust.Registries>(request.config).ids)
+        assertEquals(policy.pinnedRegisters, request.policy.pinnedRegisters)
+        assertEquals(3_600_000_000_000, request.policy.freshnessMaxAgeNs)
+        assertEquals(listOf("key"), assertIs<VerifierOptions.Artifacts.Endorsed>(request.policy.artifacts).freshnessKeysPem)
     }
 
     @Test

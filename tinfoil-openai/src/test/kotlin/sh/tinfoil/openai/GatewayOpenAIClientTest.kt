@@ -19,7 +19,6 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.ModelPin
 import sh.tinfoil.NetworkException
-import sh.tinfoil.Pin
 import sh.tinfoil.testing.TestGateway
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.tinfoilException
@@ -55,7 +54,6 @@ class GatewayOpenAIClientTest {
         this.modelPins = modelPins
         this.pinnedModelsOnly = pinnedModelsOnly
         this.baseUrl = baseUrl
-        verifier = gateway.appraisingVerifier()
         this.userCacheSecret = userCacheSecret
         this.tinfoilEvents = tinfoilEvents
         configure?.let { openAI(it) }
@@ -81,7 +79,7 @@ class GatewayOpenAIClientTest {
         val answer = client.openAI.chat().completions().create(params(prompt))
 
         assertEquals("sealed answer", answer.choices().single().message().content().get())
-        assertEquals(listOf("a.example" to Pin(repo = "tinfoilsh/a-model", project = "tinfoilsh/a-model")), gateway.verified)
+        assertEquals(listOf("a.example" to "tinfoilsh/a-model"), gateway.verifiedRepos)
         val received = gateway.received.single()
         assertTrue(received.sealed)
         // The gateway's base URL is used as it is.
@@ -171,7 +169,7 @@ class GatewayOpenAIClientTest {
         assertEquals(0, gateway.received.size)
         assertEquals(emptyList(), gateway.attestationFetches)
 
-        gateway.endorse = { _, _ -> gateway.refuse() }
+        gateway.refuseEveryReplica()
         val untrusted = assertFailsWith<OpenAIException> { client.openAI.chat().completions().create(params()) }
         assertIs<AttestationException>(untrusted.tinfoilException)
         assertEquals(2, gateway.attestationFetches.size, "the OpenAI SDK did not send the request again")

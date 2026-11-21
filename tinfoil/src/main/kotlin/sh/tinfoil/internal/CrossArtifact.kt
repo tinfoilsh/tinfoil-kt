@@ -10,9 +10,9 @@ import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.GatewayOptions
 import sh.tinfoil.InternalTinfoilApi
-import sh.tinfoil.Pin
 import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.RouterOptions
+import sh.tinfoil.Trust
 
 /**
  * Everything that another artifact of this SDK uses of this one beyond its
@@ -54,8 +54,8 @@ public object CrossArtifact {
 
     /** [EnclaveHttpClient.create], with options that were read already. */
     @JvmSynthetic
-    public suspend fun enclaveHttpClient(enclave: String, pin: Pin, settings: RouteSettings): EnclaveHttpClient =
-        EnclaveHttpClient.create(enclave, pin, settings, Internals())
+    public suspend fun enclaveHttpClient(enclave: String, trust: Trust, settings: RouteSettings): EnclaveHttpClient =
+        EnclaveHttpClient.create(enclave, trust, settings, Internals())
 
     /** [RouterHttpClient.create], with options that were read already. */
     @JvmSynthetic

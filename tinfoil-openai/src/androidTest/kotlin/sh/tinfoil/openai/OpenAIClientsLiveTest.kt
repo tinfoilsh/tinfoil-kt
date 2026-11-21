@@ -14,7 +14,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.runner.RunWith
-import sh.tinfoil.Pin
+import sh.tinfoil.Trust
 import sh.tinfoil.TransportMode
 import sh.tinfoil.tinfoilException
 import kotlin.test.Test
@@ -113,7 +113,7 @@ class OpenAIClientsLiveTest {
 
     @Test
     fun theEnclaveClientReachesANamedEnclaveThroughTheOpenAiSdk() = live {
-        EnclaveOpenAIClient.create(enclave, Pin(repo = router), NOT_A_KEY) { openAI { maxRetries(0) } }
+        EnclaveOpenAIClient.create(enclave, Trust.RepoPin(router), NOT_A_KEY) { openAI { maxRetries(0) } }
             .use { client ->
                 assertEquals("https://$enclave/", client.httpClient.baseUrl.toString())
                 assertModelsListed("enclave", client.openAIAsync)

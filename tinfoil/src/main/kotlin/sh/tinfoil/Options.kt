@@ -73,11 +73,12 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
     public var attestationRelay: String? = null
 
     /**
-     * The trust policy. Null selects the defaults. A [Verifier] that
-     * authorizes configs by itself, with an embedded config or a config
-     * authorizer, is what allows the pin that names nothing, [Pin.NONE].
+     * The checks that apply on top of the trust argument of
+     * [EnclaveHttpClient.create]: register pins, the freshness bound and
+     * who vouches for the runtime and platform artifacts. The default keeps
+     * every default; see [Policy].
      */
-    public var verifier: Verifier? = null
+    public var policy: Policy = Policy()
 
     /**
      * The prompt-cache scope of the client's requests, for an enclave that
@@ -90,8 +91,8 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
     public var userCacheSecret: String? = null
 
     /**
-     * Called with each verification that passes [verifier], before the
-     * enclave's keys are used; it throws to reject the enclave. It must not
+     * Called with each verification that passes the trust argument and
+     * [policy], before the enclave's keys are used; it throws to reject the enclave. It must not
      * call back into the client.
      */
     public var verificationCheck: VerificationCheck? = null
@@ -110,7 +111,7 @@ public abstract class EnclaveOptions @InternalTinfoilApi protected constructor()
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck, onVerificationResult,
+        transportMode, baseUrl, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
     )
 }
 
@@ -174,12 +175,12 @@ public abstract class RouterOptions @InternalTinfoilApi protected constructor() 
     public var attestationRelay: String? = null
 
     /**
-     * The trust policy. Null selects the defaults. A verifier that supplies
-     * or authorizes configs by itself, with an embedded config or a config
-     * authorizer, is refused: it needs an enclave that the caller names, so
-     * use [EnclaveHttpClient].
+     * The checks that apply on top of the router's fixed trust, its
+     * repository `tinfoilsh/confidential-model-router`: register pins, the
+     * freshness bound and who vouches for the runtime and platform
+     * artifacts. The default keeps every default; see [Policy].
      */
-    public var verifier: Verifier? = null
+    public var policy: Policy = Policy()
 
     /**
      * The prompt-cache scope of the client's requests. It is added to the
@@ -195,7 +196,7 @@ public abstract class RouterOptions @InternalTinfoilApi protected constructor() 
     public var userCacheSecret: String? = null
 
     /**
-     * Called with each verification that passes [verifier], before the
+     * Called with each verification that passes [policy], before the
      * router's keys are used: for each router that is tried in `create`,
      * and whenever the client verifies again. It throws to reject the
      * router; in `create`, the next router is then tried. It must not call
@@ -216,7 +217,7 @@ public abstract class RouterOptions @InternalTinfoilApi protected constructor() 
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transportMode, baseUrl, attestationRelay, verifier, userCacheSecret, verificationCheck, onVerificationResult,
+        transportMode, baseUrl, attestationRelay, policy, userCacheSecret, verificationCheck, onVerificationResult,
     )
 }
 
@@ -271,14 +272,12 @@ public abstract class GatewayOptions @InternalTinfoilApi protected constructor()
     public var baseUrl: String? = null
 
     /**
-     * The trust policy for the models that are not pinned, and for the pins
-     * without a policy of their own. Null selects the defaults. A verifier
-     * that supplies or authorizes configs by itself, with an embedded
-     * config or a config authorizer, is refused: replicas are verified
-     * against repositories, so use [EnclaveHttpClient] for an enclave that
-     * needs one.
+     * The checks that apply to the replicas of the models that are not
+     * pinned, and of the pins without a policy of their own, on top of the
+     * repository that each is verified against. The default keeps every
+     * default; see [Policy].
      */
-    public var verifier: Verifier? = null
+    public var policy: Policy = Policy()
 
     /**
      * The prompt-cache scope of the client's requests; see
@@ -330,7 +329,7 @@ public abstract class GatewayOptions @InternalTinfoilApi protected constructor()
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): GatewaySettings = GatewaySettings(
-        LinkedHashMap(modelPins), pinnedModelsOnly, baseUrl, verifier, userCacheSecret, verificationCheck,
+        LinkedHashMap(modelPins), pinnedModelsOnly, baseUrl, policy, userCacheSecret, verificationCheck,
         onVerificationResult, catalog,
     )
 }

@@ -54,7 +54,6 @@ class RouterHttpClientLiveTest {
             assertSame(verified, client.ensureVerified(), "a valid verification is reused")
 
             assertTrue(client.enclave.endsWith(".tinfoil.sh"), client.enclave)
-            assertEquals(Pin(repo = router, project = router), client.pin)
             assertEquals("https://${client.enclave}/", client.baseUrl.toString())
             assertEquals(TransportMode.TLS, client.transportMode)
             assertEquals(router, verified.configRepo)
@@ -111,13 +110,6 @@ class RouterHttpClientLiveTest {
         assertTrue(error.detail.contains("inference.tinfoil.sh"), error.detail)
         assertTrue(error.detail.contains("no router is accepted"), error.detail)
         assertTrue(rejected.isNotEmpty())
-    }
-
-    @Test
-    fun aVerifierThatAuthorizesConfigsItselfIsRefused() = live {
-        val verifier = Verifier(configAuthorizer = { })
-
-        assertFailsWith<ConfigurationException> { RouterHttpClient.create { this.verifier = verifier } }
     }
 
     private companion object {

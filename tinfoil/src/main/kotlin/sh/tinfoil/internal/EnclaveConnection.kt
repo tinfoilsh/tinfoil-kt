@@ -21,7 +21,6 @@ import sh.tinfoil.TinfoilException
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
-import sh.tinfoil.Verifier
 import sh.tinfoil.RecoverableResponse
 import sh.tinfoil.internal.transport.AttestedSender
 import sh.tinfoil.internal.transport.BoundTransport
@@ -36,6 +35,9 @@ import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.transport.await
 import sh.tinfoil.internal.verification.AttestationFetcher
+import sh.tinfoil.internal.verification.AttestationVerifier
+import sh.tinfoil.internal.verification.GoAttestationVerifier
+import sh.tinfoil.internal.verification.VerifierOptions
 import sh.tinfoil.internal.verification.Attestor
 import java.io.IOException
 import java.time.Instant
@@ -416,7 +418,7 @@ internal class EnclaveConnection(
             transportMode: TransportMode,
             baseUrl: String?,
             attestationRelay: String?,
-            verifier: Verifier,
+            verifier: AttestationVerifier,
             cacheSecret: UserCacheSecret?,
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
@@ -456,7 +458,7 @@ internal class EnclaveConnection(
             val relay = requireNotEmpty(attestationRelay, "attestationRelay")?.also(Urls::requireRelay)
             val fetcher = lazy { AttestationFetcher(internals.http) }
             val attestor = Attestor(
-                verifier = verifier.backend,
+                verifier = verifier,
                 fetch = { url -> fetcher.value.fetch(url) },
                 check = verificationCheck,
                 clock = internals.clock,
@@ -508,6 +510,13 @@ internal class Internals(
     val discovery: RouterDiscovery.Settings = RouterDiscovery.Settings(),
     /** What measures the time between fetches of a gateway's catalog. */
     val timeSource: TimeSource = TimeSource.Monotonic,
+    /**
+     * What builds a verifier from a config trust, null for Tinfoil's public
+     * registry, and a policy. It loads the verifier library, so it is
+     * called on a background thread only.
+     */
+    val newVerifier: (VerifierOptions.ConfigTrust?, VerifierOptions.Policy) -> AttestationVerifier =
+        { config, policy -> GoAttestationVerifier.create(config, policy) },
 )
 
 private fun <T : Throwable> T.alsoSuppressing(earlier: Throwable?): T = apply {

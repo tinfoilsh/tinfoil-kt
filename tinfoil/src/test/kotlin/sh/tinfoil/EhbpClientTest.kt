@@ -112,8 +112,8 @@ class EhbpClientTest {
     /** A client that is checked but has verified nothing, so that any I/O shows. */
     private fun unverified(baseUrl: String? = proxyUrl, transportMode: TransportMode = TransportMode.EHBP): EnclaveHttpClient =
         EnclaveHttpClient.unverified(
-            enclave.host, Pin(repo = "tinfoilsh/example"),
-            RouteSettings(transportMode, baseUrl, enclave.relayHost, Verifier.appraisingWith(enclave.verifier)),
+            enclave.host, Trust.RepoPin("tinfoilsh/example"),
+            RouteSettings(transportMode, baseUrl, enclave.relayHost),
             enclave.internals(),
         )
 

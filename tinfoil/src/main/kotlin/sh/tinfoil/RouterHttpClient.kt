@@ -16,6 +16,7 @@ import sh.tinfoil.internal.transport.AttestedCall
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.verification.AttestationFetcher
+import sh.tinfoil.internal.verification.VerifierInputs
 import java.io.IOException
 import kotlin.coroutines.coroutineContext
 
@@ -47,9 +48,6 @@ public class RouterHttpClient private constructor(
      * when the router list gave one.
      */
     public val enclave: String get() = connection.enclave
-
-    /** What the router is verified against: Tinfoil's router, by name. */
-    public val pin: Pin get() = connection.pin
 
     /**
      * The URL that requests are sent under: the router's own origin,
@@ -268,17 +266,13 @@ public class RouterHttpClient private constructor(
                     )
                 }
             }
-            val policy = settings.verifier ?: Verifier()
-            if (policy.backend.callerAuthorizesConfig) {
-                throw ConfigurationException(
-                    "a verifier that authorizes configs itself needs an explicit enclave: use EnclaveHttpClient",
-                )
-            }
+            // The router's config trust is Tinfoil's public registry.
+            val verifier = internals.newVerifier(null, VerifierInputs.policy(settings.policy))
             val relay = requireNotEmpty(settings.attestationRelay, "attestationRelay")
             val secret = UserCacheSecret.orProcessDefault(settings.userCacheSecret)
             val open = { host: String ->
                 EnclaveConnection.create(
-                    host, RouterDiscovery.ROUTER_PIN, transportMode, base, relay, policy, secret, verificationCheck,
+                    host, RouterDiscovery.ROUTER_PIN, transportMode, base, relay, verifier, secret, verificationCheck,
                     onVerificationResult, internals,
                     // The caller named no host, so a direct connection to
                     // the router is pinned in both transport modes.

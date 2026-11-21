@@ -326,7 +326,7 @@ public class GatewayHttpClient private constructor(
         @JvmSynthetic
         internal fun unverified(settings: GatewaySettings, internals: Internals): GatewayHttpClient = GatewayHttpClient(
             GatewayRouter.create(
-                settings.modelPins, settings.pinnedModelsOnly, settings.baseUrl, settings.verifier,
+                settings.modelPins, settings.pinnedModelsOnly, settings.baseUrl, settings.policy,
                 settings.userCacheSecret, settings.verificationCheck, settings.onVerificationResult, settings.catalog,
                 internals,
             ),

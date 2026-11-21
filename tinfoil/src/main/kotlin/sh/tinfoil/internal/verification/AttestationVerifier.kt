@@ -16,14 +16,6 @@ import sh.tinfoil.Verification
  */
 internal interface AttestationVerifier {
     /**
-     * Whether the caller supplies or approves the config, with an embedded
-     * config or a config authorizer, rather than a pin authenticating it.
-     * Such a verifier needs an explicit enclave: it cannot be used to
-     * discover a router.
-     */
-    val callerAuthorizesConfig: Boolean
-
-    /**
      * A fresh random challenge for one attestation fetch. The same bytes go
      * to [attestationUrl] and to [verify], and are never reused.
      */

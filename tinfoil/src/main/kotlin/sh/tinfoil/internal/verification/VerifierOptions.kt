@@ -30,15 +30,6 @@ internal object VerifierOptions {
         /** Exactly this config, which the caller supplies. */
         class EmbeddedConfig(val name: String?, val bytes: ByteArray) : ConfigTrust
 
-        /** Exactly the config with this digest, and the runtime that it pins. */
-        class EmbeddedConfigReference(
-            val name: String?,
-            val digest: String,
-            val runtimeRepo: String,
-            val runtimeTag: String,
-            val runtimeDigest: String,
-        ) : ConfigTrust
-
         /** The configs that [authorizer] approves. */
         class Authorizer(val authorizer: ConfigAuthorizer) : ConfigTrust
     }
@@ -112,12 +103,6 @@ internal object VerifierOptions {
         is ConfigTrust.SigningKeys -> ConfigTrustOption(type = "signing_keys", keysPem = config.keysPem)
         is ConfigTrust.EmbeddedConfig ->
             ConfigTrustOption(type = "embedded_config", name = config.name, bytes = base64(config.bytes))
-        is ConfigTrust.EmbeddedConfigReference -> ConfigTrustOption(
-            type = "embedded_config_reference",
-            name = config.name,
-            digest = config.digest,
-            runtime = RuntimeReferenceOption(config.runtimeRepo, config.runtimeTag, config.runtimeDigest),
-        )
         is ConfigTrust.Authorizer -> error("a config authorizer is not encoded")
     }
 
@@ -156,12 +141,7 @@ internal object VerifierOptions {
         @SerialName("keys_pem") val keysPem: List<String>? = null,
         val name: String? = null,
         val bytes: String? = null,
-        val digest: String? = null,
-        val runtime: RuntimeReferenceOption? = null,
     )
-
-    @Serializable
-    private class RuntimeReferenceOption(val repo: String, val tag: String, val digest: String)
 
     @Serializable
     private class PolicyOption(

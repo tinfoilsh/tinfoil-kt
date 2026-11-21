@@ -28,6 +28,8 @@ import sh.tinfoil.testing.SealingKey
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.RawTlsServer
 import sh.tinfoil.testing.TestAuthority
+import sh.tinfoil.testing.VerifierRequest
+import sh.tinfoil.testing.standInVerifiers
 import sh.tinfoil.testing.TestClock
 import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.fingerprint
@@ -152,10 +154,14 @@ class RouterHttpClientTest {
         }
     }
 
+    /** What each client asked of the verifier library's constructor. */
+    private val verifierRequests = CopyOnWriteArrayList<VerifierRequest>()
+
     private fun internals(
         budget: Duration = 30.seconds,
         timeSource: TimeSource = TimeSource.Monotonic,
         fallbackHost: String = fallback.host,
+        verifier: AttestationVerifier = this.verifier,
     ) = Internals(
         http = HttpSettings(trust = authority.trust),
         clock = clock,
@@ -166,13 +172,14 @@ class RouterHttpClientTest {
             budget = budget,
             timeSource = timeSource,
         ),
+        newVerifier = standInVerifiers(verifier, verifierRequests),
     )
 
     private suspend fun client(
         transportMode: TransportMode = TransportMode.TLS,
         baseUrl: String? = null,
         attestationRelay: String? = null,
-        verifier: AttestationVerifier = this.verifier,
+        policy: Policy = Policy(),
         userCacheSecret: String? = null,
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
@@ -181,7 +188,7 @@ class RouterHttpClientTest {
         this.transportMode = transportMode
         this.baseUrl = baseUrl
         this.attestationRelay = attestationRelay
-        this.verifier = Verifier.appraisingWith(verifier)
+        this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
         this.onVerificationResult = onVerificationResult
@@ -208,7 +215,6 @@ class RouterHttpClientTest {
         val client = client(onVerificationResult = { results += it })
 
         assertEquals(first.host, client.enclave)
-        assertEquals(routerPin, client.pin)
         assertEquals("https://${first.host}/", client.baseUrl.toString())
         assertEquals(TransportMode.TLS, client.transportMode)
         assertEquals(first.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
@@ -344,7 +350,6 @@ class RouterHttpClientTest {
         val client = client()
 
         assertEquals(fallback.host, client.enclave)
-        assertEquals(routerPin, client.pin)
         assertEquals(1, bad.fetches.get())
         assertEquals(2, fallback.fetches.get())
         assertEquals(fallback.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
@@ -545,7 +550,7 @@ class RouterHttpClientTest {
         val settings = internals()
         val open = { host: String ->
             EnclaveConnection.create(
-                host, RouterDiscovery.ROUTER_PIN, TransportMode.TLS, null, null, Verifier.appraisingWith(verifier), null,
+                host, RouterDiscovery.ROUTER_PIN, TransportMode.TLS, null, null, verifier, null,
                 null, null, settings,
             ).also {
                 opened += it
@@ -799,9 +804,6 @@ class RouterHttpClientTest {
     fun invalidOptionsAreRefusedBeforeAnyIo() = test {
         val router = Router()
         serveList(router.host)
-        val authorizing = object : AttestationVerifier by verifier {
-            override val callerAuthorizesConfig: Boolean = true
-        }
         val refused: Map<String, suspend () -> Unit> = mapOf(
             "a base URL over TLS" to { client(baseUrl = "https://proxy.example/") },
             "a base URL on the fallback's origin" to { client(baseUrl = "https://${fallback.host}/") },
@@ -816,7 +818,7 @@ class RouterHttpClientTest {
             "a base URL that is not a URL" to { client(baseUrl = "hunter2") },
             "a relay that is a URL" to { client(attestationRelay = "https://relay.example/hunter2") },
             "a relay with user information" to { client(attestationRelay = "hunter2@relay.example") },
-            "a verifier that authorizes configs itself" to { client(verifier = authorizing) },
+            "a negative freshness bound" to { client(policy = Policy(freshnessMaxAge = (-1).seconds)) },
             "a cache secret that is not well-formed text" to { client(userCacheSecret = "hunter2\ud800") },
             "baseUrl must not be empty" to { client(baseUrl = "") },
             "baseUrl must not be empty under EHBP" to { client(transportMode = TransportMode.EHBP, baseUrl = "") },
@@ -852,7 +854,7 @@ class RouterHttpClientTest {
             override fun checkPinVerifiability(pin: Pin) = throw ConfigurationException("this policy takes no pin")
         }
 
-        val error = assertFailsWith<ConfigurationException> { client(verifier = strict) }
+        val error = assertFailsWith<ConfigurationException> { client(internals = internals(verifier = strict)) }
 
         assertEquals("this policy takes no pin", error.detail)
         assertEquals(0, listServer.requestCount)

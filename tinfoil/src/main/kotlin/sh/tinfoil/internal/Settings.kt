@@ -6,10 +6,10 @@ import sh.tinfoil.Catalog
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.InternalTinfoilApi
 import sh.tinfoil.ModelPin
+import sh.tinfoil.Policy
 import sh.tinfoil.TransportMode
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
-import sh.tinfoil.Verifier
 
 // What a caller's options block set, copied when the block returned. A
 // client is made from these copies alone, so nothing that happens to the
@@ -28,7 +28,7 @@ public class RouteSettings internal constructor(
     @get:JvmSynthetic public val transportMode: TransportMode = TransportMode.TLS,
     @get:JvmSynthetic public val baseUrl: String? = null,
     @get:JvmSynthetic public val attestationRelay: String? = null,
-    @get:JvmSynthetic public val verifier: Verifier? = null,
+    @get:JvmSynthetic public val policy: Policy = Policy(),
     @get:JvmSynthetic public val userCacheSecret: String? = null,
     @get:JvmSynthetic public val verificationCheck: VerificationCheck? = null,
     @get:JvmSynthetic public val onVerificationResult: ((Result<Verification>) -> Unit)? = null,
@@ -40,7 +40,7 @@ public class GatewaySettings internal constructor(
     @get:JvmSynthetic public val modelPins: Map<String, ModelPin> = emptyMap(),
     @get:JvmSynthetic public val pinnedModelsOnly: Boolean = false,
     @get:JvmSynthetic public val baseUrl: String? = null,
-    @get:JvmSynthetic public val verifier: Verifier? = null,
+    @get:JvmSynthetic public val policy: Policy = Policy(),
     @get:JvmSynthetic public val userCacheSecret: String? = null,
     @get:JvmSynthetic public val verificationCheck: VerificationCheck? = null,
     @get:JvmSynthetic public val onVerificationResult: ((Result<Verification>) -> Unit)? = null,

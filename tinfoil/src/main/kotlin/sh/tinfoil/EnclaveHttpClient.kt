@@ -11,12 +11,13 @@ import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.transport.AttestedCall
 import sh.tinfoil.internal.transport.UserCacheSecret
+import sh.tinfoil.internal.verification.VerifierInputs
 import java.io.IOException
 
 /**
  * Decides whether an enclave whose attestation has verified may be used.
  *
- * It is called with each verification that passes the [Verifier], before the
+ * It is called with each verification that passes the trust and the policy, before the
  * client uses the enclave's keys: when the client is created and every time
  * it verifies again. Return to accept the enclave. Throw to reject it: the
  * verification then fails with an [AttestationException] that keeps the
@@ -66,15 +67,18 @@ public fun interface VerificationCheck {
  */
 public class EnclaveHttpClient private constructor(
     private val connection: EnclaveConnection,
+    /**
+     * What the enclave is verified under: the trust argument that the
+     * client was created with. It is immutable, so it is the caller's to
+     * keep.
+     */
+    public val trust: Trust,
 ) : Call.Factory, AutoCloseable {
     /**
      * The enclave that the client verifies: its host, with a port when one
      * was given.
      */
     public val enclave: String get() = connection.enclave
-
-    /** What the enclave is verified against. */
-    public val pin: Pin get() = connection.pin
 
     /**
      * The URL that requests are sent under: the base URL that the client was
@@ -354,14 +358,14 @@ public class EnclaveHttpClient private constructor(
 
     public companion object {
         /**
-         * Creates a client for [enclave] and verifies the enclave against
-         * [pin] before returning.
+         * Creates a client for [enclave] and verifies the enclave under
+         * [trust] and the [policy][EnclaveOptions.policy] before returning.
          *
          * Everything else is an option, set in the block that [options] is
          * and described by [EnclaveOptions]:
          *
          * ```
-         * val client = EnclaveHttpClient.create("enclave.example.com", pin) {
+         * val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
          *     transportMode = TransportMode.EHBP
          *     baseUrl = "https://proxy.example.com/"
          * }
@@ -383,10 +387,10 @@ public class EnclaveHttpClient private constructor(
          *
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
-         * @param pin What the enclave must be running. The pin that names
-         *   nothing, [Pin.NONE], is refused unless the [verifier][EnclaveOptions.verifier]
-         *   authorizes configs by itself, with an embedded config or a
-         *   config authorizer.
+         * @param trust Who vouches for the config that the enclave runs;
+         *   see [Trust]. A variant that no verification could pass, such as
+         *   a [Trust.RepoPin] with an empty or malformed repository, is
+         *   refused before any network I/O.
          * @param options Sets the options; see [EnclaveOptions]. Without
          *   it, every option has its default.
          * @throws ConfigurationException if an argument or an option is
@@ -400,31 +404,31 @@ public class EnclaveHttpClient private constructor(
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             options: EnclaveOptions.() -> Unit = {},
-        ): EnclaveHttpClient = create(enclave, pin, Internals(), options)
+        ): EnclaveHttpClient = create(enclave, trust, Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             internals: Internals,
             options: EnclaveOptions.() -> Unit,
-        ): EnclaveHttpClient = create(enclave, pin, enclaveSettings(options), internals)
+        ): EnclaveHttpClient = create(enclave, trust, enclaveSettings(options), internals)
 
         /** [create] with options that were read already. */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             settings: RouteSettings,
             internals: Internals,
         ): EnclaveHttpClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val client = unverified(enclave, pin, settings, internals)
+            val client = unverified(enclave, trust, settings, internals)
             try {
                 client.ensureVerified()
             } catch (e: Throwable) {
@@ -438,15 +442,20 @@ public class EnclaveHttpClient private constructor(
         @JvmSynthetic
         internal fun unverified(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             settings: RouteSettings,
             internals: Internals,
-        ): EnclaveHttpClient = EnclaveHttpClient(
-            EnclaveConnection.create(
-                enclave, pin, settings.transportMode, settings.baseUrl, settings.attestationRelay,
-                settings.verifier ?: Verifier(), UserCacheSecret.of(settings.userCacheSecret),
-                settings.verificationCheck, settings.onVerificationResult, internals,
-            ),
-        )
+        ): EnclaveHttpClient {
+            val inputs = VerifierInputs.of(trust)
+            val verifier = internals.newVerifier(inputs.config, VerifierInputs.policy(settings.policy))
+            return EnclaveHttpClient(
+                EnclaveConnection.create(
+                    enclave, inputs.pin, settings.transportMode, settings.baseUrl, settings.attestationRelay,
+                    verifier, UserCacheSecret.of(settings.userCacheSecret),
+                    settings.verificationCheck, settings.onVerificationResult, internals,
+                ),
+                trust,
+            )
+        }
     }
 }

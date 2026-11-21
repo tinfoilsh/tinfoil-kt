@@ -25,8 +25,8 @@ public final class sh/tinfoil/openai/EnclaveOpenAIClient : java/lang/AutoCloseab
 }
 
 public final class sh/tinfoil/openai/EnclaveOpenAIClient$Companion {
-	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/openai/EnclaveOpenAIClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lsh/tinfoil/Trust;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/openai/EnclaveOpenAIClient$Companion;Ljava/lang/String;Lsh/tinfoil/Trust;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public abstract class sh/tinfoil/openai/EnclaveOpenAIOptions : sh/tinfoil/EnclaveOptions, sh/tinfoil/openai/OpenAIOptions {

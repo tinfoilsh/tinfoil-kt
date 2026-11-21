@@ -14,7 +14,8 @@ import sh.tinfoil.EnclaveOptions
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayOptions
 import sh.tinfoil.ModelPin
-import sh.tinfoil.Pin
+import sh.tinfoil.Policy
+import sh.tinfoil.Trust
 import sh.tinfoil.RouterOptions
 import sh.tinfoil.TinfoilOptionsDsl
 import sh.tinfoil.TransportMode
@@ -34,6 +35,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -60,24 +62,21 @@ class OpenAIOptionsTest {
 
     private fun test(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
-    private val pin = Pin(repo = "tinfoilsh/example")
+    private val trust = Trust.RepoPin("tinfoilsh/example")
 
     /** Makes a router client for which the test enclave is the router that is chosen when a relay is used. */
     private fun routerConnection() = enclave.routerConnections(listServer.url("/routers"))::router
 
     private fun EnclaveOptions.forTheTestEnclave() {
         attestationRelay = enclave.relayHost
-        verifier = enclave.appraisingVerifier()
     }
 
     private fun RouterOptions.forTheTestEnclave() {
         attestationRelay = enclave.relayHost
-        verifier = enclave.appraisingVerifier()
     }
 
     private fun GatewayOptions.forTheTestGateway() {
         baseUrl = gateway.baseUrl
-        verifier = gateway.appraisingVerifier()
     }
 
     private fun assertNoIo() {
@@ -96,7 +95,7 @@ class OpenAIOptionsTest {
      */
     private fun creations(inBlock: () -> Unit): List<Pair<String, suspend () -> AutoCloseable>> = listOf(
         "EnclaveOpenAIClient" to {
-            EnclaveOpenAIClient.create(enclave.host, pin, KEY, enclave.connections()::enclave) {
+            EnclaveOpenAIClient.create(enclave.host, trust, KEY, enclave.connections()::enclave) {
                 inBlock()
                 forTheTestEnclave()
             }
@@ -114,7 +113,7 @@ class OpenAIOptionsTest {
             }
         },
         "Client" to {
-            Client.create("", enclave.appraisingVerifier(), routerConnection()) { inBlock() }
+            Client.create("", routerConnection()) { inBlock() }
         },
     )
 
@@ -162,7 +161,7 @@ class OpenAIOptionsTest {
         var leaked: EnclaveOpenAIOptions? = null
         val events = mutableSetOf<TinfoilEvent>()
         val results = AtomicInteger()
-        val client = EnclaveOpenAIClient.create(enclave.host, pin, KEY, enclave.connections()::enclave) {
+        val client = EnclaveOpenAIClient.create(enclave.host, trust, KEY, enclave.connections()::enclave) {
             forTheTestEnclave()
             tinfoilEvents = events
             onVerificationResult = { results.incrementAndGet() }
@@ -176,7 +175,7 @@ class OpenAIOptionsTest {
         options.transportMode = TransportMode.EHBP
         options.baseUrl = "https://elsewhere.invalid/v1/"
         options.attestationRelay = "relay.invalid"
-        options.verifier = null
+        options.policy = Policy(freshnessMaxAge = Duration.INFINITE)
         options.userCacheSecret = "a-secret-that-was-set-too-late"
         options.verificationCheck = VerificationCheck { throw IllegalStateException("set too late") }
         options.onVerificationResult = null
@@ -235,7 +234,7 @@ class OpenAIOptionsTest {
             assertEquals(TransportMode.TLS, settings.transportMode)
             assertNull(settings.baseUrl)
             assertNull(settings.attestationRelay)
-            assertNull(settings.verifier)
+            assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)
             assertNull(settings.onVerificationResult)
@@ -244,7 +243,7 @@ class OpenAIOptionsTest {
             assertEquals(emptyMap(), settings.modelPins)
             assertEquals(false, settings.pinnedModelsOnly)
             assertNull(settings.baseUrl)
-            assertNull(settings.verifier)
+            assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)
             assertNull(settings.onVerificationResult)
