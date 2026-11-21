@@ -638,7 +638,7 @@ internal class GatewayRouter private constructor(
         }
 
         /**
-         * A router for the gateway at [baseUrl], with every option checked
+         * A router for the gateway at [url], with every option checked
          * and nothing fetched or verified.
          */
         @Throws(TinfoilException::class)
