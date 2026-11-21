@@ -32,8 +32,10 @@ import java.io.IOException
  * any one caller's, since one verification can serve many requests: a
  * caller's cancellation ends only that caller's wait. What it throws is
  * reported as a [NetworkException] that keeps it as its cause, unless it is
- * a [TinfoilException], which keeps its category; that includes the end of
- * its coroutine after 30 seconds, since that timeout is the client's. A
+ * a [TinfoilException], which keeps its category. The end of its coroutine
+ * after 30 seconds is a [NetworkException] too, since that timeout is the
+ * client's and not the caller's cancellation, and so is a
+ * `CancellationException` that it throws while its coroutine is active. A
  * [ConfigurationException] that it throws is not tried again. It may be
  * called from several threads at once, and must not call back into the
  * client.
