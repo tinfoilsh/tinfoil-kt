@@ -25,7 +25,7 @@ import java.io.IOException
  * The gateway is not trusted with what a request says. Before a request is
  * sent, the client picks a replica of its model, verifies that replica's
  * attestation, and seals the request's body to the HPKE key that the
- * verification endorses, as [TransportMode.EHBP] does; the response's body
+ * verification endorses, as [Transport.Ehbp] does; the response's body
  * is sealed in turn. The gateway forwards what it cannot read.
  *
  * What the gateway does see is everything that is not a body: the method,
@@ -53,12 +53,12 @@ import java.io.IOException
 @ExperimentalTinfoilApi
 public class GatewayHttpClient private constructor(
     private val router: GatewayRouter,
-) : Call.Factory, AutoCloseable {
+) : AttestedHttpClient {
     /**
      * The gateway's base URL, which requests are sent under. Resolve request
      * paths against it, as in `baseUrl.resolve("chat/completions")`.
      */
-    public val baseUrl: HttpUrl get() = router.baseUrl
+    override val baseUrl: HttpUrl get() = router.baseUrl
 
     /**
      * The last successful verification of each replica that the client has
@@ -255,7 +255,7 @@ public class GatewayHttpClient private constructor(
         // Not a `const`: the compiler would copy a constant's value into
         // the code that reads it, which would then keep the URL that it was
         // compiled against.
-        public val DEFAULT_BASE_URL: String = GatewayRouter.DEFAULT_BASE_URL
+        public val DEFAULT_URL: String = GatewayRouter.DEFAULT_URL
 
         /**
          * Creates a client for the gateway and fetches the gateway's
@@ -326,7 +326,7 @@ public class GatewayHttpClient private constructor(
         @JvmSynthetic
         internal fun unverified(settings: GatewaySettings, internals: Internals): GatewayHttpClient = GatewayHttpClient(
             GatewayRouter.create(
-                settings.modelPins, settings.pinnedModelsOnly, settings.baseUrl, settings.verifier,
+                settings.modelPins, settings.pinnedModelsOnly, settings.url, settings.policy,
                 settings.userCacheSecret, settings.verificationCheck, settings.onVerificationResult, settings.catalog,
                 internals,
             ),

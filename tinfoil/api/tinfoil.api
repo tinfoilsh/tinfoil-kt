@@ -1,3 +1,28 @@
+public abstract interface class sh/tinfoil/ArtifactTrust {
+}
+
+public final class sh/tinfoil/ArtifactTrust$EmbeddedArtifacts : sh/tinfoil/ArtifactTrust {
+	public fun <init> ()V
+	public fun <init> ([B[BLjava/util/List;)V
+	public synthetic fun <init> ([B[BLjava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFreshnessKeys ()Ljava/util/List;
+	public final fun getPlatform ()[B
+	public final fun getRuntime ()[B
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/ArtifactTrust$EndorsedArtifacts : sh/tinfoil/ArtifactTrust {
+	public fun <init> ()V
+	public fun <init> (Ljava/util/List;)V
+	public synthetic fun <init> (Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFreshnessKeys ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class sh/tinfoil/ArtifactVerification {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getApprovalTime ()Ljava/time/Instant;
@@ -15,6 +40,23 @@ public final class sh/tinfoil/AttestationException : sh/tinfoil/TinfoilException
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getLayer-7qrYzj4 ()Ljava/lang/String;
 	public fun isRetryable ()Z
+}
+
+public abstract interface class sh/tinfoil/AttestationFetcher {
+	public abstract fun fetchAttestation (Ljava/lang/String;[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class sh/tinfoil/AttestationRelay : sh/tinfoil/AttestationFetcher {
+	public fun <init> (Ljava/lang/String;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public fun fetchAttestation (Ljava/lang/String;[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getUrl ()Lokhttp3/HttpUrl;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class sh/tinfoil/AttestedHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+	public abstract fun getBaseUrl ()Lokhttp3/HttpUrl;
 }
 
 public final class sh/tinfoil/Catalog {
@@ -78,92 +120,51 @@ public final class sh/tinfoil/CryptoMaterial {
 	public fun toString ()Ljava/lang/String;
 }
 
-public abstract interface class sh/tinfoil/EmbeddedConfig {
-	public abstract fun getName ()Ljava/lang/String;
-}
-
-public final class sh/tinfoil/EmbeddedConfig$Bytes : sh/tinfoil/EmbeddedConfig {
-	public fun <init> ([BLjava/lang/String;)V
-	public synthetic fun <init> ([BLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getBytes ()[B
-	public fun getName ()Ljava/lang/String;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class sh/tinfoil/EmbeddedConfig$Reference : sh/tinfoil/EmbeddedConfig {
-	public fun <init> (Ljava/lang/String;Lsh/tinfoil/RuntimeReference;Ljava/lang/String;)V
-	public synthetic fun <init> (Ljava/lang/String;Lsh/tinfoil/RuntimeReference;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getDigest ()Ljava/lang/String;
-	public fun getName ()Ljava/lang/String;
-	public final fun getRuntime ()Lsh/tinfoil/RuntimeReference;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class sh/tinfoil/EmbeddedReferences {
-	public fun <init> ()V
-	public fun <init> (Lsh/tinfoil/EmbeddedConfig;[B[B)V
-	public synthetic fun <init> (Lsh/tinfoil/EmbeddedConfig;[B[BILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getConfig ()Lsh/tinfoil/EmbeddedConfig;
-	public final fun getPlatform ()[B
-	public final fun getRuntime ()[B
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class sh/tinfoil/EnclaveHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+public final class sh/tinfoil/EnclaveHttpClient : sh/tinfoil/AttestedHttpClient {
 	public static final field Companion Lsh/tinfoil/EnclaveHttpClient$Companion;
-	public synthetic fun <init> (Lsh/tinfoil/internal/EnclaveConnection;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lsh/tinfoil/internal/EnclaveConnection;Lsh/tinfoil/Trust;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
-	public final fun getPin ()Lsh/tinfoil/Pin;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
+	public final fun getTrust ()Lsh/tinfoil/Trust;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
 	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class sh/tinfoil/EnclaveHttpClient$Companion {
-	public final fun create (Ljava/lang/String;Lsh/tinfoil/Pin;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Pin;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun create (Ljava/lang/String;Lsh/tinfoil/Trust;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun create$default (Lsh/tinfoil/EnclaveHttpClient$Companion;Ljava/lang/String;Lsh/tinfoil/Trust;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
-public abstract class sh/tinfoil/EnclaveOptions {
-	public final fun getAttestationRelay ()Ljava/lang/String;
-	public final fun getBaseUrl ()Ljava/lang/String;
+public final class sh/tinfoil/EnclaveOptions {
+	public final fun getFetchAttestation ()Lsh/tinfoil/AttestationFetcher;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
-	public final fun getUserCacheSecret ()Ljava/lang/String;
+	public final fun getPolicy ()Lsh/tinfoil/Policy;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
-	public final fun getVerifier ()Lsh/tinfoil/Verifier;
-	public final fun setAttestationRelay (Ljava/lang/String;)V
-	public final fun setBaseUrl (Ljava/lang/String;)V
+	public final fun setFetchAttestation (Lsh/tinfoil/AttestationFetcher;)V
 	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
-	public final fun setTransportMode (Lsh/tinfoil/TransportMode;)V
-	public final fun setUserCacheSecret (Ljava/lang/String;)V
+	public final fun setPolicy (Lsh/tinfoil/Policy;)V
+	public final fun setTransport (Lsh/tinfoil/Transport;)V
 	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
-	public final fun setVerifier (Lsh/tinfoil/Verifier;)V
 }
 
 public abstract interface annotation class sh/tinfoil/ExperimentalTinfoilApi : java/lang/annotation/Annotation {
 }
 
-public final class sh/tinfoil/GatewayHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+public final class sh/tinfoil/GatewayHttpClient : sh/tinfoil/AttestedHttpClient {
 	public static final field Companion Lsh/tinfoil/GatewayHttpClient$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/internal/gateway/GatewayRouter;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Ljava/util/List;
 	public final fun models (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
@@ -174,26 +175,26 @@ public final class sh/tinfoil/GatewayHttpClient$Companion {
 	public final fun create (Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun create$default (Lsh/tinfoil/GatewayHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun fetchCatalog (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getDEFAULT_BASE_URL ()Ljava/lang/String;
+	public final fun getDEFAULT_URL ()Ljava/lang/String;
 }
 
-public abstract class sh/tinfoil/GatewayOptions {
-	public final fun getBaseUrl ()Ljava/lang/String;
+public final class sh/tinfoil/GatewayOptions {
 	public final fun getCatalog ()Lkotlin/jvm/functions/Function0;
 	public final fun getModelPins ()Ljava/util/Map;
 	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
 	public final fun getPinnedModelsOnly ()Z
+	public final fun getPolicy ()Lsh/tinfoil/Policy;
+	public final fun getUrl ()Ljava/lang/String;
 	public final fun getUserCacheSecret ()Ljava/lang/String;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
-	public final fun getVerifier ()Lsh/tinfoil/Verifier;
-	public final fun setBaseUrl (Ljava/lang/String;)V
 	public final fun setCatalog (Lkotlin/jvm/functions/Function0;)V
 	public final fun setModelPins (Ljava/util/Map;)V
 	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
 	public final fun setPinnedModelsOnly (Z)V
+	public final fun setPolicy (Lsh/tinfoil/Policy;)V
+	public final fun setUrl (Ljava/lang/String;)V
 	public final fun setUserCacheSecret (Ljava/lang/String;)V
 	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
-	public final fun setVerifier (Lsh/tinfoil/Verifier;)V
 }
 
 public abstract interface annotation class sh/tinfoil/InternalTinfoilApi : java/lang/annotation/Annotation {
@@ -209,11 +210,11 @@ public final class sh/tinfoil/Measurement {
 }
 
 public final class sh/tinfoil/ModelPin {
-	public fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;)V
-	public synthetic fun <init> (Ljava/lang/String;Lsh/tinfoil/Verifier;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lsh/tinfoil/Policy;)V
+	public synthetic fun <init> (Ljava/lang/String;Lsh/tinfoil/Policy;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPolicy ()Lsh/tinfoil/Policy;
 	public final fun getRepo ()Ljava/lang/String;
-	public final fun getVerifier ()Lsh/tinfoil/Verifier;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -223,19 +224,20 @@ public final class sh/tinfoil/NetworkException : sh/tinfoil/TinfoilException {
 	public fun isRetryable ()Z
 }
 
-public final class sh/tinfoil/Pin {
-	public static final field Companion Lsh/tinfoil/Pin$Companion;
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+public final class sh/tinfoil/Policy {
+	public synthetic fun <init> (Lsh/tinfoil/Measurement;JLsh/tinfoil/ArtifactTrust;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lsh/tinfoil/Measurement;JLsh/tinfoil/ArtifactTrust;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lsh/tinfoil/Measurement;
+	public final fun component2-UwyO8pc ()J
+	public final fun component3 ()Lsh/tinfoil/ArtifactTrust;
+	public final fun copy-8Mi8wO0 (Lsh/tinfoil/Measurement;JLsh/tinfoil/ArtifactTrust;)Lsh/tinfoil/Policy;
+	public static synthetic fun copy-8Mi8wO0$default (Lsh/tinfoil/Policy;Lsh/tinfoil/Measurement;JLsh/tinfoil/ArtifactTrust;ILjava/lang/Object;)Lsh/tinfoil/Policy;
 	public fun equals (Ljava/lang/Object;)Z
-	public final fun getProject ()Ljava/lang/String;
-	public final fun getRepo ()Ljava/lang/String;
+	public final fun getArtifacts ()Lsh/tinfoil/ArtifactTrust;
+	public final fun getFreshnessMaxAge-UwyO8pc ()J
+	public final fun getPinnedRegisters ()Lsh/tinfoil/Measurement;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class sh/tinfoil/Pin$Companion {
-	public final fun getNONE ()Lsh/tinfoil/Pin;
 }
 
 public final class sh/tinfoil/RecoverableResponse : java/io/Closeable {
@@ -277,18 +279,17 @@ public final class sh/tinfoil/ReplicaVerification {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class sh/tinfoil/RouterHttpClient : java/lang/AutoCloseable, okhttp3/Call$Factory {
+public final class sh/tinfoil/RouterHttpClient : sh/tinfoil/AttestedHttpClient {
 	public static final field Companion Lsh/tinfoil/RouterHttpClient$Companion;
 	public synthetic fun <init> (Lsh/tinfoil/internal/EnclaveConnection;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun close ()V
 	public final fun ensureVerified (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun getBaseUrl ()Lokhttp3/HttpUrl;
+	public fun getBaseUrl ()Lokhttp3/HttpUrl;
 	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
-	public final fun getPin ()Lsh/tinfoil/Pin;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
 	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -298,31 +299,34 @@ public final class sh/tinfoil/RouterHttpClient$Companion {
 	public static synthetic fun create$default (Lsh/tinfoil/RouterHttpClient$Companion;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
-public abstract class sh/tinfoil/RouterOptions {
-	public final fun getAttestationRelay ()Ljava/lang/String;
-	public final fun getBaseUrl ()Ljava/lang/String;
-	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
-	public final fun getTransportMode ()Lsh/tinfoil/TransportMode;
-	public final fun getUserCacheSecret ()Ljava/lang/String;
-	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
-	public final fun getVerifier ()Lsh/tinfoil/Verifier;
-	public final fun setAttestationRelay (Ljava/lang/String;)V
-	public final fun setBaseUrl (Ljava/lang/String;)V
-	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
-	public final fun setTransportMode (Lsh/tinfoil/TransportMode;)V
-	public final fun setUserCacheSecret (Ljava/lang/String;)V
-	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
-	public final fun setVerifier (Lsh/tinfoil/Verifier;)V
+public abstract interface class sh/tinfoil/RouterListFetcher {
+	public abstract fun fetchRouterList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
-public final class sh/tinfoil/RuntimeReference {
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+public final class sh/tinfoil/RouterListRelay : sh/tinfoil/RouterListFetcher {
+	public fun <init> (Ljava/lang/String;)V
 	public fun equals (Ljava/lang/Object;)Z
-	public final fun getDigest ()Ljava/lang/String;
-	public final fun getRepo ()Ljava/lang/String;
-	public final fun getTag ()Ljava/lang/String;
+	public fun fetchRouterList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getUrl ()Lokhttp3/HttpUrl;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/RouterOptions {
+	public final fun getFetchAttestation ()Lsh/tinfoil/AttestationFetcher;
+	public final fun getFetchRouterList ()Lsh/tinfoil/RouterListFetcher;
+	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
+	public final fun getPolicy ()Lsh/tinfoil/Policy;
+	public final fun getTransport ()Lsh/tinfoil/Transport;
+	public final fun getUserCacheSecret ()Ljava/lang/String;
+	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
+	public final fun setFetchAttestation (Lsh/tinfoil/AttestationFetcher;)V
+	public final fun setFetchRouterList (Lsh/tinfoil/RouterListFetcher;)V
+	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
+	public final fun setPolicy (Lsh/tinfoil/Policy;)V
+	public final fun setTransport (Lsh/tinfoil/Transport;)V
+	public final fun setUserCacheSecret (Ljava/lang/String;)V
+	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
 }
 
 public final class sh/tinfoil/SessionRecoveryToken {
@@ -365,12 +369,91 @@ public abstract class sh/tinfoil/TinfoilException : java/io/IOException {
 public abstract interface annotation class sh/tinfoil/TinfoilOptionsDsl : java/lang/annotation/Annotation {
 }
 
-public final class sh/tinfoil/TransportMode : java/lang/Enum {
-	public static final field EHBP Lsh/tinfoil/TransportMode;
-	public static final field TLS Lsh/tinfoil/TransportMode;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lsh/tinfoil/TransportMode;
-	public static fun values ()[Lsh/tinfoil/TransportMode;
+public abstract interface class sh/tinfoil/Transport {
+}
+
+public final class sh/tinfoil/Transport$Ehbp : sh/tinfoil/Transport {
+	public fun <init> ()V
+	public fun <init> (Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lsh/tinfoil/Transport$Ehbp;
+	public static synthetic fun copy$default (Lsh/tinfoil/Transport$Ehbp;Ljava/lang/String;ILjava/lang/Object;)Lsh/tinfoil/Transport$Ehbp;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getProxyUrl ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Transport$Tls : sh/tinfoil/Transport {
+	public static final field INSTANCE Lsh/tinfoil/Transport$Tls;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class sh/tinfoil/Trust {
+	public static final field Companion Lsh/tinfoil/Trust$Companion;
+	public static final field PUBLIC_REGISTRY_ID Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Trust$AuthorizedBy : sh/tinfoil/Trust {
+	public fun <init> (Lsh/tinfoil/ConfigAuthorizer;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAuthorize ()Lsh/tinfoil/ConfigAuthorizer;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Trust$Companion {
+	public static final field PUBLIC_REGISTRY_ID Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Trust$EitherPin : sh/tinfoil/Trust {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getProject ()Ljava/lang/String;
+	public final fun getRepo ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Trust$EmbeddedConfig : sh/tinfoil/Trust {
+	public fun <init> ([BLjava/lang/String;)V
+	public synthetic fun <init> ([BLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBytes ()[B
+	public final fun getName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Trust$ProjectPin : sh/tinfoil/Trust {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getProject ()Ljava/lang/String;
+	public final fun getRegistryIds ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Trust$RepoPin : sh/tinfoil/Trust {
+	public fun <init> (Ljava/lang/String;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRepo ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Trust$SignedBy : sh/tinfoil/Trust {
+	public fun <init> (Ljava/util/List;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/util/List;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getKeys ()Ljava/util/List;
+	public final fun getProject ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/Verification {
@@ -424,16 +507,5 @@ public final class sh/tinfoil/VerificationMetadata {
 	public final fun getVerifier ()Lsh/tinfoil/SoftwareIdentity;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
-}
-
-public final class sh/tinfoil/Verifier {
-	public static final field Companion Lsh/tinfoil/Verifier$Companion;
-	public static final field PUBLIC_REGISTRY_ID Ljava/lang/String;
-	public synthetic fun <init> (Lsh/tinfoil/Measurement;Lkotlin/time/Duration;Ljava/util/List;Ljava/util/List;Ljava/util/List;Lsh/tinfoil/EmbeddedReferences;Lsh/tinfoil/ConfigAuthorizer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Lsh/tinfoil/Measurement;Lkotlin/time/Duration;Ljava/util/List;Ljava/util/List;Ljava/util/List;Lsh/tinfoil/EmbeddedReferences;Lsh/tinfoil/ConfigAuthorizer;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Lsh/tinfoil/internal/verification/AttestationVerifier;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
-}
-
-public final class sh/tinfoil/Verifier$Companion {
 }
 

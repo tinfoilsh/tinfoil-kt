@@ -55,7 +55,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** The clients with [TransportMode.EHBP]: what is sealed, what is refused and what fails closed. */
+/** The clients with [Transport.Ehbp]: what is sealed, what is refused and what fails closed. */
 class EhbpClientTest {
     private val enclave = TestEnclave()
 
@@ -89,11 +89,9 @@ class EhbpClientTest {
 
     private fun test(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
-    private suspend fun direct(userCacheSecret: String? = null): EnclaveHttpClient =
-        enclave.client(transportMode = TransportMode.EHBP, userCacheSecret = userCacheSecret)
+    private suspend fun direct(): EnclaveHttpClient = enclave.client(transport = Transport.Ehbp())
 
-    private suspend fun proxied(userCacheSecret: String? = null): EnclaveHttpClient =
-        enclave.client(transportMode = TransportMode.EHBP, baseUrl = proxyUrl, userCacheSecret = userCacheSecret)
+    private suspend fun proxied(): EnclaveHttpClient = enclave.client(transport = Transport.Ehbp(proxyUrl))
 
     private fun EnclaveHttpClient.post(body: String, path: String = "v1/echo"): Request =
         Request.Builder().url(baseUrl.resolve(path)!!).post(body.toRequestBody(JSON)).build()
@@ -110,10 +108,10 @@ class EhbpClientTest {
     }
 
     /** A client that is checked but has verified nothing, so that any I/O shows. */
-    private fun unverified(baseUrl: String? = proxyUrl, transportMode: TransportMode = TransportMode.EHBP): EnclaveHttpClient =
+    private fun unverified(transport: Transport = Transport.Ehbp(proxyUrl)): EnclaveHttpClient =
         EnclaveHttpClient.unverified(
-            enclave.host, Pin(repo = "tinfoilsh/example"),
-            RouteSettings(transportMode, baseUrl, enclave.relayHost, Verifier.appraisingWith(enclave.verifier)),
+            enclave.host, Trust.RepoPin("tinfoilsh/example"),
+            RouteSettings(transport, enclave.relayFetcher),
             enclave.internals(),
         )
 
@@ -125,8 +123,8 @@ class EhbpClientTest {
         val systemProxy = MockWebServer().apply { start() }
         try {
             val settings = enclave.internals(proxy = java.net.Proxy(java.net.Proxy.Type.HTTP, systemProxy.toProxyAddress().address()))
-            val overHttp = enclave.client(transportMode = TransportMode.EHBP, baseUrl = proxyUrl, internals = settings)
-            val overTls = enclave.client(transportMode = TransportMode.EHBP, internals = settings)
+            val overHttp = enclave.client(transport = Transport.Ehbp(proxyUrl), internals = settings)
+            val overTls = enclave.client(transport = Transport.Ehbp(), internals = settings)
 
             for (client in listOf(overHttp, overTls)) {
                 assertEquals("ok", client.execute(client.post("""{"q":"$MARKER"}""").newBuilder().header("Authorization", "Bearer k").build()).text())
@@ -144,7 +142,9 @@ class EhbpClientTest {
     @Test
     fun aBodyWhoseLengthChangesAfterItWasJudgedNeverLeavesInTheClear() = test {
         val marker = "plaintext-marker-5e1f0a"
-        for (client in listOf(direct("cache-secret-0a1b2c"), proxied())) {
+        val router = enclave.router(transport = Transport.Ehbp(), userCacheSecret = "cache-secret-0a1b2c")
+        val proxied = proxied()
+        for ((baseUrl, execute) in listOf(router.baseUrl to router::execute, proxied.baseUrl to proxied::execute)) {
             for (path in listOf("v1/echo", "v1/chat/completions")) {
                 // However often the body is asked before it admits to a
                 // length, as a file does that is written while it is sent.
@@ -160,7 +160,7 @@ class EhbpClientTest {
                         }
                     }
                     val outcome = runCatching {
-                        client.execute(Request.Builder().url(client.baseUrl.resolve(path)!!).post(body).build()).close()
+                        execute(Request.Builder().url(baseUrl.resolve(path)!!).post(body).build()).close()
                     }
                     // The first answer stands: a body that said that it was
                     // empty is not sealed, and what it writes is not sent.
@@ -211,7 +211,7 @@ class EhbpClientTest {
             "http://${enclave.host.substringBefore(':')}.example/",
         )
         for (url in refused) {
-            val error = assertFailsWith<ConfigurationException>(url) { unverified(url) }
+            val error = assertFailsWith<ConfigurationException>(url) { unverified(Transport.Ehbp(url)) }
             assertTrue(error.message!!.contains("loopback"), "$url: ${error.message}")
         }
         val accepted = listOf(
@@ -225,21 +225,14 @@ class EhbpClientTest {
             "http://[::1]:8080/",
             "https://proxy.example/",
             "https://proxy.example:8443/v1/",
-            "https://${enclave.host}/v1/",
+            "https://proxy.example:8443/v1",
         )
         for (url in accepted) {
-            unverified(url).use { client ->
-                assertEquals(TransportMode.EHBP, client.transportMode)
-                assertEquals(url.toHttpUrl(), client.baseUrl, url)
+            unverified(Transport.Ehbp(url)).use { client ->
+                assertEquals(Transport.Ehbp(url), client.transport)
+                // Request paths join under the proxy's path, whether or not it ends with a slash.
+                assertEquals(url.removeSuffix("/").plus("/").toHttpUrl(), client.baseUrl, url)
             }
-        }
-        assertNoIo()
-    }
-
-    @Test
-    fun aProxyIsRefusedWithoutEhbpEvenOnThisMachine() = test {
-        for (url in listOf(proxyUrl, "https://proxy.example/", "http://${enclave.host}/")) {
-            assertFailsWith<ConfigurationException>(url) { unverified(url, TransportMode.TLS) }
         }
         assertNoIo()
     }
@@ -285,11 +278,11 @@ class EhbpClientTest {
 
     @Test
     fun aTokenIsNotOfferedWithoutSealing() = test {
-        val client = unverified(baseUrl = null, transportMode = TransportMode.TLS)
+        val client = unverified(Transport.Tls)
 
         val error = assertFailsWith<ConfigurationException> { client.executeRecoverable(enclave.get()) }
 
-        assertTrue(error.message!!.contains("TransportMode.EHBP"), error.message)
+        assertTrue(error.message!!.contains("Transport.Ehbp"), error.message)
         client.close()
         assertNoIo()
     }
@@ -401,7 +394,7 @@ class EhbpClientTest {
         val client = direct()
         val untrusted = sh.tinfoil.testing.TestAuthority().issue()
         RawTlsServer(untrusted) { countWhatArrives(it) }.use { server ->
-            val stranger = enclave.client(enclave = "localhost:${server.port}", transportMode = TransportMode.EHBP)
+            val stranger = enclave.client(enclave = "localhost:${server.port}", transport = Transport.Ehbp())
 
             assertFailsWith<IOException> { stranger.execute(stranger.post("""{"q":"$MARKER"}""")) }
 
@@ -488,10 +481,12 @@ class EhbpClientTest {
     }
 
     @Test
-    fun theUserCacheSecretIsAddedBeforeTheBodyIsSealed() = test {
-        val client = proxied(userCacheSecret = CACHE_SECRET)
+    fun aRouterClientAddsTheUserCacheSecretBeforeTheBodyIsSealed() = test {
+        val client = enclave.router(transport = Transport.Ehbp(proxyUrl), userCacheSecret = CACHE_SECRET)
 
-        client.execute(client.post("""{"model":"m","prompt":"$MARKER"}""", path = "v1/chat/completions")).close()
+        val chat = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
+            .post("""{"model":"m","prompt":"$MARKER"}""".toRequestBody(JSON)).build()
+        client.execute(chat).close()
 
         val received = atProxy.received.single()
         assertEquals("""{"model":"m","prompt":"$MARKER","user_cache_secret":"$CACHE_SECRET"}""", received.text)
@@ -981,7 +976,7 @@ class EhbpClientTest {
                 bytesSent.addAndGet(frame.size.toLong())
             }
         }.use { server ->
-            val client = enclave.client(enclave = "localhost:${server.port}", transportMode = TransportMode.EHBP)
+            val client = enclave.client(enclave = "localhost:${server.port}", transport = Transport.Ehbp())
 
             val response = client.execute(client.post("""{"q":"$MARKER"}"""))
             assertEquals(200, response.code)
@@ -1011,7 +1006,7 @@ class EhbpClientTest {
     fun aKeyThatTheEnclaveNoLongerHoldsIsVerifiedAgainAndTheRequestReplayedOnce() = test {
         val results = CopyOnWriteArrayList<Result<Verification>>()
         val client = enclave.client(
-            transportMode = TransportMode.EHBP, baseUrl = proxyUrl, userCacheSecret = CACHE_SECRET,
+            transport = Transport.Ehbp(proxyUrl),
             onVerificationResult = { results += it },
         )
         val attested = key
@@ -1026,7 +1021,7 @@ class EhbpClientTest {
         assertEquals(2, atProxy.received.size, "the request was sent once more, and only once")
         val (rejected, accepted) = atProxy.received
         assertNull(rejected.plaintext, "the enclave could not open the body that was sealed to the old key")
-        assertEquals("""{"model":"m","prompt":"$MARKER","user_cache_secret":"$CACHE_SECRET"}""", accepted.text)
+        assertEquals("""{"model":"m","prompt":"$MARKER"}""", accepted.text)
         for (received in atProxy.received) {
             assertTrue(received.sealed)
             assertFalse(received.wire.containsText(MARKER), "a body went out unsealed")
@@ -1305,7 +1300,7 @@ class EhbpClientTest {
     @Test
     fun cancellingTheCoroutineAbortsTheSealedRequestInFlight() = test {
         silentServer().use { server ->
-            val client = enclave.client(enclave = "localhost:${server.port}", transportMode = TransportMode.EHBP)
+            val client = enclave.client(enclave = "localhost:${server.port}", transport = Transport.Ehbp())
 
             val sending = launch(Dispatchers.IO) { client.execute(client.post("""{"q":"$MARKER"}""")) }
             awaitUntil { server.bytesReceived.get() > 0 }
@@ -1319,7 +1314,7 @@ class EhbpClientTest {
     @Test
     fun aCallCanBeCancelledWhileItWaitsForTheResponseOrReadsIt() = test {
         silentServer().use { server ->
-            val client = enclave.client(enclave = "localhost:${server.port}", transportMode = TransportMode.EHBP)
+            val client = enclave.client(enclave = "localhost:${server.port}", transport = Transport.Ehbp())
             val waiting = client.newCall(client.post("""{"q":"$MARKER"}"""))
             val result = async(Dispatchers.IO) { runCatching { waiting.execute() }.exceptionOrNull() }
             awaitUntil { server.bytesReceived.get() > 0 }
@@ -1345,7 +1340,7 @@ class EhbpClientTest {
     @Test
     fun aCallsTimeoutAbortsTheSealedRequestAndTheReadingOfItsBody() = test {
         silentServer().use { server ->
-            val client = enclave.client(enclave = "localhost:${server.port}", transportMode = TransportMode.EHBP)
+            val client = enclave.client(enclave = "localhost:${server.port}", transport = Transport.Ehbp())
             val slowHeaders = client.newCall(client.post("""{"q":"$MARKER"}""")).apply { timeout().timeout(300, TimeUnit.MILLISECONDS) }
 
             val started = System.nanoTime()

@@ -21,8 +21,8 @@ dependencies {
 
 - `sh.tinfoil:tinfoil-openai` is for apps that call the inference API
   through the [OpenAI Java SDK](https://github.com/openai/openai-java):
-  `Client`, `RouterOpenAIClient`, `EnclaveOpenAIClient` and
-  `GatewayOpenAIClient`, in the package `sh.tinfoil.openai`. It depends on
+  `Client`, which is built on top of an attested HTTP client of
+  `tinfoil`, in the package `sh.tinfoil.openai`. It depends on
   `tinfoil`, and on the OpenAI SDK, which is large; see [App size](#app-size).
 - `sh.tinfoil:tinfoil` is the attestation verifier and the attested HTTP
   clients, `EnclaveHttpClient`, `RouterHttpClient` and `GatewayHttpClient`,
@@ -109,52 +109,98 @@ val client = Client.create(apiKey) {
 }
 ```
 
-An HTTP client or a base URL that is set there is replaced: the OpenAI
-client reaches the network only through this SDK. The one way around that is
+An HTTP client or a base URL that is set there is replaced, and so is one
+that the OpenAI SDK reads from `OPENAI_BASE_URL`: the OpenAI client reaches
+the network only through this SDK. The one way around that is
 the OpenAI SDK's `withOptions`, on the client or on one of its services: a
 client that it returns with another HTTP client sends its requests, and the
 API key, without any of this SDK's protection.
 
 ### Choosing the route
 
-`Client` says nothing about how requests reach the models, so that the route
-can change. Two clients do, and take the options of the HTTP clients that
-they send through.
+`Client.create(apiKey)` says nothing about how requests reach the models, so
+that the route can change. To choose the route, create one of the attested
+HTTP clients of the `tinfoil` artifact and put an OpenAI client over it:
 
-`RouterOpenAIClient` sends to one of Tinfoil's routers, which it chooses and
-verifies when it is created:
+- `RouterHttpClient` sends to one of Tinfoil's routers, which it chooses and
+  verifies when it is created;
+- `EnclaveHttpClient` sends to an enclave that you name, verified under the
+  trust that you name for it (see [What is trusted](#what-is-trusted));
+- `GatewayHttpClient` sends through Tinfoil's gateway (see
+  [Gateway](#gateway-experimental)).
 
 ```kotlin
-import sh.tinfoil.TransportMode
-import sh.tinfoil.openai.RouterOpenAIClient
+import sh.tinfoil.RouterHttpClient
+import sh.tinfoil.Transport
+import sh.tinfoil.openai.Client
 import sh.tinfoil.openai.TinfoilEvent
 
-val client = RouterOpenAIClient.create(apiKey) {
-    transportMode = TransportMode.EHBP
-    baseUrl = "https://proxy.example.com/v1/"
+val router = RouterHttpClient.create {
+    transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
     userCacheSecret = cacheSecret
+}
+val client = Client.create(router, apiKey) {
     tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
 }
 ```
 
-`EnclaveOpenAIClient` sends to an enclave that you name, verified against
-what you pin it to:
-
 ```kotlin
-import sh.tinfoil.Pin
-import sh.tinfoil.openai.EnclaveOpenAIClient
+import sh.tinfoil.EnclaveHttpClient
+import sh.tinfoil.Trust
 
-val client = EnclaveOpenAIClient.create(
+val enclave = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
-    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
-    apiKey = apiKey,
+    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
 )
-println(client.httpClient.current?.codeDigest)
+val client = Client.create(enclave, apiKey) {
+    apiPath = "/v1/"
+}
+println(enclave.current?.codeDigest)
 ```
 
-Both send to `https://<enclave>/v1/`, or to `baseUrl` as it is given. Their
-`httpClient` is the attested HTTP client itself, for requests that the
-OpenAI SDK has no call for.
+Creating the OpenAI client does no network I/O: the HTTP client verified
+its service when it was created, and verifies it again by itself. Requests
+go to `apiPath`, `/v1/` by default, under the HTTP client's `baseUrl`: the
+enclave's origin, `https://<enclave>/`, or the proxy URL of
+`Transport.Ehbp`, whose path is where the proxy is mounted. Over a gateway
+client they go to the gateway's URL as it is given, and `apiPath` is
+refused. The OpenAI client does not own the HTTP client: close each, and one
+HTTP client can serve several OpenAI clients, each with its own API key.
+`Client.create(apiKey)` makes its own router client, and closes it with
+itself.
+
+### What is trusted
+
+An enclave that you name is verified under a trust argument, which names
+who vouches for the config that it runs. It is one of the variants of
+`Trust`:
+
+| Variant | Accepts |
+|---|---|
+| `Trust.RepoPin(repo)` | v2 collateral for a GitHub repository, `owner/name[@tag][@sha256:digest]` |
+| `Trust.ProjectPin(project, registryIds)` | v3 collateral for a config registry project, `org/project[@revision][@sha256:digest]`, endorsed by the public registry (`registryIds = null`) or by exactly the registries listed; an empty list is refused |
+| `Trust.SignedBy(keys, project)` | v3 configs whose endorsements your keys sign, optionally only those of one project |
+| `Trust.AuthorizedBy(authorize)` | v3 configs that your `ConfigAuthorizer` approves |
+| `Trust.EmbeddedConfig(bytes, name)` | v3 collateral for exactly the config bytes that you supply |
+| `Trust.EitherPin(repo, project)` | either of the first two, for the migration from v2 to v3 collateral |
+
+The router's trust is fixed to its repository, and the gateway's to the
+repository of each model. Every client also takes a `policy`, which is plain
+data: register pins, the freshness bound, and who vouches for the runtime
+and platform artifacts, Tinfoil's endorsements or your own:
+
+```kotlin
+val client = EnclaveHttpClient.create("enclave.example.com", Trust.ProjectPin("org/project")) {
+    policy = Policy(
+        freshnessMaxAge = 1.days,
+        artifacts = ArtifactTrust.EndorsedArtifacts(freshnessKeys = listOf(freshnessKeyPem)),
+    )
+}
+```
+
+A client checks its trust argument and its policy before any network I/O,
+and refuses one that no verification could pass with a
+`ConfigurationException`.
 
 ### Gateway (experimental)
 
@@ -164,7 +210,7 @@ a compile error until the code opts in.
 
 Tinfoil's gateway forwards each request to an enclave that serves the model
 that the request names: a replica of that model. The gateway is not trusted
-with what a request says. `GatewayOpenAIClient` picks a replica, verifies its
+with what a request says. `GatewayHttpClient` picks a replica, verifies its
 attestation, and seals the request's body to the key that the attestation
 endorses, so the gateway forwards a body that it cannot read. It does read
 everything else: the URL, the headers, the API key among them, and the name
@@ -172,16 +218,18 @@ of the model.
 
 ```kotlin
 import sh.tinfoil.ExperimentalTinfoilApi
+import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.ModelPin
-import sh.tinfoil.openai.GatewayOpenAIClient
+import sh.tinfoil.openai.Client
 
 @OptIn(ExperimentalTinfoilApi::class)
-suspend fun gateway(apiKey: String): GatewayOpenAIClient {
-    val client = GatewayOpenAIClient.create(apiKey) {
+suspend fun gateway(apiKey: String): Client {
+    val gateway = GatewayHttpClient.create {
         modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
         pinnedModelsOnly = true
     }
-    println(client.httpClient.models())
+    val client = Client.create(gateway, apiKey)
+    println(gateway.models())
     return client
 }
 ```
@@ -195,7 +243,7 @@ Tinfoil's repositories, and trusts Tinfoil for which of them serves the
 model. `pinnedModelsOnly` serves no model without a pin.
 
 A request has to name its model, so the calls of the OpenAI SDK that name
-none, such as listing models, are refused; `httpClient.models()` lists what
+none, such as listing models, are refused; `GatewayHttpClient.models()` lists what
 the client serves. A JSON body that names `model`, `user_cache_secret` or
 `cache_salt` twice, or in another case, such as `Model`, is refused too,
 since a server could read another member than the client did.
@@ -245,8 +293,8 @@ one again after an `AttestationException` or a `ConfigurationException`.
 Each of its attempts can itself send the request more than once, when an
 enclave has changed its key and is verified again, so how often one call can
 send a request depends on the route. With the default options it is up to 6
-times with `Client`, `RouterOpenAIClient` and `EnclaveOpenAIClient`: 3
-attempts of up to 2 sends. With `GatewayOpenAIClient` it is up to 24 times:
+times over a router or an enclave client: 3 attempts of up to 2 sends. Over
+a gateway client it is up to 24 times:
 3 attempts of up to 8 sends, because the gateway can also route a request to
 another replica up to 3 times. A request whose body the OpenAI SDK can write
 only once, such as an upload that it streams, is sent once.
@@ -260,11 +308,11 @@ a request only to the service that it verified:
 ```kotlin
 import okhttp3.Request
 import sh.tinfoil.EnclaveHttpClient
-import sh.tinfoil.Pin
+import sh.tinfoil.Trust
 
 val client = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
-    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
 )
 
 val request = Request.Builder()
@@ -292,7 +340,7 @@ adds to an app is mostly these three things:
   bundle delivers one ABI to a device; an APK that is built for all of them
   carries all three.
 - **Bouncy Castle's resources, with either artifact.** Bouncy Castle, which
-  seals bodies in `TransportMode.EHBP`, ships about 1.2 MB of data files for
+  seals bodies with `Transport.Ehbp`, ships about 1.2 MB of data files for
   an algorithm that this SDK does not use. R8 does not remove resources, but
   the app's build can leave them out:
 
@@ -309,35 +357,40 @@ adds to an app is mostly these three things:
 The SDK's own classes are small, and the artifacts carry the keep rules that
 they need.
 
-## Transport modes
+## Transports
 
 A client protects its requests with the keys that the enclave's attestation
-endorses, in one of two ways.
+endorses, in one of two ways, which its `transport` option selects.
 
-`TransportMode.TLS`, the default, pins every connection to the attested TLS
+`Transport.Tls`, the default, pins every connection to the attested TLS
 key. It protects the whole request and response, and needs a direct
-connection to the enclave.
+connection to the enclave, so it takes no URL.
 
-`TransportMode.EHBP` seals request and response bodies to the attested HPKE
-key with [EHBP](https://docs.tinfoil.sh/resources/ehbp), so that they stay
-private through a proxy that you set as `baseUrl`:
+`Transport.Ehbp` seals request and response bodies to the attested HPKE key
+with [EHBP](https://docs.tinfoil.sh/resources/ehbp), so that they stay
+private through a proxy, its `proxyUrl`, or on a direct connection when that
+is null:
 
 ```kotlin
 val client = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
-    pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
 ) {
-    transportMode = TransportMode.EHBP
-    baseUrl = "https://proxy.example.com/"
+    transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
 }
 ```
+
+The proxy URL's path is where the proxy is mounted: request paths, and the
+OpenAI clients' `v1/`, join under it whether or not it ends with `/`. A proxy
+on the enclave's own origin is refused; leave `proxyUrl` null to connect
+directly.
 
 What this mode does not protect:
 
 - **Only bodies are sealed.** The method, the URL and the headers of every
   request, an API key among them, are not: the proxy reads them and can
   change them. The proxy must therefore use HTTPS; `http://` is accepted only
-  for `localhost` or a loopback IP address. A base URL on this machine is
+  for `localhost` or a loopback IP address. A proxy on this machine is
   reached directly, whatever HTTP proxy the system is configured with.
 - **A request without a body is not sealed, and neither is its response.**
   The same goes for a body that is empty: one that declares a length of
@@ -346,10 +399,14 @@ What this mode does not protect:
   the enclave's key: whoever holds a valid certificate for the host that you
   named, the proxy's or the enclave's own, reads what is not sealed. The
   router clients are the exception, because you do not name the router's
-  host. Without a proxy, their connections are pinned to the router's
+  host: without a proxy, their connections are pinned to the router's
   attested key in this mode too. With a proxy, which makes the connection to
-  the router itself, they always use `inference.tinfoil.sh` and do not
-  consult Tinfoil's router list, which is not trusted.
+  the router itself, the router that discovery chose is named to the proxy.
+  An attestation document is not tied to the host that serves it, so the
+  source of the router list, Tinfoil's or yours, is then trusted not to name
+  a host that would pass on another router's attestation: such a host would
+  receive the request headers, the API key among them, though not the
+  sealed bodies.
 - A response with an error status of 400 or above may come from the proxy and
   not from the enclave. A response that the enclave did not seal is
   authenticated by nothing.
@@ -370,9 +427,45 @@ Requests to a proxy carry `X-Tinfoil-Enclave-Url: https://<enclave>`, which
 tells the proxy where to forward them. See `EnclaveHttpClient.execute` for
 the full rules.
 
+### Relays
+
+By default, a client fetches each attestation document directly from the
+enclave, and the router client fetches its list of candidate routers from
+`https://atc.tinfoil.sh/routers`. The `fetchAttestation` option of the
+enclave and router clients, and the `fetchRouterList` option of the router
+client, change how they are obtained, so that, together with a proxy, a
+client reaches only your own origin: for a device that should not reveal
+its address to enclaves, or a network that allows one destination.
+
+```kotlin
+val client = RouterHttpClient.create {
+    transport = Transport.Ehbp(proxyUrl = "https://app.example/tinfoil/proxy")
+    fetchAttestation = AttestationRelay("https://app.example/tinfoil")
+    fetchRouterList = RouterListRelay("https://app.example/tinfoil")
+}
+```
+
+`AttestationRelay(url)` sends
+`GET <url>/.well-known/tinfoil-attestation?nonce=<hex>&enclave=<host>`, which
+the relay forwards to `https://<host>/.well-known/tinfoil-attestation?nonce=<hex>`,
+returning the body unchanged. `RouterListRelay(url)` sends `GET <url>/routers`,
+which the relay forwards to `https://atc.tinfoil.sh/routers`. A relay should
+forward only to the enclave hosts that the application expects, so that it
+is not an open proxy. A relay URL follows the rules of a proxy URL, and is
+checked when the relay is made. Any other function can take either place:
+`fetchAttestation = AttestationFetcher { host, nonce -> ... }`.
+
+Neither option changes what is trusted. Every document is verified as a
+fetched one is, and the list only proposes routers: discovery always runs,
+tries a shuffled copy of the list, verifies each router that it tries, and
+falls back to `inference.tinfoil.sh`. A fetcher's failure is a
+`NetworkException` that keeps it as its cause, unless it is already one of
+this SDK's exceptions, and a router list that cannot be obtained counts as
+empty.
+
 ### Session recovery
 
-With `TransportMode.EHBP`, `executeRecoverable` returns a response together
+With `Transport.Ehbp`, `executeRecoverable` returns a response together
 with its session recovery token, which can open that one response again
 later, without the client that sent the request. Use it for a response that
 the server keeps and that can be fetched again after an interruption:
@@ -389,6 +482,43 @@ val plaintext = SessionRecoveryToken.fromJson(stored).decryptResponse(sealedResp
 
 A token is secret key material for its response. Keep it in protected
 storage, never log it, and delete it once the response has been read.
+
+## Migrating from earlier versions
+
+This release reshapes how clients are configured, as in the other Tinfoil
+SDKs. The changes are breaking:
+
+| Before | Now |
+|---|---|
+| `EnclaveHttpClient.create(enclave, Pin(repo = "org/repo"))` | `EnclaveHttpClient.create(enclave, Trust.RepoPin("org/repo"))` |
+| `Pin(project = "org/project")` | `Trust.ProjectPin("org/project")`, with `registryIds` for registries other than the public one (an empty list is refused) |
+| `Pin(repo = ..., project = ...)` | `Trust.EitherPin(repo, project)` |
+| `Pin.NONE` with `Verifier(configAuthorizer = ...)` | `Trust.AuthorizedBy(authorizer)` |
+| `Pin.NONE` with `Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(bytes)))` | `Trust.EmbeddedConfig(bytes, name)`; a config named by its digest and runtime has no replacement |
+| `Verifier(configSigningKeysPem = keys)` | `Trust.SignedBy(keys, project)` |
+| `verifier = Verifier(pinnedRegisters = ..., freshnessMaxAge = ...)` | `policy = Policy(pinnedRegisters = ..., freshnessMaxAge = ...)`; a zero age selects the default |
+| `Verifier(freshnessSigningKeysPem = keys)` | `Policy(artifacts = ArtifactTrust.EndorsedArtifacts(keys))` |
+| `EmbeddedReferences(runtime = ..., platform = ...)` | `Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime, platform))` |
+| `ModelPin(repo, verifier)` | `ModelPin(repo, policy)` |
+| `GatewayOptions.baseUrl`, `GatewayHttpClient.DEFAULT_BASE_URL` | `GatewayOptions.url`, `GatewayHttpClient.DEFAULT_URL` |
+| `Verifier.PUBLIC_REGISTRY_ID` | `Trust.PUBLIC_REGISTRY_ID` |
+| `client.pin` | `client.trust` on the enclave client; none on the router client |
+| `transportMode = TransportMode.EHBP` | `transport = Transport.Ehbp()` |
+| `transportMode = TransportMode.EHBP` and `baseUrl = "https://proxy.example/v1/"` | `transport = Transport.Ehbp(proxyUrl = "https://proxy.example/")`; the OpenAI client adds `/v1/` |
+| `baseUrl` as a path on the enclave's own origin | none: requests name their own paths, and the OpenAI client takes `apiPath` |
+| `client.transportMode` | `client.transport` |
+| `attestationRelay = "relay.example"` | `fetchAttestation = AttestationRelay("https://relay.example")`; discovery now runs with it |
+| a proxy or a relay that skipped router discovery | discovery always runs; see [Relays](#relays) |
+| `userCacheSecret` on `EnclaveHttpClient` | none: set `user_cache_secret` in each request body that needs one |
+| an empty `userCacheSecret`, which was refused | selects the process's random secret |
+| `EnclaveOpenAIClient.create(enclave, pin, apiKey) { ... }` | `Client.create(EnclaveHttpClient.create(enclave, trust) { ... }, apiKey) { ... }` |
+| `RouterOpenAIClient.create(apiKey) { ... }` | `Client.create(RouterHttpClient.create { ... }, apiKey) { ... }` |
+| `GatewayOpenAIClient.create(apiKey) { ... }` | `Client.create(GatewayHttpClient.create { ... }, apiKey) { ... }` |
+| `Client.httpClient: Call.Factory` | `Client.httpClient: AttestedHttpClient` |
+
+An OpenAI client that is made over an HTTP client of yours does not close
+it: close both. A base URL that is set in `openAI { }` was replaced before,
+and still is.
 
 ## Development
 
@@ -416,7 +546,7 @@ it in one, as in `./gradlew :tinfoil:testDebugUnitTest` or
 depend on the OpenAI SDK, and its build fails if a dependency ever brings
 that in.
 
-The EHBP client, which seals request bodies in `TransportMode.EHBP`, is the
+The EHBP client, which seals request bodies with `Transport.Ehbp`, is the
 released artifact `com.github.tinfoilsh:encrypted-http-body-protocol`, which
 JitPack builds from the release tag of
 [encrypted-http-body-protocol](https://github.com/tinfoilsh/encrypted-http-body-protocol).

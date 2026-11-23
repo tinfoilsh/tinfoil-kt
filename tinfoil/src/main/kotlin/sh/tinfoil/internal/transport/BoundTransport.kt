@@ -11,7 +11,7 @@ import java.io.IOException
 
 /**
  * One way of protecting requests with the keys that a verification endorses.
- * A client has one, chosen by its [TransportMode], and asks it for a
+ * A client has one, chosen by its [Transport], and asks it for a
  * [BoundTransport] for each verification.
  */
 internal interface TransportProtocol {

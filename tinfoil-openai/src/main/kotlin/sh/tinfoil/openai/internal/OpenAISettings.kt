@@ -5,6 +5,8 @@ import sh.tinfoil.openai.TinfoilEvent
 
 /** The options of the OpenAI client that is put over an attested client. */
 internal class OpenAISettings(
+    /** The API path, or null for the default. */
+    val apiPath: String? = null,
     val tinfoilEvents: Set<TinfoilEvent> = emptySet(),
     /** What the caller does to the OpenAI SDK's options builder, in the order in which it was given. */
     val configure: List<ClientOptions.Builder.() -> Unit> = emptyList(),

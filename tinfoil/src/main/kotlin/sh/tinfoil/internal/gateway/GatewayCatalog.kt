@@ -16,7 +16,7 @@ import sh.tinfoil.TinfoilException
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.JsonObjectText
 import sh.tinfoil.internal.transport.Urls
-import sh.tinfoil.internal.verification.AttestationFetcher
+import sh.tinfoil.internal.verification.DocumentFetcher
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeMark
@@ -91,8 +91,8 @@ internal object GatewayCatalog {
      * HTTPS only, every redirect included, within a time and a size, on
      * connections of its own. Only a `200` carries a catalog.
      */
-    fun fetcher(settings: HttpSettings): AttestationFetcher =
-        AttestationFetcher(settings, timeout = FETCH_TIMEOUT, maxBodyBytes = MAX_BYTES, accepted = OK..OK)
+    fun fetcher(settings: HttpSettings): DocumentFetcher =
+        DocumentFetcher(settings, timeout = FETCH_TIMEOUT, maxBodyBytes = MAX_BYTES, accepted = OK..OK)
 
     /**
      * The catalog of the gateway at [host], with only the entries that can
@@ -102,7 +102,7 @@ internal object GatewayCatalog {
      * @throws NetworkException if the catalog cannot be fetched or read.
      */
     @Throws(TinfoilException::class)
-    suspend fun fetch(host: String, fetcher: AttestationFetcher): Catalog = parse(fetcher.fetch(url(host)))
+    suspend fun fetch(host: String, fetcher: DocumentFetcher): Catalog = parse(fetcher.fetch(url(host)))
 
     /**
      * The catalog that [body] spells, with only the entries that can be

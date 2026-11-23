@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import sh.tinfoil.Pin
+import sh.tinfoil.Trust
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.awaitUntil
 import java.util.concurrent.CompletableFuture
@@ -70,11 +70,11 @@ class OpenAICallerThreadTest {
         val enclave = TestEnclave().also { closeables += it }
 
         fromCaller {
-            EnclaveOpenAIClient.create(enclave.host, Pin(repo = "tinfoilsh/example"), "a-key", enclave.connections()::enclave) {
-                attestationRelay = enclave.relayHost
-                verifier = enclave.appraisingVerifier(::note)
-                openAI { note("configure") }
-            }.close()
+            val http = enclave.connections(::note).enclave(enclave.host, Trust.RepoPin("tinfoilsh/example")) {
+                fetchAttestation = enclave.relayFetcher
+            }
+            Client.create(http, "a-key") { openAI { note("configure") } }.close()
+            http.close()
         }
 
         assertNothingOnTheCallersThread("configure", "checkPinVerifiability", "verify")

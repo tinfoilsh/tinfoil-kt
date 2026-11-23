@@ -12,12 +12,14 @@ import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.ModelPin
 import sh.tinfoil.Pin
+import sh.tinfoil.Policy
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
-import sh.tinfoil.Verifier
 import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.transport.HttpSettings
+import sh.tinfoil.internal.verification.AttestationVerifier
+import sh.tinfoil.internal.verification.VerifierOptions
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -69,11 +71,14 @@ public class TestGateway : AutoCloseable {
     private val keys = ConcurrentHashMap<String, SealingKey>()
 
     /** Every pin that a replica's document was verified against, with the replica. */
-    public val verified: CopyOnWriteArrayList<Pair<String, Pin>> = CopyOnWriteArrayList<Pair<String, Pin>>()
+    internal val verified: CopyOnWriteArrayList<Pair<String, Pin>> = CopyOnWriteArrayList<Pair<String, Pin>>()
+
+    /** Every repository that a replica's document was verified against, with the replica. */
+    public val verifiedRepos: List<Pair<String, String?>> get() = verified.map { (host, pin) -> host to pin.repo }
 
     /** What a replica's verification says; throw to fail it. */
     @Volatile
-    public var endorse: (replica: String, pin: Pin) -> Verification = { replica, _ -> endorsement(replica) }
+    internal var endorse: (replica: String, pin: Pin) -> Verification = { replica, _ -> endorsement(replica) }
 
     internal val verifier = FakeVerifier { document, _, pin ->
         val replica = document.toString(Charsets.UTF_8)
@@ -149,8 +154,12 @@ public class TestGateway : AutoCloseable {
         return Received(request, wire, opened.plaintext, opened).also { received += it }.let(answer)
     }
 
-    /** A trust policy that appraises with [verifier]. */
-    public fun appraisingVerifier(): Verifier = Verifier.appraisingWith(verifier)
+    /** What each client asked of the verifier library's constructor. */
+    internal val verifierRequests = CopyOnWriteArrayList<VerifierRequest>()
+
+    /** A verifier of its own for a policy, in place of [verifier]; null for [verifier]. */
+    @Volatile
+    internal var verifierFor: (VerifierOptions.Policy) -> AttestationVerifier? = { null }
 
     /** How many documents [verifier] was asked to verify. */
     public val verifications: Int get() = verifier.verifications.get()
@@ -158,27 +167,31 @@ public class TestGateway : AutoCloseable {
     /** What makes clients as [internals] has them made. */
     public fun connections(): TestConnections = TestConnections(internals())
 
-    internal fun internals(): Internals = Internals(
+    /** Internals that appraise with [verifier], and tell [note], when it is set, the name of each call into it. */
+    internal fun internals(note: ((String) -> Unit)? = null): Internals = Internals(
         http = HttpSettings(trust = authority.trust),
         clock = clock,
         retryDelay = 1.milliseconds,
         timeSource = timeSource,
+        newVerifier = standInVerifiers(if (note == null) verifier else NotingVerifier(verifier, note), verifierRequests)
+            .let { standIn -> { config, policy -> verifierFor(policy) ?: standIn(config, policy) } },
     )
 
     public suspend fun client(
         modelPins: Map<String, ModelPin> = emptyMap(),
         pinnedModelsOnly: Boolean = false,
         baseUrl: String? = this.baseUrl,
-        verifier: Verifier? = Verifier.appraisingWith(this.verifier),
+        policy: Policy = Policy(),
         userCacheSecret: String? = "test-secret",
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         catalog: (() -> Catalog)? = null,
-    ): GatewayHttpClient = GatewayHttpClient.create(internals()) {
+        note: ((String) -> Unit)? = null,
+    ): GatewayHttpClient = GatewayHttpClient.create(internals(note)) {
         this.modelPins = modelPins
         this.pinnedModelsOnly = pinnedModelsOnly
-        this.baseUrl = baseUrl
-        this.verifier = verifier
+        this.url = baseUrl
+        this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
         this.onVerificationResult = onVerificationResult
@@ -190,15 +203,20 @@ public class TestGateway : AutoCloseable {
         modelPins: Map<String, ModelPin> = emptyMap(),
         pinnedModelsOnly: Boolean = false,
         baseUrl: String? = this.baseUrl,
-        verifier: Verifier? = Verifier.appraisingWith(this.verifier),
+        policy: Policy = Policy(),
         userCacheSecret: String? = "test-secret",
         catalog: (() -> Catalog)? = null,
     ): GatewayHttpClient = GatewayHttpClient.unverified(
-        GatewaySettings(modelPins, pinnedModelsOnly, baseUrl, verifier, userCacheSecret, null, null, catalog), internals(),
+        GatewaySettings(modelPins, pinnedModelsOnly, baseUrl, policy, userCacheSecret, null, null, catalog), internals(),
     ).also { clients += it }
 
     public fun track(client: AutoCloseable) {
         clients += client
+    }
+
+    /** Makes every replica's verification fail from now on. */
+    public fun refuseEveryReplica() {
+        endorse = { _, _ -> refuse() }
     }
 
     /** A document that does not verify. */

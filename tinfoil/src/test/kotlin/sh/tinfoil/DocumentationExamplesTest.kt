@@ -3,6 +3,7 @@ package sh.tinfoil
 import okhttp3.Request
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.days
 
 /**
  * The README's examples of this module, kept here so that they compile
@@ -14,7 +15,7 @@ class DocumentationExamplesTest {
     private suspend fun httpClient(apiKey: String) {
         val client = EnclaveHttpClient.create(
             enclave = "inference.tinfoil.sh",
-            pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+            trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
         )
 
         val request = Request.Builder()
@@ -29,16 +30,34 @@ class DocumentationExamplesTest {
     private suspend fun sealedBodies(): EnclaveHttpClient {
         val client = EnclaveHttpClient.create(
             enclave = "inference.tinfoil.sh",
-            pin = Pin(repo = "tinfoilsh/confidential-model-router"),
+            trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
         ) {
-            transportMode = TransportMode.EHBP
-            baseUrl = "https://proxy.example.com/"
+            transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
+        }
+        return client
+    }
+
+    private suspend fun trustAndPolicy(freshnessKeyPem: String): EnclaveHttpClient {
+        val client = EnclaveHttpClient.create("enclave.example.com", Trust.ProjectPin("org/project")) {
+            policy = Policy(
+                freshnessMaxAge = 1.days,
+                artifacts = ArtifactTrust.EndorsedArtifacts(freshnessKeys = listOf(freshnessKeyPem)),
+            )
+        }
+        return client
+    }
+
+    private suspend fun relays(): RouterHttpClient {
+        val client = RouterHttpClient.create {
+            transport = Transport.Ehbp(proxyUrl = "https://app.example/tinfoil/proxy")
+            fetchAttestation = AttestationRelay("https://app.example/tinfoil")
+            fetchRouterList = RouterListRelay("https://app.example/tinfoil")
         }
         return client
     }
 
     @Test
-    fun theExamplesNameTheTransportModeThatTheyAskFor() {
-        assertEquals("EHBP", TransportMode.EHBP.name)
+    fun theExamplesNameTheTransportThatTheyAskFor() {
+        assertEquals(Transport.Ehbp("https://proxy.example.com/"), Transport.Ehbp(proxyUrl = "https://proxy.example.com/"))
     }
 }

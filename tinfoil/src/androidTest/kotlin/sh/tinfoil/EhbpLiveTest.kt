@@ -79,11 +79,11 @@ class EhbpLiveTest {
 
     @Test
     fun theRouterVerifiesAndAnswersSealedRequests() = live {
-        EnclaveHttpClient.create(enclave = enclave, pin = Pin(repo = router)) {
-            transportMode = TransportMode.EHBP
+        EnclaveHttpClient.create(enclave = enclave, trust = Trust.RepoPin(router)) {
+            transport = Transport.Ehbp()
         }.use { client ->
             val verified = assertNotNull(client.current)
-            assertEquals(TransportMode.EHBP, client.transportMode)
+            assertEquals(Transport.Ehbp(), client.transport)
             assertTrue(Regex("[0-9a-f]{64}").matches(verified.hpkePublicKey.orEmpty()), "$verified")
             assertTrue(verified.cryptoMaterial.any { it.id == "hpke" && it.data == verified.hpkePublicKey })
             assertEquals("https://$enclave/", client.baseUrl.toString())
@@ -113,11 +113,10 @@ class EhbpLiveTest {
 
     @Test
     fun aDiscoveredRouterAnswersSealedRequests() = live {
-        RouterHttpClient.create { transportMode = TransportMode.EHBP }.use { client ->
+        RouterHttpClient.create { transport = Transport.Ehbp() }.use { client ->
             val verified = assertNotNull(client.current)
             Log.i(TAG, "discovered ${client.enclave} for sealed requests")
-            assertEquals(TransportMode.EHBP, client.transportMode)
-            assertEquals(Pin(repo = router, project = router), client.pin)
+            assertEquals(Transport.Ehbp(), client.transport)
             assertTrue(Regex("[0-9a-f]{64}").matches(verified.hpkePublicKey.orEmpty()), "$verified")
             assertEquals("https://${client.enclave}/", client.baseUrl.toString())
 
@@ -127,7 +126,7 @@ class EhbpLiveTest {
 
     @Test
     fun aTokenIsNotOfferedOverPinnedTls() = live {
-        EnclaveHttpClient.create(enclave = enclave, pin = Pin(repo = router)).use { client ->
+        EnclaveHttpClient.create(enclave = enclave, trust = Trust.RepoPin(router)).use { client ->
             assertFailsWith<ConfigurationException> {
                 client.executeRecoverable(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build())
             }

@@ -4,7 +4,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
-import okhttp3.HttpUrl
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.CryptoMaterial
@@ -30,7 +29,8 @@ class AttestorTest {
     private val clock = TestClock()
     private val fingerprint = "ab".repeat(32)
     private val pin = Pin(repo = "tinfoilsh/example")
-    private val fetched = mutableListOf<HttpUrl>()
+    /** The host and the nonce, in hex, of each fetch. */
+    private val fetched = mutableListOf<Pair<String, String>>()
     private val verifier = FakeVerifier { _, _, _ -> good() }
 
     /** What each fetch does, in order; the last one repeats. */
@@ -40,8 +40,8 @@ class AttestorTest {
 
     private fun attestor(check: VerificationCheck? = null) = Attestor(
         verifier = verifier,
-        fetch = { url ->
-            fetched += url
+        fetch = { host, nonce ->
+            fetched += host to nonce.joinToString("") { "%02x".format(it) }
             (if (fetches.size > 1) fetches.removeFirst() else fetches.first())()
         },
         check = check,
@@ -56,16 +56,13 @@ class AttestorTest {
             good()
         }
 
-        val direct = attestor().attest("enclave.example", null, pin)
-        attestor().attest("enclave.example:8443", "relay.example", pin)
+        val direct = attestor().attest("enclave.example", pin)
+        attestor().attest("enclave.example:8443", pin)
 
         assertEquals(fingerprint, direct.tlsPublicKeyFingerprint)
-        assertEquals("enclave.example", fetched[0].host)
-        assertEquals("/.well-known/tinfoil-attestation", fetched[0].encodedPath)
-        assertEquals("relay.example", fetched[1].host)
-        assertEquals("enclave.example:8443", fetched[1].queryParameter("enclave"))
+        assertEquals(listOf("enclave.example", "enclave.example:8443"), fetched.map { it.first })
         assertEquals(listOf("document", "document"), seen.map { it.first })
-        assertEquals(fetched.map { it.queryParameter("nonce") }, seen.map { it.second })
+        assertEquals(fetched.map { it.second }, seen.map { it.second })
         assertEquals(pin, seen[0].third)
         assertEquals(0, currentTime, "a verification that succeeds does not wait")
     }
@@ -75,10 +72,10 @@ class AttestorTest {
         val unreachable = NetworkException("unreachable")
         fetches.addFirst { throw unreachable }
 
-        attestor().attest("enclave.example", null, pin)
+        attestor().attest("enclave.example", pin)
 
         assertEquals(2, fetched.size)
-        assertNotEquals(fetched[0].queryParameter("nonce"), fetched[1].queryParameter("nonce"))
+        assertNotEquals(fetched[0].second, fetched[1].second)
         assertEquals(1000, currentTime, "the second attempt waits a second")
     }
 
@@ -87,7 +84,7 @@ class AttestorTest {
         val rejections = ArrayDeque(listOf(AttestationException("quote: first"), AttestationException("quote: second")))
         verifier.verify = { _, _, _ -> throw rejections.removeFirst() }
 
-        val error = assertFailsWith<AttestationException> { attestor().attest("enclave.example", null, pin) }
+        val error = assertFailsWith<AttestationException> { attestor().attest("enclave.example", pin) }
 
         assertEquals("quote: second", error.detail)
         assertEquals(listOf("quote: first"), error.suppressed.map { (it as TinfoilException).detail })
@@ -100,7 +97,7 @@ class AttestorTest {
         fetches.clear()
         fetches.add { throw NetworkException("HTTP 503", status = 503) }
 
-        val error = assertFailsWith<NetworkException> { attestor().attest("enclave.example", null, pin) }
+        val error = assertFailsWith<NetworkException> { attestor().attest("enclave.example", pin) }
 
         assertEquals(503, error.status)
         assertEquals(2, fetched.size)
@@ -111,7 +108,7 @@ class AttestorTest {
     fun aConfigurationErrorIsNotTriedAgain() = runTest {
         verifier.verify = { _, _, _ -> throw ConfigurationException("the pin names no such project") }
 
-        assertFailsWith<ConfigurationException> { attestor().attest("enclave.example", null, pin) }
+        assertFailsWith<ConfigurationException> { attestor().attest("enclave.example", pin) }
 
         assertEquals(1, fetched.size)
         assertEquals(0, currentTime)
@@ -120,12 +117,12 @@ class AttestorTest {
     @Test
     fun theCheckSeesAVerifiedResultAndItsRejectionIsNotTriedAgain() = runTest {
         val seen = mutableListOf<Verification>()
-        val accepted = attestor { seen += it }.attest("enclave.example", null, pin)
+        val accepted = attestor { seen += it }.attest("enclave.example", pin)
         assertSame(accepted, seen.single())
 
         val reason = IllegalArgumentException("unexpected measurement")
         val error = assertFailsWith<AttestationException> {
-            attestor { throw reason }.attest("enclave.example", null, pin)
+            attestor { throw reason }.attest("enclave.example", pin)
         }
 
         assertSame(reason, error.cause)
@@ -139,7 +136,7 @@ class AttestorTest {
         verifier.verify = { _, _, _ -> throw AttestationException("policy: no") }
         var calls = 0
 
-        assertFailsWith<AttestationException> { attestor { calls++ }.attest("enclave.example", null, pin) }
+        assertFailsWith<AttestationException> { attestor { calls++ }.attest("enclave.example", pin) }
 
         assertEquals(0, calls)
     }
@@ -153,7 +150,7 @@ class AttestorTest {
             attestor {
                 calls++
                 throw IllegalStateException("no")
-            }.attest("enclave.example", null, pin)
+            }.attest("enclave.example", pin)
         }
 
         assertEquals(1, calls)
@@ -164,14 +161,14 @@ class AttestorTest {
     @Test
     fun aResultIsExpiredAtItsDeadlineAndNotBefore() = runTest {
         verifier.verify = { _, _, _ -> verification(fingerprint, clock().plusSeconds(1)) }
-        attestor().attest("enclave.example", null, pin)
+        attestor().attest("enclave.example", pin)
 
         verifier.verify = { _, _, _ -> verification(fingerprint, clock()) }
-        val atDeadline = assertFailsWith<AttestationException> { attestor().attest("enclave.example", null, pin) }
+        val atDeadline = assertFailsWith<AttestationException> { attestor().attest("enclave.example", pin) }
         assertTrue(atDeadline.detail.contains("freshness deadline"), atDeadline.detail)
 
         verifier.verify = { _, _, _ -> verification(fingerprint, java.time.Instant.EPOCH) }
-        assertFailsWith<AttestationException> { attestor().attest("enclave.example", null, pin) }
+        assertFailsWith<AttestationException> { attestor().attest("enclave.example", pin) }
     }
 
     @Test
@@ -184,7 +181,7 @@ class AttestorTest {
             }
         }
 
-        val verified = attestor.attest("enclave.example", null, pin)
+        val verified = attestor.attest("enclave.example", pin)
 
         assertEquals(2, fetched.size)
         assertEquals(clock().plusSeconds(60), verified.freshnessExpiresAt)
@@ -209,7 +206,7 @@ class AttestorTest {
         )
         for ((name, result) in cases) {
             verifier.verify = { _, _, _ -> result }
-            assertFailsWith<AttestationException>(name) { attestor().attest("enclave.example", null, pin) }
+            assertFailsWith<AttestationException>(name) { attestor().attest("enclave.example", pin) }
         }
 
         verifier.verify = { _, _, _ ->
@@ -222,7 +219,7 @@ class AttestorTest {
                 ),
             )
         }
-        attestor().attest("enclave.example", null, pin)
+        attestor().attest("enclave.example", pin)
     }
 
     @Test
@@ -230,17 +227,16 @@ class AttestorTest {
         fetches.clear()
         fetches.add { throw CancellationException("cancelled") }
 
-        assertFailsWith<CancellationException> { attestor().attest("enclave.example", null, pin) }
+        assertFailsWith<CancellationException> { attestor().attest("enclave.example", pin) }
 
         assertEquals(1, fetched.size, "a cancelled verification is not tried again")
     }
 
     @Test
     fun theOptionsAreCheckedWithoutFetching() = runTest {
-        attestor().checkOptions("enclave.example", "relay.example", pin)
-        assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example", null, Pin.NONE) }
-        assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example", "https://relay/", pin) }
-        assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example/x", null, pin) }
+        attestor().checkOptions("enclave.example", pin)
+        assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example", Pin.NONE) }
+        assertFailsWith<ConfigurationException> { attestor().checkOptions("enclave.example/x", pin) }
 
         assertTrue(fetched.isEmpty())
         assertEquals(0, verifier.verifications.get())
@@ -250,11 +246,12 @@ class AttestorTest {
     @Test
     fun aVerifierThatReturnsAnUnusableUrlIsNotFollowed() = runTest {
         val odd = object : AttestationVerifier by verifier {
-            override fun attestationUrl(host: String, relay: String?, nonce: ByteArray) = "http://$host/doc"
+            override fun attestationUrl(host: String, nonce: ByteArray) = "http://$host/doc"
         }
-        val attestor = Attestor(odd, fetch = { fetched += it; ByteArray(0) }, clock = clock)
+        val source = DocumentSources.of(null, odd) { error("nothing is fetched") }
+        val attestor = Attestor(odd, fetch = source, clock = clock)
 
-        assertFailsWith<AttestationException> { attestor.attest("enclave.example", null, pin) }
+        assertFailsWith<AttestationException> { attestor.attest("enclave.example", pin) }
 
         assertTrue(fetched.isEmpty())
     }

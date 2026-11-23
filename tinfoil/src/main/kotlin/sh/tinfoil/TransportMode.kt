@@ -1,7 +1,7 @@
 package sh.tinfoil
 
-/** How a client protects its traffic to an enclave. */
-public enum class TransportMode {
+/** The protocol that protects a client's traffic, which a [Transport] selects. */
+internal enum class TransportMode {
     /**
      * Pins every connection to the TLS key that the enclave's attestation
      * endorses. It protects the whole request and response, and needs a

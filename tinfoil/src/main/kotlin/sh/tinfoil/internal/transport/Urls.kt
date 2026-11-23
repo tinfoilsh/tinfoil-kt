@@ -83,6 +83,34 @@ internal object Urls {
     }
 
     /**
+     * A route URL, which [name] describes: an absolute `https` URL, or an
+     * `http` one whose host is `localhost` or a loopback IP address, without
+     * user information, a query or a fragment, even an empty one. Its path
+     * is where a service is mounted, and ends with `/` here, so that request
+     * paths join under it whether or not [text] ends with one.
+     */
+    @Throws(ConfigurationException::class)
+    fun routeUrl(text: String, name: String): HttpUrl {
+        if (text.isEmpty()) {
+            throw ConfigurationException("$name must not be empty: leave it null to not set it")
+        }
+        val url = try {
+            baseUrl(text)
+        } catch (e: ConfigurationException) {
+            throw ConfigurationException(e.detail.replace("base URL", name))
+        }
+        // Headers are not sealed, so they travel in the clear only where
+        // they never leave the machine.
+        if (!url.isHttps && !isLoopback(url)) {
+            throw ConfigurationException(
+                "invalid $name: HTTP is allowed only for localhost or a loopback IP address; " +
+                    "use HTTPS to protect request headers",
+            )
+        }
+        return if (url.encodedPath.endsWith("/")) url else url.newBuilder().encodedPath(url.encodedPath + "/").build()
+    }
+
+    /**
      * A base URL: an absolute `https` or `http` URL without user information,
      * a query or a fragment, even an empty one, since request paths join
      * under it.

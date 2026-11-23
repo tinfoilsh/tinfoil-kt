@@ -6,7 +6,7 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
 import sh.tinfoil.VerificationLayer
-import sh.tinfoil.Verifier
+import sh.tinfoil.Trust
 import sh.tinfoil.go.mobile.Mobile
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -36,7 +36,7 @@ class GoAttestationVerifierTest {
 
         assertEquals(loaded("UsageErrorPrefix"), VerifierErrors.USAGE_PREFIX)
         assertEquals(loaded("VerificationErrorPrefix"), VerifierErrors.VERIFICATION_PREFIX)
-        assertEquals(loaded("PublicRegistryID"), Verifier.PUBLIC_REGISTRY_ID)
+        assertEquals(loaded("PublicRegistryID"), Trust.PUBLIC_REGISTRY_ID)
         assertEquals(loaded("VerificationSchemaVersion"), VerificationPayload.SUPPORTED_SCHEMA_VERSION.toLong())
     }
 
@@ -58,11 +58,7 @@ class GoAttestationVerifierTest {
 
         assertEquals(
             "https://enclave.example/.well-known/tinfoil-attestation?nonce=${hex(nonce)}",
-            verifier.attestationUrl("enclave.example", null, nonce),
-        )
-        assertEquals(
-            "https://relay.example:8443/.well-known/tinfoil-attestation?nonce=${hex(nonce)}&enclave=enclave.example",
-            verifier.attestationUrl("enclave.example", "relay.example:8443", nonce),
+            verifier.attestationUrl("enclave.example", nonce),
         )
     }
 
@@ -72,13 +68,12 @@ class GoAttestationVerifierTest {
         val nonce = verifier.newNonce()
 
         val refused = listOf<() -> Any>(
-            { verifier.attestationUrl("https://enclave.example", null, nonce) },
-            { verifier.attestationUrl("", null, nonce) },
-            { verifier.attestationUrl("enclave.example/path", null, nonce) },
-            { verifier.attestationUrl("user@enclave.example", null, nonce) },
-            { verifier.attestationUrl("enclave.example", "https://relay.example", nonce) },
-            { verifier.attestationUrl("enclave.example", null, nonce.copyOf(31)) },
-            { verifier.attestationUrl("enclave.example", null, ByteArray(0)) },
+            { verifier.attestationUrl("https://enclave.example", nonce) },
+            { verifier.attestationUrl("", nonce) },
+            { verifier.attestationUrl("enclave.example/path", nonce) },
+            { verifier.attestationUrl("user@enclave.example", nonce) },
+            { verifier.attestationUrl("enclave.example", nonce.copyOf(31)) },
+            { verifier.attestationUrl("enclave.example", ByteArray(0)) },
         )
         for (call in refused) {
             val error = assertFailsWith<ConfigurationException> { call() }
@@ -122,20 +117,6 @@ class GoAttestationVerifierTest {
 
         assertContentEquals(nonceBefore, nonce)
         assertContentEquals("{}".toByteArray(), document)
-    }
-
-    @Test
-    fun optionsThatCannotBeReadAreAConfigurationError() {
-        for (options in listOf("""{"no_such_option": true}""", "[]", "null", "{", """{"freshness_max_age_ns":"1"}""")) {
-            val error = assertFailsWith<ConfigurationException>(options) { GoAttestationVerifier.create(options) }
-            assertFalse(error.detail.startsWith(Mobile.UsageErrorPrefix), "The library's prefix is dropped.")
-        }
-    }
-
-    @Test
-    fun theDefaultPolicyIsAnEmptyStringOrAnEmptyObject() {
-        assertFalse(GoAttestationVerifier.create("").callerAuthorizesConfig)
-        assertFalse(GoAttestationVerifier.create("{}").callerAuthorizesConfig)
     }
 
     @Test

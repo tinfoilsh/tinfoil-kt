@@ -21,19 +21,20 @@ import okio.BufferedSource
 import okio.ForwardingSource
 import okio.buffer
 import sh.tinfoil.AttestationException
+import sh.tinfoil.AttestationRelay
 import sh.tinfoil.Catalog
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.ModelPin
+import sh.tinfoil.Policy
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.RecoverableResponse
 import sh.tinfoil.ReplicaVerification
 import sh.tinfoil.TinfoilException
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
-import sh.tinfoil.Verifier
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Internals
@@ -46,7 +47,10 @@ import sh.tinfoil.internal.transport.SettledBody
 import sh.tinfoil.internal.transport.Urls
 import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.transport.closeQuietly
-import sh.tinfoil.internal.verification.AttestationFetcher
+import sh.tinfoil.internal.verification.DocumentFetcher
+import sh.tinfoil.internal.verification.AttestationVerifier
+import sh.tinfoil.internal.verification.VerifierInputs
+import sh.tinfoil.internal.verification.VerifierOptions
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -63,10 +67,15 @@ import kotlin.coroutines.coroutineContext
 internal class GatewayPolicy(
     pins: Map<String, ModelPin>,
     private val pinnedOnly: Boolean,
-    /** The trust policy for the models that are not pinned, and for the pins that have none of their own. */
-    private val verifier: Verifier,
+    /** The policy for the models that are not pinned, and for the pins that have none of their own. */
+    policy: Policy,
+    /** What builds a verifier from a config trust and a policy. */
+    newVerifier: (VerifierOptions.ConfigTrust?, VerifierOptions.Policy) -> AttestationVerifier,
 ) {
-    private class Pinned(val repo: String, val verifier: Verifier)
+    private class Pinned(val repo: String, val verifier: AttestationVerifier)
+
+    /** The verifier for the models that are not pinned, and for the pins that have no policy of their own. */
+    private val verifier: AttestationVerifier = newVerifier(null, VerifierInputs.policy(policy))
 
     private val pins: Map<String, Pinned>
 
@@ -74,28 +83,21 @@ internal class GatewayPolicy(
         if (pinnedOnly && pins.isEmpty()) {
             throw ConfigurationException("pinned-only mode requires at least one model pin")
         }
-        // Replicas are verified against a repository. A policy whose config
-        // the caller supplies or approves would leave that unchecked.
-        if (verifier.backend.callerAuthorizesConfig) {
-            throw ConfigurationException(CALLER_AUTHORIZED_CONFIG)
-        }
         val checked = HashMap<String, Pinned>()
         for ((model, pin) in pins) {
-            val policy = pin.verifier ?: verifier
-            if (policy.backend.callerAuthorizesConfig) {
-                throw ConfigurationException("model ${quote(model)}: $CALLER_AUTHORIZED_CONFIG")
-            }
             if (model.isBlank() || !pin.repo.startsWith(GatewayCatalog.TRUSTED_OWNER)) {
                 throw ConfigurationException(
                     "model pin ${quote(model)} repository ${quote(pin.repo)} must belong to ${GatewayCatalog.TRUSTED_OWNER}",
                 )
             }
-            try {
-                policy.backend.checkPinVerifiability(pinOf(pin.repo))
+            val verifier = try {
+                val own = pin.policy?.let { newVerifier(null, VerifierInputs.policy(it)) } ?: verifier
+                own.checkPinVerifiability(pinOf(pin.repo))
+                own
             } catch (e: TinfoilException) {
-                throw ConfigurationException("model ${quote(model)}: ${e.detail}", cause = e)
+                throw ConfigurationException("model ${quote(model)}: ${e.detail}")
             }
-            checked[model] = Pinned(pin.repo, policy)
+            checked[model] = Pinned(pin.repo, verifier)
         }
         this.pins = checked
     }
@@ -149,11 +151,9 @@ internal class GatewayPolicy(
     }
 
     /** The trust policy that [replica] is verified under. */
-    fun verifierFor(replica: ReplicaKey): Verifier = replica.pinnedModel?.let { pins[it]?.verifier } ?: verifier
+    fun verifierFor(replica: ReplicaKey): AttestationVerifier = replica.pinnedModel?.let { pins[it]?.verifier } ?: verifier
 
     internal companion object {
-        private const val CALLER_AUTHORIZED_CONFIG = "caller-authorized config requires a direct enclave client"
-
         /**
          * Throws for a request that names no model. Nothing is looked up
          * for one: a catalog, which is not trusted, must not get to say
@@ -218,7 +218,7 @@ internal class GatewayRouter private constructor(
 
     // Made here, so that closing the client always finds it. It holds no
     // thread or connection until it fetches.
-    private val catalogFetcher: AttestationFetcher? =
+    private val catalogFetcher: DocumentFetcher? =
         if (suppliedCatalog == null) GatewayCatalog.fetcher(internals.http) else null
     private val fetchedCatalog: CatalogCache? = catalogFetcher?.let { fetcher ->
         CatalogCache({ GatewayCatalog.fetch(relay, fetcher) }, catalogScope, internals.timeSource)
@@ -601,7 +601,7 @@ internal class GatewayRouter private constructor(
 
     internal companion object {
         /** Tinfoil's gateway. */
-        const val DEFAULT_BASE_URL: String = "https://inference-gateway.tinfoil.sh/v1/"
+        const val DEFAULT_URL: String = "https://inference-gateway.tinfoil.sh/v1/"
 
         /** How often one request follows the gateway to another replica. */
         const val MAX_REROUTES: Int = 3
@@ -638,22 +638,22 @@ internal class GatewayRouter private constructor(
         }
 
         /**
-         * A router for the gateway at [baseUrl], with every option checked
+         * A router for the gateway at [url], with every option checked
          * and nothing fetched or verified.
          */
         @Throws(TinfoilException::class)
         fun create(
             modelPins: Map<String, ModelPin>,
             pinnedModelsOnly: Boolean,
-            baseUrl: String?,
-            verifier: Verifier?,
+            url: String?,
+            policy: Policy,
             userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
             onVerificationResult: ((Result<Verification>) -> Unit)?,
             catalog: (() -> Catalog)?,
             internals: Internals,
         ): GatewayRouter {
-            val base = Urls.baseUrl(requireNotEmpty(baseUrl, "baseUrl") ?: DEFAULT_BASE_URL)
+            val base = Urls.baseUrl(requireNotEmpty(url, "url") ?: DEFAULT_URL)
             if (!base.isHttps) {
                 throw ConfigurationException("invalid base URL: the gateway base URL must use HTTPS")
             }
@@ -661,17 +661,18 @@ internal class GatewayRouter private constructor(
             val authority = if (base.host.contains(':')) "[${base.host}]" else base.host
             val relay = if (base.port == HttpUrl.defaultPort(base.scheme)) authority else "$authority:${base.port}"
             Urls.requireRelay(relay)
+            val relayAtOrigin = AttestationRelay("https://$relay")
             // The caller's map is read once, here.
-            val policy = GatewayPolicy(HashMap(modelPins), pinnedModelsOnly, verifier ?: Verifier())
-            val secret = UserCacheSecret.orProcessDefault(userCacheSecret)
+            val gatewayPolicy = GatewayPolicy(HashMap(modelPins), pinnedModelsOnly, policy, internals.newVerifier)
+            val secret = UserCacheSecret.resolve(userCacheSecret, internals.processSecret)
             val open = { replica: ReplicaKey ->
                 EnclaveConnection.create(
                     enclave = replica.host,
                     pin = GatewayPolicy.pinOf(replica.reference),
-                    transportMode = TransportMode.EHBP,
-                    baseUrl = base.toString(),
-                    attestationRelay = relay,
-                    verifier = policy.verifierFor(replica),
+                    transport = Transport.Ehbp(proxyUrl = base.toString()),
+                    // The gateway relays attestation documents at its origin.
+                    fetchAttestation = relayAtOrigin,
+                    verifier = gatewayPolicy.verifierFor(replica),
                     // The router scopes the cache itself.
                     cacheSecret = null,
                     verificationCheck = verificationCheck,
@@ -679,7 +680,7 @@ internal class GatewayRouter private constructor(
                     internals = internals,
                 )
             }
-            return GatewayRouter(base, policy, secret, catalog, relay, internals, open)
+            return GatewayRouter(base, gatewayPolicy, secret, catalog, relay, internals, open)
         }
 
         /**
