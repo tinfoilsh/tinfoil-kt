@@ -67,8 +67,9 @@ public class RouterHttpClient private constructor(
 
     /**
      * Returns a verification of the router that is valid now, verifying
-     * first only if the last one has reached its freshness deadline or the
-     * router has rejected its key. It behaves as
+     * first only if the last one has reached its freshness deadline, the
+     * router has rejected its key, or a verification that was to replace
+     * it has failed with an [AttestationException]. It behaves as
      * [EnclaveHttpClient.ensureVerified] does, and is safe to call from the
      * main thread.
      *
@@ -82,9 +83,11 @@ public class RouterHttpClient private constructor(
     /**
      * Verifies the same router again, even if the last verification is still
      * valid, and returns the new verification. It behaves as
-     * [EnclaveHttpClient.reverify] does: a failure does not withdraw a
-     * verification that is still valid, and does not make the client choose
-     * another router. It is safe to call from the main thread.
+     * [EnclaveHttpClient.reverify] does: an [AttestationException]
+     * withdraws the last verification, so that the next request verifies
+     * the router again, and any other failure leaves a verification that is
+     * still valid in use. Either way the client keeps its router: it never
+     * chooses another one. It is safe to call from the main thread.
      */
     @Throws(IOException::class, CancellationException::class)
     public suspend fun reverify(): Verification = connection.reverify()

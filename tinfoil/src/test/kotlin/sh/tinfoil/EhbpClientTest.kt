@@ -1193,6 +1193,28 @@ class EhbpClientTest {
     }
 
     @Test
+    fun aRejectedReverificationStopsSealingToItsKeyUntilTheEnclavePassesAgain() = test {
+        val client = proxied()
+        client.execute(client.post("""{"q":0}""")).close()
+        val passes = enclave.verifier.verify
+        enclave.verifier.verify = { _, _, _ -> throw AttestationException("the nonce does not match") }
+
+        assertFailsWith<AttestationException> { client.reverify() }
+        assertFailsWith<AttestationException> { client.execute(client.post("""{"q":1}""")) }
+        assertEquals(1, proxy.requestCount, "nothing was sealed to the withdrawn key")
+
+        // The enclave passes again, with another key, which alone can open
+        // what is sent from now on.
+        key = SealingKey()
+        enclave.verifier.verify = passes
+        val fetched = enclave.fetches
+        client.execute(client.post("""{"q":2}""")).close()
+        assertEquals(fetched + 1, enclave.fetches, "the request verified the enclave first")
+        assertEquals(2, proxy.requestCount)
+        assertEquals(0, atProxy.received.last().request.sequenceNumber, "a connection of the new verification")
+    }
+
+    @Test
     fun requestsInFlightAtOnceEachGetTheirOwnAnswerAndToken() = test {
         val client = proxied()
         val stored = java.util.concurrent.ConcurrentHashMap<String, Pair<String, ByteArray>>()
