@@ -113,7 +113,6 @@ class EnclaveHttpClientTest {
             "an enclave with an empty port" to { enclave.client(enclave = "localhost:") },
             "an enclave with a backslash" to { enclave.client(enclave = "localhost\\x") },
             "a repo pin without a repo" to { enclave.client(trust = Trust.RepoPin("")) },
-            "no trust, as Java can pass" to { EnclaveHttpClient.create(enclave.host, null) },
             "a project pin without a project" to { enclave.client(trust = Trust.ProjectPin("")) },
             "an empty list of registries" to { enclave.client(trust = Trust.ProjectPin("org/project", emptyList())) },
             "an either pin without a project" to { enclave.client(trust = Trust.EitherPin("org/repo", "")) },

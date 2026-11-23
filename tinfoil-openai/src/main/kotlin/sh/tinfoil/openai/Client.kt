@@ -180,32 +180,25 @@ public class Client private constructor(
          * `openAI { }` runs later, once, on a background thread, where the
          * OpenAI options are prepared.
          *
-         * @param httpClient The attested HTTP client to send through. It must
-         *   not be null.
+         * @param httpClient The attested HTTP client to send through. A null
+         *   from Java throws the [NullPointerException] that names the
+         *   parameter.
          * @param apiKey The API key, sent as a bearer token with every
          *   request, through [httpClient] only. It must not be empty or
          *   blank. It is never read from the environment.
          * @param options Sets the options; see [OpenAIOptions]. Without it,
          *   every option has its default.
          * @throws ConfigurationException if an argument or an option is
-         *   invalid: [httpClient] is null, [apiKey] is empty or blank, the
-         *   OpenAI options do not make a client, or the API path is invalid
-         *   or is set with a gateway client. Its message never repeats the
-         *   key.
+         *   invalid: [apiKey] is empty or blank, the OpenAI options do not
+         *   make a client, or the API path is invalid or is set with a
+         *   gateway client. Its message never repeats the key.
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
-            // Nullable so that a null from Java is refused as a
-            // configuration error, rather than by a NullPointerException.
-            httpClient: AttestedHttpClient?,
+            httpClient: AttestedHttpClient,
             apiKey: String,
             options: OpenAIOptions.() -> Unit = {},
-        ): Client {
-            val attested = httpClient ?: throw CrossArtifact.configurationException(
-                "the HTTP client is required: an EnclaveHttpClient, a RouterHttpClient or a GatewayHttpClient",
-            )
-            return over(attested, apiKey, openAISettings(options), ownsHttpClient = false)
-        }
+        ): Client = over(httpClient, apiKey, openAISettings(options), ownsHttpClient = false)
 
         /**
          * Creates a client on Tinfoil's recommended route: a

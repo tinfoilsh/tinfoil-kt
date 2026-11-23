@@ -242,12 +242,6 @@ class OpenAIOptionsTest {
     }
 
     @Test
-    fun aNullHttpClientIsAConfigurationError() = test {
-        val error = assertFailsWith<ConfigurationException> { Client.create(null, KEY) }
-        assertTrue(error.detail.contains("HTTP client is required"), error.detail)
-    }
-
-    @Test
     fun aGatewayClientSendsUnderItsUrlAndTakesNoApiPath() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
         val http = gateway.client()
