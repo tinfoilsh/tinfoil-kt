@@ -155,7 +155,7 @@ val enclave = EnclaveHttpClient.create(
 val client = Client.create(enclave, apiKey) {
     apiPath = "/v1/"
 }
-println(enclave.current?.codeDigest)
+println(enclave.lastVerification()?.report?.verifiedFacts?.codeDigest)
 ```
 
 Creating the OpenAI client does no network I/O: the HTTP client verified
@@ -201,6 +201,46 @@ val client = EnclaveHttpClient.create("enclave.example.com", Trust.ProjectPin("o
 A client checks its trust argument and its policy before any network I/O,
 and refuses one that no verification could pass with a
 `ConfigurationException`.
+
+### Verification reports
+
+Every verification that a client runs is an attempt, and each attempt that
+reached the verifier has a `VerificationReport`: one step for each layer of
+the verifier (`envelope`, `provenance`, `quote`, `policy`), each `passed`,
+`failed`, `skipped` or `not_run`, and the facts that it established. A
+report that passed has `verifiedFacts`, which hold the keys that the client
+binds its connections to. When the verifier rejects a document, the client
+throws an `AttestationException` whose cause is a `VerificationException`,
+and its report has the step that failed and `partialFacts`: the expected
+and measured values that the steps before the failure established, side by
+side. The key fingerprints in partial facts are the document's claim alone,
+never verified. A failed fetch is a `NetworkException`, and has no report.
+
+`lastVerification()` returns the most recent attempt without any I/O, and
+the `onVerification` option is told of every attempt, with the host that it
+verified, once its outcome is decided:
+
+```kotlin
+import sh.tinfoil.VerificationAttempt
+import sh.tinfoil.VerificationException
+
+val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
+    onVerification = { host, attempt ->
+        when (attempt) {
+            is VerificationAttempt.Passed ->
+                println("$host runs ${attempt.report.verifiedFacts?.codeDigest}")
+            is VerificationAttempt.Failed -> {
+                val report = (attempt.error.cause as? VerificationException)?.report
+                println("$host failed at ${report?.failedStep?.layer}: ${attempt.error.detail}")
+            }
+        }
+    }
+}
+```
+
+A report is for showing and logging what happened. Decide what to do from
+the exception's category, never from a report; a decision about trust
+belongs in `verificationCheck`, which sees only verified facts.
 
 ### Gateway (experimental)
 
