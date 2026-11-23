@@ -319,12 +319,13 @@ class UserCacheSecretTest {
     }
 
     @Test
-    fun onlyNullMeansNoSecret() {
+    fun nullAndEmptyMeanNoSecret() {
         assertNull(UserCacheSecret.of(null))
-        for (given in listOf<() -> Any?>({ UserCacheSecret.of("") }, { UserCacheSecret.orProcessDefault("") })) {
-            val error = assertFailsWith<ConfigurationException> { given() }
-            assertTrue(error.detail.contains("userCacheSecret must not be empty"), error.detail)
-        }
+        assertNull(UserCacheSecret.of(""))
+        val process = UserCacheSecret.ProcessSecret()
+        assertSame(process.get(), UserCacheSecret.resolve("", process))
+        assertSame(process.get(), UserCacheSecret.resolve(null, process))
+        assertEquals("given", UserCacheSecret.resolve("given", process).value)
     }
 
     @Test
@@ -332,22 +333,22 @@ class UserCacheSecretTest {
         for (text in listOf("hunter2\ud800", "\udc00hunter2", "hunter2\ud800x", "hunter2\udc00\ud800")) {
             val error = assertFailsWith<ConfigurationException> { UserCacheSecret.of(text) }
             assertFalse(error.message!!.contains("hunter2"), error.message)
-            assertFailsWith<ConfigurationException> { UserCacheSecret.orProcessDefault(text) }
+            assertFailsWith<ConfigurationException> { UserCacheSecret.resolve(text) }
         }
     }
 
     @Test
     fun theProcessSecretIsRandomStableAndNeverPrinted() {
-        val first = spliced("{}".toByteArray(), UserCacheSecret.orProcessDefault(null))!!
-        val second = spliced("{}".toByteArray(), UserCacheSecret.orProcessDefault(null))!!
+        val first = spliced("{}".toByteArray(), UserCacheSecret.resolve(null))!!
+        val second = spliced("{}".toByteArray(), UserCacheSecret.resolve(null))!!
 
         assertEquals(first, second, "one secret for the process")
         val value = assertNotNull(Regex("""\{"user_cache_secret":"([0-9a-f]{64})"}""").matchEntire(first)).groupValues[1]
         assertTrue(value.toSet().size > 4, "256 random bits, not a constant")
-        assertSame(UserCacheSecret.orProcessDefault(null), UserCacheSecret.orProcessDefault(null))
-        assertFalse(UserCacheSecret.orProcessDefault(null).toString().contains(value))
+        assertSame(UserCacheSecret.resolve(null), UserCacheSecret.resolve(null))
+        assertFalse(UserCacheSecret.resolve(null).toString().contains(value))
         assertFalse(secret.toString().contains("s3cret"))
-        assertEquals("{\"user_cache_secret\":\"mine\"}", spliced("{}".toByteArray(), UserCacheSecret.orProcessDefault("mine")))
+        assertEquals("{\"user_cache_secret\":\"mine\"}", spliced("{}".toByteArray(), UserCacheSecret.resolve("mine")))
     }
 
     // Which requests are given it.

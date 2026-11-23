@@ -14,8 +14,10 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.runner.RunWith
-import sh.tinfoil.Pin
-import sh.tinfoil.TransportMode
+import sh.tinfoil.EnclaveHttpClient
+import sh.tinfoil.RouterHttpClient
+import sh.tinfoil.Trust
+import sh.tinfoil.Transport
 import sh.tinfoil.tinfoilException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -101,24 +103,25 @@ class OpenAIClientsLiveTest {
 
     @Test
     fun theRouterClientSealsWhatTheOpenAiSdkSends() = live {
-        RouterOpenAIClient.create(NOT_A_KEY) {
-            transportMode = TransportMode.EHBP
-            openAI { maxRetries(0) }
-        }.use { client ->
-            assertEquals(TransportMode.EHBP, client.httpClient.transportMode)
+        val http = RouterHttpClient.create { transport = Transport.Ehbp() }
+        Client.create(http, NOT_A_KEY) { openAI { maxRetries(0) } }.use { client ->
+            assertEquals(Transport.Ehbp(), http.transport)
             assertModelsListed("router, sealed", client.openAIAsync)
             assertRefused("router, sealed", client.openAI, client.openAIAsync)
         }
+        http.close()
     }
 
     @Test
     fun theEnclaveClientReachesANamedEnclaveThroughTheOpenAiSdk() = live {
-        EnclaveOpenAIClient.create(enclave, Pin(repo = router), NOT_A_KEY) { openAI { maxRetries(0) } }
+        val http = EnclaveHttpClient.create(enclave, Trust.RepoPin(router))
+        Client.create(http, NOT_A_KEY) { openAI { maxRetries(0) } }
             .use { client ->
-                assertEquals("https://$enclave/", client.httpClient.baseUrl.toString())
+                assertEquals("https://$enclave/v1/", client.baseUrl.toString())
                 assertModelsListed("enclave", client.openAIAsync)
                 assertRefused("enclave", client.openAI, client.openAIAsync)
             }
+        http.close()
     }
 
     @Test
@@ -130,9 +133,11 @@ class OpenAIClientsLiveTest {
     @Test
     fun aChatIsCompletedAndStreamedWithSealedBodies() = live {
         val key = apiKey()
-        RouterOpenAIClient.create(key) { transportMode = TransportMode.EHBP }.use { client ->
+        val http = RouterHttpClient.create { transport = Transport.Ehbp() }
+        Client.create(http, key).use { client ->
             assertChats("router, sealed", client.openAI, client.openAIAsync)
         }
+        http.close()
     }
 
     private companion object {

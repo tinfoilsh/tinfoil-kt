@@ -3,8 +3,6 @@ package sh.tinfoil.internal.verification
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
@@ -24,24 +22,25 @@ import kotlin.time.Duration.Companion.seconds
  */
 internal class Attestor(
     private val verifier: AttestationVerifier,
-    private val fetch: suspend (HttpUrl) -> ByteArray,
+    /** Obtains a document, and reports a failure as a [TinfoilException]. */
+    private val fetch: DocumentSource,
     private val check: VerificationCheck? = null,
     private val clock: () -> Instant = Instant::now,
     private val retryDelay: Duration = RETRY_DELAY,
 ) {
     /**
-     * Throws for a [host], [relay] or [pin] that no verification could
-     * succeed with. It performs no I/O.
+     * Throws for a [host] or [pin] that no verification could succeed with.
+     * It performs no I/O.
      */
     @Throws(TinfoilException::class)
-    fun checkOptions(host: String, relay: String?, pin: Pin) {
-        attestationUrl(host, relay, verifier.newNonce())
+    fun checkOptions(host: String, pin: Pin) {
+        verifier.attestationUrl(host, verifier.newNonce())
         verifier.checkPinVerifiability(pin)
     }
 
     /**
-     * A verification of [host] against [pin], fetched through [relay] when
-     * it is not null. The result is fresh, endorses a TLS key, and has passed
+     * A verification of [host] against [pin], from a document that [fetch]
+     * obtains. The result is fresh, endorses a TLS key, and has passed
      * the caller's check.
      *
      * A failed fetch or a rejected document is tried once more, against
@@ -50,9 +49,9 @@ internal class Attestor(
      * about the evidence rather than a fault in getting it.
      */
     @Throws(TinfoilException::class)
-    suspend fun attest(host: String, relay: String?, pin: Pin): Verification {
+    suspend fun attest(host: String, pin: Pin): Verification {
         val first = try {
-            return attempt(host, relay, pin)
+            return attempt(host, pin)
         } catch (e: Final) {
             throw e.error
         } catch (e: ConfigurationException) {
@@ -64,7 +63,7 @@ internal class Attestor(
         }
         delay(retryDelay)
         try {
-            return attempt(host, relay, pin)
+            return attempt(host, pin)
         } catch (e: Final) {
             throw e.error.apply { addSuppressed(first) }
         } catch (e: TinfoilException) {
@@ -77,16 +76,16 @@ internal class Attestor(
      * not tried again. It is for a caller that has other hosts to try.
      */
     @Throws(TinfoilException::class)
-    suspend fun attestOnce(host: String, relay: String?, pin: Pin): Verification =
+    suspend fun attestOnce(host: String, pin: Pin): Verification =
         try {
-            attempt(host, relay, pin)
+            attempt(host, pin)
         } catch (e: Final) {
             throw e.error
         }
 
-    private suspend fun attempt(host: String, relay: String?, pin: Pin): Verification {
+    private suspend fun attempt(host: String, pin: Pin): Verification {
         val nonce = verifier.newNonce()
-        val document = fetch(attestationUrl(host, relay, nonce))
+        val document = fetch(host, nonce)
         coroutineContext.ensureActive()
         val verification = verifier.verify(document, nonce, pin)
         requireTransportKeys(verification)
@@ -111,14 +110,6 @@ internal class Attestor(
         // evidence.
         requireFresh(verification, host)
         return verification
-    }
-
-    private fun attestationUrl(host: String, relay: String?, nonce: ByteArray): HttpUrl {
-        val url = verifier.attestationUrl(host, relay, nonce).toHttpUrlOrNull()
-        if (url == null || !url.isHttps) {
-            throw AttestationException("the verifier returned no usable attestation URL")
-        }
-        return url
     }
 
     /** A result is expired at the instant of its deadline, not only after it. */

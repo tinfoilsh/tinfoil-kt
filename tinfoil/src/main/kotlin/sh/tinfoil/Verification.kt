@@ -97,7 +97,7 @@ public class Verification internal constructor(
  * A measurement: the predicate type that names its platform, and its
  * registers in that platform's order as lowercase hex.
  *
- * As a [Verifier]'s pinned registers, an empty register is one that is not
+ * As a [Policy]'s pinned registers, an empty register is one that is not
  * pinned. In a [Verification], an empty register of a code measurement is one
  * that the release leaves open.
  */
@@ -158,10 +158,13 @@ public value class ReferenceSource(
         /** An endorsement in the document, verified against the trust policy. */
         public val ENDORSEMENT: ReferenceSource = ReferenceSource("endorsement")
 
-        /** A value from the verifier's [EmbeddedReferences]. */
+        /**
+         * A value that the caller embedded: a [Trust.EmbeddedConfig] config,
+         * or an artifact of [ArtifactTrust.EmbeddedArtifacts].
+         */
         public val EMBEDDED: ReferenceSource = ReferenceSource("embedded")
 
-        /** A config that the verifier's [ConfigAuthorizer] approved. */
+        /** A config that the [ConfigAuthorizer] of a [Trust.AuthorizedBy] approved. */
         public val POLICY: ReferenceSource = ReferenceSource("policy")
     }
 }

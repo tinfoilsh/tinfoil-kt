@@ -90,11 +90,9 @@ class MainThreadSafetyTest {
 
     /** Endorses the server's own keys, whatever the document says. */
     private val verifier = object : AttestationVerifier {
-        override val callerAuthorizesConfig: Boolean = false
-
         override fun newNonce(): ByteArray = ByteArray(32)
 
-        override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String =
+        override fun attestationUrl(host: String, nonce: ByteArray): String =
             "https://$host/.well-known/tinfoil-attestation"
 
         override fun checkPinVerifiability(pin: Pin) = Unit
@@ -143,14 +141,17 @@ class MainThreadSafetyTest {
 
     @Test
     fun anEnclaveClientIsCreatedUsedAndClosedOnTheMainThreadInBothModes() {
-        for (mode in TransportMode.entries) {
+        for (mode in listOf(Transport.Tls, Transport.Ehbp())) {
             val before = requests.get()
             val blockRanOn = ArrayList<Thread>()
             val client = fromMain {
-                EnclaveHttpClient.create(host, Pin(repo = "tinfoilsh/example"), Internals(http = HttpSettings(trust = trust))) {
+                EnclaveHttpClient.create(
+                    host,
+                    Trust.RepoPin("tinfoilsh/example"),
+                    Internals(http = HttpSettings(trust = trust), newVerifier = { _, _ -> verifier }),
+                ) {
                     blockRanOn += Thread.currentThread()
-                    transportMode = mode
-                    verifier = Verifier.appraisingWith(this@MainThreadSafetyTest.verifier)
+                    transport = mode
                 }
             }
             assertEquals(listOf(Looper.getMainLooper().thread), blockRanOn, "the options block runs once, on the caller's thread")

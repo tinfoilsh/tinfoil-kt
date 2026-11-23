@@ -13,30 +13,40 @@ import okhttp3.mockwebserver.RecordedRequest
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import sh.tinfoil.AttestationException
+import sh.tinfoil.AttestationFetcher
+import sh.tinfoil.AttestationRelay
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.CryptoMaterial
 import sh.tinfoil.EnclaveHttpClient
+import sh.tinfoil.EnclaveOptions
+import sh.tinfoil.GatewayOptions
+import sh.tinfoil.RouterOptions
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.Pin
+import sh.tinfoil.Policy
 import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.SoftwareIdentity
-import sh.tinfoil.TransportMode
+import sh.tinfoil.Transport
+import sh.tinfoil.Trust
 import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.VerificationLayer
 import sh.tinfoil.VerificationMetadata
-import sh.tinfoil.Verifier
-import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.Internals
-import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.LeafKeyPin
 import sh.tinfoil.internal.transport.TlsTrust
+import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.internal.verification.Attestor
+import sh.tinfoil.internal.verification.VerifierOptions
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.ServerSocket
+import javax.net.ServerSocketFactory
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
@@ -82,9 +92,34 @@ public fun HeldCertificate.serverHandshake(): HandshakeCertificates =
 /** A started HTTPS server that presents [certificate]. */
 public fun httpsServer(certificate: HeldCertificate, port: Int = 0): MockWebServer =
     MockWebServer().apply {
+        serverSocketFactory = ReusingServerSockets
         useHttps(certificate.serverHandshake().sslSocketFactory(), false)
         start(port)
     }
+
+/**
+ * Makes listening sockets that can be bound again at once to the address of
+ * one that was closed, as a test enclave's server is when its key rotates.
+ * MockWebServer turns address reuse off for a socket on an ephemeral port,
+ * and the sockets that it accepts inherit that, so a connection that is
+ * still closing would hold the port; these sockets keep reuse on.
+ */
+private object ReusingServerSockets : ServerSocketFactory() {
+    override fun createServerSocket(): ServerSocket = object : ServerSocket() {
+        override fun setReuseAddress(on: Boolean) {
+            super.setReuseAddress(true)
+        }
+    }
+
+    override fun createServerSocket(port: Int): ServerSocket =
+        createServerSocket().apply { bind(InetSocketAddress(port)) }
+
+    override fun createServerSocket(port: Int, backlog: Int): ServerSocket =
+        createServerSocket().apply { bind(InetSocketAddress(port), backlog) }
+
+    override fun createServerSocket(port: Int, backlog: Int, address: InetAddress?): ServerSocket =
+        createServerSocket().apply { bind(InetSocketAddress(address, port), backlog) }
+}
 
 public const val TLS_KEY_FORMAT: String = Attestor.TLS_KEY_FORMAT
 public const val HPKE_KEY_FORMAT: String = Attestor.HPKE_KEY_FORMAT
@@ -127,31 +162,28 @@ internal class FakeVerifier(
         throw AttestationException("no verification was set up")
     },
 ) : AttestationVerifier {
-    override val callerAuthorizesConfig: Boolean = false
-
     val nonces = CopyOnWriteArrayList<String>()
     val verifications = AtomicInteger()
     val pinChecks = AtomicInteger()
 
+    /** Replaces the check of a pin, which by default refuses only the pin that names nothing. */
+    @Volatile
+    var checkPin: ((Pin) -> Unit)? = null
+
     override fun newNonce(): ByteArray =
         ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
 
-    override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String {
-        for (authority in listOfNotNull(host, relay)) {
-            if (authority.isEmpty() || authority.any { it in "/@?# " }) {
-                throw ConfigurationException("invalid host: want a host with an optional port")
-            }
+    override fun attestationUrl(host: String, nonce: ByteArray): String {
+        if (host.isEmpty() || host.any { it in "/@?# " }) {
+            throw ConfigurationException("invalid host: want a host with an optional port")
         }
         val hex = nonce.joinToString("") { "%02x".format(it) }
-        return if (relay == null) {
-            "https://$host/.well-known/tinfoil-attestation?nonce=$hex"
-        } else {
-            "https://$relay/.well-known/tinfoil-attestation?nonce=$hex&enclave=$host"
-        }
+        return "https://$host/.well-known/tinfoil-attestation?nonce=$hex"
     }
 
     override fun checkPinVerifiability(pin: Pin) {
         pinChecks.incrementAndGet()
+        checkPin?.let { return it(pin) }
         if (pin.repo == null && pin.project == null) {
             throw ConfigurationException("a pin is required under the default config trust")
         }
@@ -173,20 +205,14 @@ internal class NotingVerifier(
     private val inner: AttestationVerifier,
     private val note: (String) -> Unit,
 ) : AttestationVerifier {
-    override val callerAuthorizesConfig: Boolean
-        get() {
-            note("callerAuthorizesConfig")
-            return inner.callerAuthorizesConfig
-        }
-
     override fun newNonce(): ByteArray {
         note("newNonce")
         return inner.newNonce()
     }
 
-    override fun attestationUrl(host: String, relay: String?, nonce: ByteArray): String {
+    override fun attestationUrl(host: String, nonce: ByteArray): String {
         note("attestationUrl")
-        return inner.attestationUrl(host, relay, nonce)
+        return inner.attestationUrl(host, nonce)
     }
 
     override fun checkPinVerifiability(pin: Pin) {
@@ -201,18 +227,53 @@ internal class NotingVerifier(
 }
 
 /**
+ * [inner], under a config trust that the caller supplies or approves: it
+ * accepts the pin that names nothing, as the verifier library does then.
+ */
+internal class CallerAuthorizedVerifier(private val inner: AttestationVerifier) : AttestationVerifier by inner {
+    override fun checkPinVerifiability(pin: Pin) {
+        if (pin != Pin.NONE) {
+            inner.checkPinVerifiability(pin)
+        }
+    }
+}
+
+/**
+ * What a client asked of [Internals.newVerifier]: the config trust and the
+ * policy that it built its verifier from.
+ */
+internal class VerifierRequest(val config: VerifierOptions.ConfigTrust?, val policy: VerifierOptions.Policy)
+
+/**
+ * A stand-in for the verifier library's constructor that returns [verifier]
+ * for every request, and records each in [requests].
+ */
+internal fun standInVerifiers(
+    verifier: AttestationVerifier,
+    requests: MutableList<VerifierRequest>,
+): (VerifierOptions.ConfigTrust?, VerifierOptions.Policy) -> AttestationVerifier = { config, policy ->
+    requests += VerifierRequest(config, policy)
+    when (config) {
+        is VerifierOptions.ConfigTrust.Authorizer, is VerifierOptions.ConfigTrust.EmbeddedConfig ->
+            CallerAuthorizedVerifier(verifier)
+        else -> verifier
+    }
+}
+
+/**
  * Makes HTTP clients under a test's trust anchors, clock and router list in
  * place of the platform's, from options that were read already. It is how
  * the tests of another module put their own clients over a test server.
  */
 public class TestConnections internal constructor(private val internals: Internals) {
-    public suspend fun enclave(enclave: String, pin: Pin, settings: RouteSettings): EnclaveHttpClient =
-        EnclaveHttpClient.create(enclave, pin, settings, internals)
+    public suspend fun enclave(enclave: String, trust: Trust, options: EnclaveOptions.() -> Unit = {}): EnclaveHttpClient =
+        EnclaveHttpClient.create(enclave, trust, internals, options)
 
-    public suspend fun router(settings: RouteSettings): RouterHttpClient = RouterHttpClient.create(settings, internals)
+    public suspend fun router(options: RouterOptions.() -> Unit = {}): RouterHttpClient = RouterHttpClient.create(internals, options)
 
     @ExperimentalTinfoilApi
-    public suspend fun gateway(settings: GatewaySettings): GatewayHttpClient = GatewayHttpClient.create(settings, internals)
+    public suspend fun gateway(options: GatewayOptions.() -> Unit = {}): GatewayHttpClient =
+        GatewayHttpClient.create(internals, options)
 }
 
 /**
@@ -236,6 +297,9 @@ public class TestEnclave(
     public val host: String = "localhost:$port"
     public val relayHost: String = "localhost:${relay.port}"
 
+    /** What fetches this enclave's attestation documents through [relay]. */
+    public val relayFetcher: AttestationRelay = AttestationRelay("https://$relayHost")
+
     /** How long a verification stays fresh on [clock]. */
     public val lifetimeSeconds: Long = 3600L
 
@@ -258,14 +322,13 @@ public class TestEnclave(
     public val pinChecks: Int get() = verifier.pinChecks.get()
 
     /** Replaces what [verifier] says of every document. */
-    public fun verifyWith(verify: (document: ByteArray, nonce: ByteArray, pin: Pin) -> Verification) {
-        verifier.verify = verify
+    public fun verifyWith(verify: (document: ByteArray, nonce: ByteArray) -> Verification) {
+        verifier.verify = { document, nonce, _ -> verify(document, nonce) }
     }
 
-    /** A trust policy that appraises with [verifier], and tells [note] the name of each call into it. */
-    public fun appraisingVerifier(note: ((String) -> Unit)? = null): Verifier =
-        Verifier.appraisingWith(if (note == null) verifier else NotingVerifier(verifier, note))
-    private val clients = CopyOnWriteArrayList<EnclaveHttpClient>()
+    /** What each client asked of the verifier library's constructor. */
+    internal val verifierRequests = CopyOnWriteArrayList<VerifierRequest>()
+    private val clients = CopyOnWriteArrayList<AutoCloseable>()
 
     init {
         relay.dispatcher = object : Dispatcher() {
@@ -287,43 +350,75 @@ public class TestEnclave(
 
     public fun get(path: String = "/"): Request = Request.Builder().url(url(path)).build()
 
-    internal fun internals(proxy: Proxy? = null, retryDelay: Duration = 1.milliseconds): Internals =
+    /**
+     * Internals that appraise with [verifier], and tell [note], when it is
+     * set, the name of each call into it.
+     */
+    internal fun internals(
+        proxy: Proxy? = null,
+        retryDelay: Duration = 1.milliseconds,
+        note: ((String) -> Unit)? = null,
+    ): Internals =
         Internals(
             http = HttpSettings(trust = authority.trust, proxy = proxy),
             clock = clock,
             retryDelay = retryDelay,
+            newVerifier = standInVerifiers(if (note == null) verifier else NotingVerifier(verifier, note), verifierRequests),
         )
 
     /** Internals under which this enclave is the router that is chosen when [listUrl] names none that verifies. */
-    internal fun routerInternals(listUrl: HttpUrl): Internals = Internals(
+    internal fun routerInternals(
+        listUrl: HttpUrl = NO_LIST,
+        processSecret: UserCacheSecret.ProcessSecret = UserCacheSecret.PROCESS,
+        note: ((String) -> Unit)? = null,
+    ): Internals = Internals(
         http = HttpSettings(trust = authority.trust),
         clock = clock,
         retryDelay = 1.milliseconds,
         discovery = RouterDiscovery.Settings(listUrl = listUrl, fallback = host),
+        newVerifier = standInVerifiers(if (note == null) verifier else NotingVerifier(verifier, note), verifierRequests),
+        processSecret = processSecret,
     )
 
-    /** What makes clients as [internals] has them made. */
-    public fun connections(): TestConnections = TestConnections(internals())
+    /**
+     * A router client for which this enclave is the router: the one that is
+     * chosen when the list names none that verifies.
+     */
+    internal suspend fun router(
+        transport: Transport = Transport.Tls,
+        userCacheSecret: String? = null,
+        onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+        internals: Internals = routerInternals(),
+    ): RouterHttpClient = RouterHttpClient.create(internals) {
+        this.transport = transport
+        fetchAttestation = relayFetcher
+        this.userCacheSecret = userCacheSecret
+        this.onVerificationResult = onVerificationResult
+    }.also { clients += it }
+
+    /**
+     * What makes clients as [internals] has them made, telling [note], when
+     * it is set, the name of each call into the verifier.
+     */
+    public fun connections(note: ((String) -> Unit)? = null): TestConnections =
+        TestConnections(internals(note = note))
 
     /** What makes clients as [routerInternals] has them made. */
-    public fun routerConnections(listUrl: HttpUrl): TestConnections = TestConnections(routerInternals(listUrl))
+    public fun routerConnections(listUrl: HttpUrl = NO_LIST): TestConnections = TestConnections(routerInternals(listUrl))
 
     internal suspend fun client(
         enclave: String = host,
-        pin: Pin = Pin(repo = "tinfoilsh/example"),
-        transportMode: TransportMode = TransportMode.TLS,
-        baseUrl: String? = null,
-        attestationRelay: String? = relayHost,
-        userCacheSecret: String? = null,
+        trust: Trust = Trust.RepoPin("tinfoilsh/example"),
+        transport: Transport = Transport.Tls,
+        fetchAttestation: AttestationFetcher? = relayFetcher,
+        policy: Policy = Policy(),
         verificationCheck: VerificationCheck? = null,
         onVerificationResult: ((Result<Verification>) -> Unit)? = null,
         internals: Internals = internals(),
-    ): EnclaveHttpClient = EnclaveHttpClient.create(enclave, pin, internals) {
-        this.transportMode = transportMode
-        this.baseUrl = baseUrl
-        this.attestationRelay = attestationRelay
-        this.verifier = Verifier.appraisingWith(this@TestEnclave.verifier)
-        this.userCacheSecret = userCacheSecret
+    ): EnclaveHttpClient = EnclaveHttpClient.create(enclave, trust, internals) {
+        this.policy = policy
+        this.transport = transport
+        this.fetchAttestation = fetchAttestation
         this.verificationCheck = verificationCheck
         this.onVerificationResult = onVerificationResult
     }.also { clients += it }
@@ -334,3 +429,6 @@ public class TestEnclave(
         relay.shutdown()
     }
 }
+
+/** A list URL that nothing answers, so that discovery falls back. */
+private val NO_LIST: HttpUrl = "https://localhost:1/routers".toHttpUrl()

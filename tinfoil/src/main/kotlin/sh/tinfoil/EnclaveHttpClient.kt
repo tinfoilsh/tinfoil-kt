@@ -10,13 +10,13 @@ import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouteSettings
 import sh.tinfoil.internal.transport.AttestedCall
-import sh.tinfoil.internal.transport.UserCacheSecret
+import sh.tinfoil.internal.verification.VerifierInputs
 import java.io.IOException
 
 /**
  * Decides whether an enclave whose attestation has verified may be used.
  *
- * It is called with each verification that passes the [Verifier], before the
+ * It is called with each verification that passes the trust and the policy, before the
  * client uses the enclave's keys: when the client is created and every time
  * it verifies again. Return to accept the enclave. Throw to reject it: the
  * verification then fails with an [AttestationException] that keeps the
@@ -43,8 +43,8 @@ public fun interface VerificationCheck {
  * [create] verifies the enclave before it returns a client. From then on,
  * every request waits for a verification that is valid at that moment, and
  * goes out under the keys that the verification endorses: with
- * [TransportMode.TLS], only on a connection whose TLS certificate carries
- * the attested key; with [TransportMode.EHBP], with its body sealed to the
+ * [Transport.Tls], only on a connection whose TLS certificate carries
+ * the attested key; with [Transport.Ehbp], with its body sealed to the
  * attested HPKE key. The client verifies again by itself when a
  * verification reaches its freshness deadline or the enclave stops
  * holding the verified key.
@@ -66,26 +66,29 @@ public fun interface VerificationCheck {
  */
 public class EnclaveHttpClient private constructor(
     private val connection: EnclaveConnection,
-) : Call.Factory, AutoCloseable {
+    /**
+     * What the enclave is verified under: the trust argument that the
+     * client was created with. It is immutable, so it is the caller's to
+     * keep.
+     */
+    public val trust: Trust,
+) : AttestedHttpClient {
     /**
      * The enclave that the client verifies: its host, with a port when one
      * was given.
      */
     public val enclave: String get() = connection.enclave
 
-    /** What the enclave is verified against. */
-    public val pin: Pin get() = connection.pin
-
     /**
-     * The URL that requests are sent under: the base URL that the client was
-     * created with, which with [TransportMode.EHBP] may be a proxy's, or the
-     * enclave's own origin, `https://<enclave>/`. Resolve request paths
-     * against it, as in `baseUrl.resolve("v1/models")`.
+     * The URL that requests are sent under: the proxy URL of a
+     * [Transport.Ehbp], ending with `/`, or the enclave's own origin,
+     * `https://<enclave>/`. Resolve request paths against it, as in
+     * `baseUrl.resolve("v1/models")`.
      */
-    public val baseUrl: HttpUrl get() = connection.baseUrl
+    override val baseUrl: HttpUrl get() = connection.baseUrl
 
-    /** How the client protects its requests. */
-    public val transportMode: TransportMode get() = connection.transportMode
+    /** How the client protects its requests, as it was created with. */
+    public val transport: Transport get() = connection.transport
 
     /**
      * The last successful verification, without checking it. It may have
@@ -138,8 +141,8 @@ public class EnclaveHttpClient private constructor(
      * reading it blocks on the network, as does closing a response whose
      * body has not been read to its end: do both off the main thread.
      *
-     * This describes a client with [TransportMode.TLS]; what
-     * [TransportMode.EHBP] changes follows it.
+     * This describes a client with [Transport.Tls]; what
+     * [Transport.Ehbp] changes follows it.
      *
      * Before any network I/O, the request is refused with a
      * [ConfigurationException] if
@@ -169,28 +172,9 @@ public class EnclaveHttpClient private constructor(
      * that writes another number of bytes than the length that it declared
      * fails the request with an [IOException].
      *
-     * When the client has a user cache secret, it is added to the body of a
-     * `POST` whose path ends in `/chat/completions`, `/completions` or
-     * `/responses`, as the member `user_cache_secret`, if the body is one
-     * JSON object in which that member is absent or the empty string. The
-     * rest of the body is sent byte for byte as it was given, and the
-     * request's `Content-Length` is that of the new body. Only a member
-     * with exactly that name counts: one whose name differs from it only by
-     * case, such as `User_Cache_Secret`, is left as it was written, and the
-     * client's member is added beside it. A non-empty
-     * `user_cache_secret` string in the body is the request's own scope and
-     * is kept. Any other body is sent unchanged: one that is not a JSON
-     * object in UTF-8, one that names the member more than once or with a
-     * value that is not a string,
-     * and a body of more than 64 MiB that declares its length or can be
-     * written again, which a router refuses for its size. To decide, the
-     * body is read into memory before the request is sent: it is written
-     * once, then, and what it wrote is what is sent. A request
-     * to one of those paths whose body cannot be examined is refused with a
-     * [ConfigurationException] before anything is sent, so that it does not
-     * land in the cache that the API key's other clients share: a duplex
-     * body, and a body that declares no length, can be written only once
-     * and is longer than 64 MiB.
+     * The client never adds or changes a `user_cache_secret` member: a
+     * request to Tinfoil's router that should have a prompt-cache scope of
+     * its own carries one in its body.
      *
      * The HTTP client may send a request again by itself, always to the same
      * URL and only over a connection that passes the same checks: when a
@@ -206,7 +190,7 @@ public class EnclaveHttpClient private constructor(
      * Cancelling the coroutine while it waits cancels the request. Once the
      * response is returned, closing it ends the exchange.
      *
-     * **With [TransportMode.EHBP]**, connections are not pinned. They are
+     * **With [Transport.Ehbp]**, connections are not pinned. They are
      * validated as the platform validates any HTTPS connection to
      * [baseUrl]'s host, which may be a proxy, and the request's body is
      * sealed to the attested HPKE key instead. The attestation shows what
@@ -269,7 +253,6 @@ public class EnclaveHttpClient private constructor(
      *   being able to read it.
      * - The HTTP client never sends a sealed body again by itself; a
      *   request without a body may be sent again as described above.
-     * - The user cache secret is added to a body before it is sealed.
      * - A request is also refused before any I/O if it asks for a protocol
      *   upgrade, with an `Upgrade` header or `Connection: upgrade`, or is a
      *   `CONNECT`; if it sets a header whose name starts with `Ehbp-`, or
@@ -297,7 +280,7 @@ public class EnclaveHttpClient private constructor(
      * that the server keeps and that can be fetched again after an
      * interruption: store the token before reading the body.
      *
-     * It requires [TransportMode.EHBP]: with [TransportMode.TLS] no body is
+     * It requires [Transport.Ehbp]: with [Transport.Tls] no body is
      * sealed, there is no token, and the call fails with a
      * [ConfigurationException] before any network I/O.
      *
@@ -354,16 +337,15 @@ public class EnclaveHttpClient private constructor(
 
     public companion object {
         /**
-         * Creates a client for [enclave] and verifies the enclave against
-         * [pin] before returning.
+         * Creates a client for [enclave] and verifies the enclave under
+         * [trust] and the [policy][EnclaveOptions.policy] before returning.
          *
          * Everything else is an option, set in the block that [options] is
          * and described by [EnclaveOptions]:
          *
          * ```
-         * val client = EnclaveHttpClient.create("enclave.example.com", pin) {
-         *     transportMode = TransportMode.EHBP
-         *     baseUrl = "https://proxy.example.com/"
+         * val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
+         *     transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
          * }
          * ```
          *
@@ -383,10 +365,11 @@ public class EnclaveHttpClient private constructor(
          *
          * @param enclave The enclave's host, with an optional port, such as
          *   `inference.tinfoil.sh`. Not a URL.
-         * @param pin What the enclave must be running. The pin that names
-         *   nothing, [Pin.NONE], is refused unless the [verifier][EnclaveOptions.verifier]
-         *   authorizes configs by itself, with an embedded config or a
-         *   config authorizer.
+         * @param trust Who vouches for the config that the enclave runs;
+         *   see [Trust]. A variant that no verification could pass, such as
+         *   a [Trust.RepoPin] with an empty or malformed repository, is
+         *   refused before any network I/O. A null from Java throws the
+         *   [NullPointerException] that names the parameter.
          * @param options Sets the options; see [EnclaveOptions]. Without
          *   it, every option has its default.
          * @throws ConfigurationException if an argument or an option is
@@ -395,36 +378,36 @@ public class EnclaveHttpClient private constructor(
          *   fetched.
          * @throws AttestationException if the enclave is not to be trusted,
          *   or endorses no key for the transport mode: no HPKE key, for
-         *   [TransportMode.EHBP].
+         *   [Transport.Ehbp].
          */
         @Throws(IOException::class, CancellationException::class)
         public suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             options: EnclaveOptions.() -> Unit = {},
-        ): EnclaveHttpClient = create(enclave, pin, Internals(), options)
+        ): EnclaveHttpClient = create(enclave, trust, Internals(), options)
 
         /** [create] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             internals: Internals,
             options: EnclaveOptions.() -> Unit,
-        ): EnclaveHttpClient = create(enclave, pin, enclaveSettings(options), internals)
+        ): EnclaveHttpClient = create(enclave, trust, enclaveSettings(options), internals)
 
         /** [create] with options that were read already. */
         @JvmSynthetic
         internal suspend fun create(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             settings: RouteSettings,
             internals: Internals,
         ): EnclaveHttpClient = Background.creating {
             // Checking the options, which calls into the verifier library,
             // and everything after it run on a background thread, so that
             // any thread may call this.
-            val client = unverified(enclave, pin, settings, internals)
+            val client = unverified(enclave, trust, settings, internals)
             try {
                 client.ensureVerified()
             } catch (e: Throwable) {
@@ -438,15 +421,22 @@ public class EnclaveHttpClient private constructor(
         @JvmSynthetic
         internal fun unverified(
             enclave: String,
-            pin: Pin,
+            trust: Trust,
             settings: RouteSettings,
             internals: Internals,
-        ): EnclaveHttpClient = EnclaveHttpClient(
-            EnclaveConnection.create(
-                enclave, pin, settings.transportMode, settings.baseUrl, settings.attestationRelay,
-                settings.verifier ?: Verifier(), UserCacheSecret.of(settings.userCacheSecret),
-                settings.verificationCheck, settings.onVerificationResult, internals,
-            ),
-        )
+        ): EnclaveHttpClient {
+            val inputs = VerifierInputs.of(trust)
+            val verifier = internals.newVerifier(inputs.config, VerifierInputs.policy(settings.policy))
+            return EnclaveHttpClient(
+                EnclaveConnection.create(
+                    enclave, inputs.pin, settings.transport, settings.fetchAttestation,
+                    // The client never adds or changes a request's cache secret.
+                    verifier, null,
+                    settings.verificationCheck, settings.onVerificationResult, internals,
+                    refuseProxyOnEnclaveOrigin = true,
+                ),
+                trust,
+            )
+        }
     }
 }

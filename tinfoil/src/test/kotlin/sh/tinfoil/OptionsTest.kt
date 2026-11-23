@@ -10,6 +10,7 @@ import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.testing.TestEnclave
+import sh.tinfoil.testing.standInVerifiers
 import sh.tinfoil.testing.TestGateway
 import sh.tinfoil.testing.httpsServer
 import java.util.concurrent.CopyOnWriteArrayList
@@ -48,7 +49,7 @@ class OptionsTest {
 
     private fun test(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
-    private val pin = Pin(repo = "tinfoilsh/example")
+    private val trust = Trust.RepoPin("tinfoilsh/example")
 
     /** Internals under which the test enclave is the router that is chosen when a relay is used. */
     private fun routerInternals() = Internals(
@@ -56,21 +57,19 @@ class OptionsTest {
         clock = enclave.clock,
         retryDelay = 1.milliseconds,
         discovery = RouterDiscovery.Settings(listUrl = listServer.url("/routers"), fallback = enclave.host),
+        newVerifier = standInVerifiers(enclave.verifier, enclave.verifierRequests),
     )
 
     private fun EnclaveOptions.forTheTestEnclave() {
-        attestationRelay = enclave.relayHost
-        verifier = Verifier.appraisingWith(enclave.verifier)
+        fetchAttestation = enclave.relayFetcher
     }
 
     private fun RouterOptions.forTheTestEnclave() {
-        attestationRelay = enclave.relayHost
-        verifier = Verifier.appraisingWith(enclave.verifier)
+        fetchAttestation = enclave.relayFetcher
     }
 
     private fun GatewayOptions.forTheTestGateway() {
-        baseUrl = gateway.baseUrl
-        verifier = Verifier.appraisingWith(gateway.verifier)
+        url = gateway.baseUrl
     }
 
     private fun assertNoIo() {
@@ -88,7 +87,7 @@ class OptionsTest {
      */
     private fun creations(inBlock: () -> Unit): List<Pair<String, suspend () -> AutoCloseable>> = listOf(
         "EnclaveHttpClient" to {
-            EnclaveHttpClient.create(enclave.host, pin, enclave.internals()) {
+            EnclaveHttpClient.create(enclave.host, trust, enclave.internals()) {
                 inBlock()
                 forTheTestEnclave()
             }
@@ -155,10 +154,10 @@ class OptionsTest {
     @Test
     fun aBlockThatSetsNothingLeavesEveryOptionAtItsDefault() {
         for (settings in listOf(enclaveSettings { }, routerSettings { })) {
-            assertEquals(TransportMode.TLS, settings.transportMode)
-            assertNull(settings.baseUrl)
-            assertNull(settings.attestationRelay)
-            assertNull(settings.verifier)
+            assertEquals(Transport.Tls, settings.transport)
+            assertNull(settings.fetchAttestation)
+            assertNull(settings.fetchRouterList)
+            assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)
             assertNull(settings.onVerificationResult)
@@ -166,8 +165,8 @@ class OptionsTest {
         for (settings in listOf(gatewaySettings { })) {
             assertEquals(emptyMap(), settings.modelPins)
             assertEquals(false, settings.pinnedModelsOnly)
-            assertNull(settings.baseUrl)
-            assertNull(settings.verifier)
+            assertNull(settings.url)
+            assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)
             assertNull(settings.onVerificationResult)

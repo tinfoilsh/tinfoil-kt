@@ -7,7 +7,6 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.internal.Background
-import sh.tinfoil.internal.requireNotEmpty
 import java.io.IOException
 import java.net.ProtocolException
 import java.security.SecureRandom
@@ -172,26 +171,22 @@ internal class UserCacheSecret private constructor(
         private const val QUOTE = '"'.code.toByte()
         private val COMMA = byteArrayOf(','.code.toByte())
 
-        /**
-         * A secret that is generated once in each process and shared by
-         * every client in it that is given none: 256 random bits, in hex. It
-         * is kept in memory only and lasts as long as the process.
-         */
-        private val processSecret: UserCacheSecret by lazy {
-            val bytes = ByteArray(SECRET_BYTES).also { SecureRandom().nextBytes(it) }
-            UserCacheSecret(bytes.joinToString("") { "%02x".format(it) }, MAX_BODY_BYTES)
-        }
+        /** The secret of this process, which every client that is given none shares. */
+        val PROCESS: ProcessSecret = ProcessSecret()
 
         /**
-         * The secret that a client was given, or null if it was given none.
+         * The secret that a client was given, or null if it was given none
+         * or an empty one.
          *
-         * @throws ConfigurationException for an empty secret, which is not
-         *   read as none, and for text that is not well-formed Unicode,
-         *   which could not reach the server as it was given.
+         * @throws ConfigurationException for text that is not well-formed
+         *   Unicode, which could not reach the server as it was given.
          */
         @Throws(ConfigurationException::class)
         fun of(explicit: String?, maxBodyBytes: Long = MAX_BODY_BYTES): UserCacheSecret? {
-            val secret = requireNotEmpty(explicit, "userCacheSecret") ?: return null
+            if (explicit.isNullOrEmpty()) {
+                return null
+            }
+            val secret: String = explicit
             if (!isWellFormed(secret)) {
                 // Two such secrets could arrive as one, and share a cache.
                 throw ConfigurationException("the user cache secret is not well-formed Unicode text")
@@ -199,9 +194,16 @@ internal class UserCacheSecret private constructor(
             return UserCacheSecret(secret, maxBodyBytes)
         }
 
-        /** The secret that a client was given, or else the process's own. */
+        /**
+         * The secret that a client was given or, when it was given none or
+         * an empty one, [process]'s own.
+         *
+         * @throws ConfigurationException for a secret that [of] refuses.
+         * @throws RuntimeException as the platform's secure random number
+         *   generator throws it, unchanged, if it fails.
+         */
         @Throws(ConfigurationException::class)
-        fun orProcessDefault(explicit: String?): UserCacheSecret = of(explicit) ?: processSecret
+        fun resolve(explicit: String?, process: ProcessSecret = PROCESS): UserCacheSecret = of(explicit) ?: process.get()
 
         /** Whether [url]'s path is one whose bodies take the member. */
         fun isEligible(url: HttpUrl): Boolean {
@@ -238,6 +240,33 @@ internal class UserCacheSecret private constructor(
                 }
             }
             return quoted.append('"').toString().toByteArray(Charsets.UTF_8)
+        }
+    }
+
+    /**
+     * A secret that is generated once in a process and shared by every
+     * client in it that is given none: 256 bits from [fill], a secure random
+     * number generator, in lowercase hex. It is kept in memory only, and
+     * lasts as long as the process.
+     *
+     * If [fill] fails, its exception is thrown unchanged from [get], so that
+     * the client that needed the secret fails, and nothing is kept: a later
+     * call tries again. No predictable value is ever used in its place.
+     */
+    internal class ProcessSecret(
+        private val fill: (ByteArray) -> Unit = { SecureRandom().nextBytes(it) },
+    ) {
+        @Volatile
+        private var secret: UserCacheSecret? = null
+
+        fun get(): UserCacheSecret {
+            secret?.let { return it }
+            synchronized(this) {
+                secret?.let { return it }
+                val bytes = ByteArray(SECRET_BYTES)
+                fill(bytes)
+                return UserCacheSecret(bytes.joinToString("") { "%02x".format(it) }, MAX_BODY_BYTES).also { secret = it }
+            }
         }
     }
 }

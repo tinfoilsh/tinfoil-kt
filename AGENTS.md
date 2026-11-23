@@ -15,8 +15,8 @@ version. A class's package names its artifact.
   directly or through another dependency, and its build fails if it does
   (`checkRuntimeDependencies`): apps use it alone to stay small.
 - `tinfoil-openai/`: the artifact `tinfoil-openai`, in the package
-  `sh.tinfoil.openai` and nowhere else: the OpenAI clients that name their
-  route, `Client`, which does not, their options and `TinfoilEvent`. Its
+  `sh.tinfoil.openai` and nowhere else: `Client`, the OpenAI client that is
+  built on top of an attested HTTP client, its options and `TinfoilEvent`. Its
   implementation detail is under `sh.tinfoil.openai.internal`. It depends on
   `tinfoil` and on the OpenAI SDK, and has no native library of its own.
 - `tinfoil/src/testFixtures`: the fakes and test servers that the tests of
@@ -70,7 +70,7 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
 
 - Fail closed: no request leaves before its enclave is verified, and option
   errors are raised before any network I/O.
-- With `TransportMode.TLS`, a request is written only to a connection whose
+- With `Transport.Tls`, a request is written only to a connection whose
   leaf certificate carries the attested key, checked after the platform's
   own TLS validation. Nothing
   that can weaken that check, such as trusted roots, a proxy or a stand-in
@@ -93,28 +93,40 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   that weakens verification. The seams for those stay `internal` to
   `tinfoil`. The tests of `tinfoil-openai` reach them only through the test
   fixtures, which wrap them in public functions, such as
-  `TestEnclave.connections()`; the OpenAI clients' own seam for tests takes
-  a function that returns an attested HTTP client, and nothing less.
-- With `TransportMode.EHBP`, a request body is sealed to the HPKE key of the
+  `TestEnclave.connections()`; the drop-in `Client.create(apiKey)` has a
+  seam for tests that takes a function that returns a `RouterHttpClient`,
+  and nothing less.
+- With `Transport.Ehbp`, a request body is sealed to the HPKE key of the
   verification that the request was sent under, and to no other key: the key
   comes only from the verification, never from the network. The sealing
   itself belongs to the EHBP client library; write no EHBP cryptography or
   framing here. A request with a body leaves sealed or not at all, cleartext
-  HTTP is for a loopback base URL only, and a response that was not sealed
+  HTTP is for a loopback proxy URL only, and a response that was not sealed
   is never presented as the enclave's.
 - The router list is untrusted: it only proposes hosts, and each is verified
   against the router's pin like any enclave. Nothing read from it may relax
   a check, choose a pin, or be parsed with code that recurses on its input.
   An attestation document is not tied to the host that served it, so a
-  listed host is only ever reached over connections that are pinned to its
-  attested TLS key, in both transport modes, and is never named to a proxy:
-  with a proxy base URL the router client uses the fallback router and does
-  not fetch the list.
-- A request body is changed only to add the user cache secret or, on the
-  gateway route, to replace it with the cache salt, by rewriting those
+  listed host is reached directly only over connections that are pinned to
+  its attested TLS key, in both transport modes. Discovery always runs, a
+  proxy and the fetchers included; through an EHBP proxy a chosen router is
+  named to the proxy, so the list's source is trusted with the request
+  headers there, a risk that the spec accepts and the docs state.
+- Attestation documents and router lists that `fetchAttestation` and
+  `fetchRouterList` obtain are untrusted, as fetched ones are: a document is
+  verified against its nonce, the trust and the policy, and a list only
+  proposes hosts. A fetcher's error is classified where it is called: an
+  SDK exception keeps its category, anything else is a `NetworkException`
+  that keeps it as its cause, and a `CancellationException` is the caller's
+  only when the caller's coroutine is cancelled. A timeout of the SDK's own
+  is never left to pass for the caller's cancellation. Relay URLs follow
+  the rules for proxy URLs and are checked when the relay is made.
+- A request body is changed only to add the user cache secret, on the
+  router route, or to replace it with the cache salt, on the gateway route, by rewriting those
   members in the text of a body that a strict JSON scanner accepts as one
-  object; every other byte is the caller's. On the router and enclave
-  routes, a body that the scanner does not accept is sent unchanged; on the
+  object; every other byte is the caller's. The enclave client never
+  changes a body. On the router route, a body that the scanner does not
+  accept is sent unchanged; on the
   gateway route, a JSON body that is not strictly one JSON value is refused.
 - The gateway and its catalog are untrusted: they only propose replicas.
   Each replica is verified against its model's pin, or for a model without
@@ -134,8 +146,13 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
 - The OpenAI SDK reaches the network only through this SDK's attested
   clients. Depend on `openai-java-core` alone: the artifacts `openai-java`
   and `openai-java-client-okhttp` bring an HTTP client of their own and must
-  stay off the classpath. The OpenAI clients set their HTTP client and base
-  URL after the caller's options, and take no credential, URL or option from
+  stay off the classpath. `Client` takes only an `AttestedHttpClient`, which
+  is sealed to this SDK's three clients. It sets the OpenAI SDK's HTTP
+  client and base URL after the caller's options, so that a base URL from
+  the caller, `OPENAI_BASE_URL` or a data residency option has no effect;
+  the caller chooses only the API path, which is checked against RFC 3986's
+  `path-absolute` without dot segments, `%2F` or `%5C`. It takes no
+  credential, URL or option from
   the environment or from system properties; `OpenAIHttpAdapter` opens no
   connection. What the OpenAI SDK reads there by itself is known and
   harmless: `OPENAI_LOG` when its options builder is made, which is then
@@ -147,6 +164,11 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   the OpenAI SDK sends a request again after those.
 - The OpenAI SDK's client is exposed as it is. Do not wrap its services or
   re-declare its calls.
+- The process's cache secret, which the router and gateway clients use when
+  they are given none, comes from a secure random number generator and
+  nowhere else: no environment variable, file or other source is read, and
+  it is never written. If the generator fails, its exception reaches the
+  caller unchanged and nothing is kept; no predictable value is ever used.
 - Never put an API key, a cache secret, a session recovery token or key
   material in a log, an exception message or a `toString()`.
 - A `create` function takes what it requires as parameters and everything
@@ -155,11 +177,10 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   default, never a new parameter or an overload. The block runs once, on the
   caller's thread, and a client is made only from the copies that are taken
   when it returns (`sh.tinfoil.internal.Settings.kt`). The options types are
-  marked `@TinfoilOptionsDsl`, and only the two `Options.kt` files make one.
-  An option of a route is declared once, in `tinfoil`: the options types of
-  the OpenAI clients extend the route's, which is why those are abstract
-  classes whose constructors are marked `@InternalTinfoilApi`, and not
-  sealed. Do not copy an option into `tinfoil-openai`.
+  marked `@TinfoilOptionsDsl`, and only the two `Options.kt` files make one:
+  their constructors are `internal`. An option of a route is declared once,
+  in `tinfoil`; `tinfoil-openai` has the options of the OpenAI client alone.
+  Do not copy an option into `tinfoil-openai`.
 - The suspending functions and `close()` of every client are safe to call
   from Android's main thread, where the platform refuses network work, the
   closing of a TLS socket included. Nothing that they do on the caller's

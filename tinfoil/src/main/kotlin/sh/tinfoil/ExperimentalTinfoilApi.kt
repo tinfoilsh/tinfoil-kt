@@ -10,8 +10,8 @@ package sh.tinfoil
  * error rather than a warning so that no code comes to depend on such an API
  * without its author having decided to.
  *
- * The gateway route is marked: [GatewayHttpClient], the `GatewayOpenAIClient`
- * of the `tinfoil-openai` artifact, and the types that they use.
+ * The gateway route is marked: [GatewayHttpClient] and the types that it
+ * uses.
  */
 @RequiresOptIn(
     level = RequiresOptIn.Level.ERROR,

@@ -57,21 +57,24 @@ class GatewayOpenAIClientLiveTest {
     @Test
     fun theOpenAiSdkReachesAReplicaThroughTheGateway() = live {
         val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        GatewayOpenAIClient.create(NOT_A_KEY) { openAI { maxRetries(0) } }.use { client ->
+        val http = GatewayHttpClient.create()
+        Client.create(http, NOT_A_KEY) { openAI { maxRetries(0) } }.use { client ->
             val params = ChatCompletionCreateParams.builder().model(model).addUserMessage("hello").maxCompletionTokens(8).build()
             val error = assertFailsWith<OpenAIServiceException> { client.openAI.chat().completions().create(params) }
             Log.i(TAG, "OpenAI SDK through the gateway under a key that is none: ${error.javaClass.simpleName} (${error.statusCode()})")
             assertTrue(error.statusCode() in 400..499)
             assertNull(error.tinfoilException, "the refusal is the API's, not this SDK's")
-            assertEquals(1, client.httpClient.current.size)
+            assertEquals(1, http.current.size)
         }
+        http.close()
     }
 
     @Test
     fun aChatIsCompletedAndStreamedThroughTheGateway() = live {
         val key = apiKey()
         val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        GatewayOpenAIClient.create(key).use { client ->
+        val http = GatewayHttpClient.create()
+        Client.create(http, key).use { client ->
             val params = ChatCompletionCreateParams.builder().model(model)
                 .addUserMessage("Reply with the single word: ready").maxCompletionTokens(64).build()
             val answer = client.openAI.chat().completions().create(params)
@@ -82,8 +85,9 @@ class GatewayOpenAIClientLiveTest {
             val chunks = client.openAIAsync.chat().completions().createStreaming(params).asFlow().toList()
             Log.i(TAG, "gateway: a streamed completion in ${chunks.size} chunks")
             assertTrue(chunks.size > 1, "the completion arrived in ${chunks.size} chunk(s)")
-            assertTrue(client.httpClient.current.isNotEmpty())
+            assertTrue(http.current.isNotEmpty())
         }
+        http.close()
     }
 
     private companion object {

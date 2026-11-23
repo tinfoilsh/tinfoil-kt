@@ -1,6 +1,5 @@
 package sh.tinfoil
 
-import sh.tinfoil.testing.FakeVerifier
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -9,6 +8,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 class ValueTypesTest {
     @Test
@@ -48,77 +50,59 @@ class ValueTypesTest {
     }
 
     @Test
-    fun embeddedReferencesCopyTheirArraysInAndOut() {
+    fun embeddedArtifactsCopyTheirArraysInAndOut() {
         val runtime = byteArrayOf(1, 2)
         val platform = byteArrayOf(3, 4)
-        val references = EmbeddedReferences(runtime = runtime, platform = platform)
+        val keys = mutableListOf("key")
+        val artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = runtime, platform = platform, freshnessKeys = keys)
 
         runtime[0] = 9
         platform[0] = 9
-        references.runtime!![1] = 9
-        references.platform!![1] = 9
-        assertContentEquals(byteArrayOf(1, 2), references.runtime)
-        assertContentEquals(byteArrayOf(3, 4), references.platform)
+        keys[0] = "other"
+        artifacts.runtime!![1] = 9
+        artifacts.platform!![1] = 9
+        assertContentEquals(byteArrayOf(1, 2), artifacts.runtime)
+        assertContentEquals(byteArrayOf(3, 4), artifacts.platform)
+        assertEquals(listOf("key"), artifacts.freshnessKeys)
     }
 
     @Test
-    fun embeddedReferencesCompareByContent() {
-        val config = EmbeddedConfig.Bytes(byteArrayOf(7), name = "/org/project/v1")
-        val one = EmbeddedReferences(config, byteArrayOf(1), byteArrayOf(2))
-        val same = EmbeddedReferences(EmbeddedConfig.Bytes(byteArrayOf(7), "/org/project/v1"), byteArrayOf(1), byteArrayOf(2))
+    fun artifactTrustComparesByContent() {
+        val one = ArtifactTrust.EmbeddedArtifacts(byteArrayOf(1), byteArrayOf(2))
+        val same = ArtifactTrust.EmbeddedArtifacts(byteArrayOf(1), byteArrayOf(2))
         assertEquals(one, same)
         assertEquals(one.hashCode(), same.hashCode())
-        assertNotEquals(one, EmbeddedReferences(config, byteArrayOf(9), byteArrayOf(2)))
-        assertNotEquals(one, EmbeddedReferences(config, byteArrayOf(1), null))
-        assertNotEquals(one, EmbeddedReferences(null, byteArrayOf(1), byteArrayOf(2)))
-        assertEquals(EmbeddedReferences(), EmbeddedReferences())
+        assertNotEquals(one, ArtifactTrust.EmbeddedArtifacts(byteArrayOf(9), byteArrayOf(2)))
+        assertNotEquals(one, ArtifactTrust.EmbeddedArtifacts(byteArrayOf(1), null))
+        assertNotEquals(one, ArtifactTrust.EmbeddedArtifacts(byteArrayOf(1), byteArrayOf(2), listOf("key")))
+        assertEquals(ArtifactTrust.EndorsedArtifacts(), ArtifactTrust.EndorsedArtifacts(null))
+        assertNotEquals(ArtifactTrust.EndorsedArtifacts(), ArtifactTrust.EndorsedArtifacts(emptyList()))
+        assertNotEquals<ArtifactTrust>(ArtifactTrust.EndorsedArtifacts(), ArtifactTrust.EmbeddedArtifacts())
+    }
+
+    @Test
+    fun aPolicyIsPlainData() {
+        assertEquals(Policy(), Policy(null, Duration.ZERO, ArtifactTrust.EndorsedArtifacts()))
+        assertEquals(Policy(freshnessMaxAge = 1.hours), Policy(freshnessMaxAge = 60.minutes))
+        assertNotEquals(Policy(), Policy(freshnessMaxAge = 1.hours))
+        assertEquals(
+            Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = byteArrayOf(1))),
+            Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime = byteArrayOf(1))),
+        )
     }
 
     @OptIn(ExperimentalTinfoilApi::class)
     @Test
-    fun modelPinsCompareByRepositoryAndByTheVerifierItself() {
-        val verifier = Verifier.appraisingWith(FakeVerifier())
-        val another = Verifier.appraisingWith(FakeVerifier())
+    fun modelPinsCompareByRepositoryAndPolicy() {
+        val policy = Policy(freshnessMaxAge = 1.hours)
         assertEquals(ModelPin("tinfoilsh/m"), ModelPin("tinfoilsh/m"))
         assertEquals(ModelPin("tinfoilsh/m").hashCode(), ModelPin("tinfoilsh/m").hashCode())
-        assertEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m", verifier))
-        assertEquals(ModelPin("tinfoilsh/m", verifier).hashCode(), ModelPin("tinfoilsh/m", verifier).hashCode())
+        assertEquals(ModelPin("tinfoilsh/m", policy), ModelPin("tinfoilsh/m", Policy(freshnessMaxAge = 1.hours)))
+        assertEquals(ModelPin("tinfoilsh/m", policy).hashCode(), ModelPin("tinfoilsh/m", policy.copy()).hashCode())
         assertNotEquals(ModelPin("tinfoilsh/m"), ModelPin("tinfoilsh/other"))
-        assertNotEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m", another))
-        assertNotEquals(ModelPin("tinfoilsh/m", verifier), ModelPin("tinfoilsh/m"))
-        assertEquals("ModelPin(repo=tinfoilsh/m, verifier=the client's)", ModelPin("tinfoilsh/m").toString())
-        assertEquals("ModelPin(repo=tinfoilsh/m, verifier=its own)", ModelPin("tinfoilsh/m", verifier).toString())
-    }
-
-    @Test
-    fun anEmptyNameOfAnEmbeddedConfigIsRefusedAndNotReadAsNotSet() {
-        val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")
-        val errors = listOf(
-            assertFailsWith<ConfigurationException> { EmbeddedConfig.Bytes(byteArrayOf(1), name = "") },
-            assertFailsWith<ConfigurationException> { EmbeddedConfig.Reference("cd", runtime, name = "") },
-        )
-        for (error in errors) {
-            assertTrue(error.detail.contains("embedded config's name must not be empty"), error.detail)
-        }
-    }
-
-    @Test
-    fun anEmbeddedConfigCopiesItsBytesAndHasNoNameByDefault() {
-        val bytes = byteArrayOf(1, 2)
-        val config = EmbeddedConfig.Bytes(bytes, name = null)
-        bytes[0] = 9
-        config.bytes[1] = 9
-        assertContentEquals(byteArrayOf(1, 2), config.bytes)
-        assertNull(config.name)
-
-        val runtime = RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")
-        val reference = EmbeddedConfig.Reference("cd", runtime, name = null)
-        assertNull(reference.name)
-        assertEquals(reference, EmbeddedConfig.Reference("cd", RuntimeReference("tinfoilsh/cvmimage", "v0.15.0", "ab")))
-        assertEquals(reference.hashCode(), EmbeddedConfig.Reference("cd", runtime).hashCode())
-        assertNotEquals<EmbeddedConfig>(reference, EmbeddedConfig.Bytes(byteArrayOf(1)))
-        assertNotEquals(reference, EmbeddedConfig.Reference("cd", RuntimeReference("tinfoilsh/cvmimage", "v0.15.1", "ab")))
-        assertNotEquals(EmbeddedConfig.Bytes(byteArrayOf(1)), EmbeddedConfig.Bytes(byteArrayOf(1), "/org/project/v1"))
+        assertNotEquals(ModelPin("tinfoilsh/m", policy), ModelPin("tinfoilsh/m", Policy()))
+        assertNotEquals(ModelPin("tinfoilsh/m", policy), ModelPin("tinfoilsh/m"))
+        assertEquals("ModelPin(repo=tinfoilsh/m, policy=the client's)", ModelPin("tinfoilsh/m").toString())
     }
 
     @Test
@@ -126,7 +110,8 @@ class ValueTypesTest {
         val secretLooking = "do-not-print".toByteArray()
         val descriptions = listOf(
             ConfigEndorsement(secretLooking, "sha256:ab", secretLooking, secretLooking).toString(),
-            EmbeddedReferences(EmbeddedConfig.Bytes(secretLooking), secretLooking, secretLooking).toString(),
+            ArtifactTrust.EmbeddedArtifacts(secretLooking, secretLooking).toString(),
+            Trust.EmbeddedConfig(secretLooking).toString(),
         )
         for (description in descriptions) {
             assertFalse(description.contains("do-not-print"), description)

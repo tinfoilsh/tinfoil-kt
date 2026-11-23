@@ -21,7 +21,6 @@ import okhttp3.mockwebserver.MockResponse
 import okio.BufferedSink
 import sh.tinfoil.internal.gateway.GatewayCatalog
 import sh.tinfoil.internal.gateway.GatewayRouter
-import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.testing.ENCLAVE_URL_HEADER
 import sh.tinfoil.testing.FakeVerifier
 import sh.tinfoil.testing.TestGateway
@@ -43,6 +42,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.nanoseconds
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 /** The gateway client: what it verifies, what it seals to whom, and what it refuses. */
@@ -77,17 +77,11 @@ class GatewayHttpClientTest {
         assertEquals(0, gateway.verifier.verifications.get(), "verifications")
     }
 
-    /** A verifier that supplies or approves configs by itself. */
-    private class SelfAuthorizing(private val inner: AttestationVerifier) : AttestationVerifier by inner {
-        override val callerAuthorizesConfig: Boolean = true
-    }
-
     // Options.
 
     @Test
     fun everyOptionIsCheckedBeforeAnyIo() = test {
         val pin = mapOf("m" to ModelPin("tinfoilsh/m"))
-        val selfAuthorizing = Verifier.appraisingWith(SelfAuthorizing(gateway.verifier))
         val refused: List<Pair<String, suspend () -> Unit>> = listOf(
             "pinned-only mode requires at least one model pin" to { gateway.client(pinnedModelsOnly = true) },
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf("m" to ModelPin("acme/m"))) },
@@ -96,9 +90,9 @@ class GatewayHttpClientTest {
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf("m" to ModelPin(" tinfoilsh/m"))) },
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf("" to ModelPin("tinfoilsh/m"))) },
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf(" \t" to ModelPin("tinfoilsh/m"))) },
-            "caller-authorized config requires a direct enclave client" to { gateway.client(verifier = selfAuthorizing) },
-            "model \"m\": caller-authorized config" to {
-                gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m", selfAuthorizing)))
+            "freshness maximum age" to { gateway.client(policy = Policy(freshnessMaxAge = (-1).seconds)) },
+            "model \"m\": freshness maximum age" to {
+                gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m", Policy(freshnessMaxAge = (-1).seconds))))
             },
             "invalid base URL" to { gateway.client(modelPins = pin, baseUrl = "http://${gateway.host}/v1/") },
             "must use HTTPS" to { gateway.client(baseUrl = "http://localhost:${gateway.server.port}/v1/") },
@@ -109,8 +103,7 @@ class GatewayHttpClientTest {
             "invalid base URL" to { gateway.client(baseUrl = "${gateway.host}/v1/") },
             "invalid base URL" to { gateway.client(baseUrl = "wss://${gateway.host}/v1/") },
             "user cache secret is not well-formed" to { gateway.client(userCacheSecret = "half\ud800") },
-            "baseUrl must not be empty" to { gateway.client(baseUrl = "") },
-            "userCacheSecret must not be empty" to { gateway.client(userCacheSecret = "") },
+            "url must not be empty" to { gateway.client(baseUrl = "") },
         )
         for ((message, create) in refused) {
             val error = assertFailsWith<ConfigurationException>(message) { create() }
@@ -122,20 +115,15 @@ class GatewayHttpClientTest {
 
     @Test
     fun aPinThatNoVerificationCouldSucceedWithIsRefusedBeforeAnyIo() = test {
-        val strict = FakeVerifier()
         val checked = CopyOnWriteArrayList<Pin>()
-        val verifier = Verifier.appraisingWith(
-            object : AttestationVerifier by strict {
-                override fun checkPinVerifiability(pin: Pin) {
-                    checked += pin
-                    if (pin.repo!!.contains("@@")) {
-                        throw ConfigurationException("invalid release reference")
-                    }
-                }
-            },
-        )
+        gateway.verifier.checkPin = { pin ->
+            checked += pin
+            if (pin.repo!!.contains("@@")) {
+                throw ConfigurationException("invalid release reference")
+            }
+        }
         val error = assertFailsWith<ConfigurationException> {
-            gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m@@")), verifier = verifier)
+            gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m@@")))
         }
         assertEquals("model \"m\": invalid release reference", error.detail)
         // The pin names the repository and the registry project alike.
@@ -145,9 +133,9 @@ class GatewayHttpClientTest {
 
     @Test
     fun theDefaultBaseUrlIsTinfoilsGateway() {
-        assertEquals("https://inference-gateway.tinfoil.sh/v1/", GatewayHttpClient.DEFAULT_BASE_URL)
+        assertEquals("https://inference-gateway.tinfoil.sh/v1/", GatewayHttpClient.DEFAULT_URL)
         val client = gateway.unverified(baseUrl = null)
-        assertEquals(GatewayHttpClient.DEFAULT_BASE_URL, client.baseUrl.toString())
+        assertEquals(GatewayHttpClient.DEFAULT_URL, client.baseUrl.toString())
         assertEquals("GatewayHttpClient(baseUrl=https://inference-gateway.tinfoil.sh/v1/)", client.toString())
     }
 
@@ -615,10 +603,12 @@ class GatewayHttpClientTest {
     // Pins and policy.
 
     @Test
-    fun aPinnedModelIsVerifiedAgainstItsPinUnderItsOwnVerifier() = test {
+    fun aPinnedModelIsVerifiedAgainstItsPinUnderItsOwnPolicy() = test {
         gateway.serve("pinned" to ("tinfoilsh/pinned" to listOf("a.example")), "plain" to ("tinfoilsh/plain" to listOf("a.example")))
         val own = FakeVerifier { document, _, _ -> gateway.endorsement(document.toString(Charsets.UTF_8)) }
-        val pins = mapOf("pinned" to ModelPin("tinfoilsh/pinned@v1.2.3@sha256:${"cd".repeat(32)}", Verifier.appraisingWith(own)))
+        val ownPolicy = Policy(freshnessMaxAge = 1.hours)
+        gateway.verifierFor = { policy -> own.takeIf { policy.freshnessMaxAgeNs == 3_600_000_000_000 } }
+        val pins = mapOf("pinned" to ModelPin("tinfoilsh/pinned@v1.2.3@sha256:${"cd".repeat(32)}", ownPolicy))
         val client = gateway.client(modelPins = pins)
 
         client.execute(client.post(chat(model = "pinned"))).close()
@@ -643,7 +633,7 @@ class GatewayHttpClientTest {
     }
 
     @Test
-    fun aPinWithoutAVerifierUsesTheClients() = test {
+    fun aPinWithoutAPolicyUsesTheClients() = test {
         gateway.serve("pinned" to ("tinfoilsh/pinned" to listOf("a.example")))
         val client = gateway.client(modelPins = mapOf("pinned" to ModelPin("tinfoilsh/pinned@v2")))
         client.execute(client.post(chat(model = "pinned"))).close()

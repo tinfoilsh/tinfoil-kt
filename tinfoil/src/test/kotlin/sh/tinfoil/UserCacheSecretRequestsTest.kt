@@ -9,6 +9,7 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
 import okio.BufferedSink
+import sh.tinfoil.internal.transport.UserCacheSecret
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.fingerprint
 import java.io.IOException
@@ -19,6 +20,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -41,7 +44,7 @@ class UserCacheSecretRequestsTest {
 
     @Test
     fun theSecretArrivesInTheBodyAndNothingElseChanges() = test {
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         val text = """{"model":"m", "seed":18446744073709551617,"messages":[{"role":"user","content":"hi"}] }"""
         enclave.server.enqueue(MockResponse().setBody("ok"))
         enclave.server.enqueue(MockResponse().setBody("ok"))
@@ -60,18 +63,67 @@ class UserCacheSecretRequestsTest {
     }
 
     @Test
-    fun aClientWithoutASecretSendsBodiesAsTheyAre() = test {
-        val client = enclave.client(userCacheSecret = null)
+    fun anEnclaveClientSendsBodiesAsTheyAre() = test {
+        val client = enclave.client()
+        val bodies = listOf("""{"model":"m"}""", """{"model":"m","user_cache_secret":""}""", """{"user_cache_secret":"its-own"}""")
+        for (body in bodies) {
+            enclave.server.enqueue(MockResponse())
+            client.execute(chat(body)).close()
+            assertEquals(body, enclave.server.takeRequest().body.readUtf8())
+        }
+    }
+
+    @Test
+    fun withoutASecretOrWithAnEmptyOneTheProcesssSecretIsUsedAndShared() = test {
+        val process = UserCacheSecret.ProcessSecret { it.fill(0xab.toByte()) }
+        val generated = "ab".repeat(32)
+        val clients = listOf(
+            enclave.router(internals = enclave.routerInternals(processSecret = process)),
+            enclave.router(userCacheSecret = "", internals = enclave.routerInternals(processSecret = process)),
+        )
+        for (client in clients) {
+            enclave.server.enqueue(MockResponse())
+            client.execute(chat("""{"model":"m","user_cache_secret":""}""")).close()
+            assertEquals("""{"model":"m","user_cache_secret":"$generated"}""", enclave.server.takeRequest().body.readUtf8())
+        }
+    }
+
+    @Test
+    fun theProcesssSecretIsRandomAndGeneratedOnce() {
+        val process = UserCacheSecret.ProcessSecret()
+        val first = process.get()
+        assertSame(first, process.get())
+        assertTrue(Regex("[0-9a-f]{64}").matches(first.value), "64 lowercase hex characters")
+        assertNotEquals(first.value, UserCacheSecret.ProcessSecret().get().value)
+    }
+
+    @Test
+    fun aFailureOfTheRandomNumberGeneratorFailsTheClientUnchangedAndIsNotKept() = test {
+        val failure = java.security.ProviderException("no entropy")
+        var fail = true
+        val process = UserCacheSecret.ProcessSecret { bytes ->
+            if (fail) throw failure
+            bytes.fill(1)
+        }
+        val error = assertFailsWith<java.security.ProviderException> {
+            enclave.router(internals = enclave.routerInternals(processSecret = process))
+        }
+        // The platform's error, unchanged. Under a JVM with assertions on, as
+        // in tests, coroutines may rethrow a copy that carries the stack of
+        // where it was rethrown, with the original as its cause.
+        assertTrue(error === failure || error.cause === failure, "the platform's error, unchanged: $error")
+        assertEquals(0, enclave.fetches, "nothing was contacted")
+
+        fail = false
+        val client = enclave.router(internals = enclave.routerInternals(processSecret = process))
         enclave.server.enqueue(MockResponse())
-
         client.execute(chat("""{"model":"m"}""")).close()
-
-        assertEquals("""{"model":"m"}""", enclave.server.takeRequest().body.readUtf8())
+        assertEquals("""{"model":"m","user_cache_secret":"${"01".repeat(32)}"}""", enclave.server.takeRequest().body.readUtf8())
     }
 
     @Test
     fun theRequestsOwnSecretAndOtherEndpointsAreLeftAlone() = test {
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         val untouched = listOf(
             chat("""{"model":"m","user_cache_secret":"per-user"}"""),
             chat("""{"user_cache_secret":"","user_cache_secret":""}"""),
@@ -95,7 +147,7 @@ class UserCacheSecretRequestsTest {
         val stale = enclave.authority.issue().fingerprint
         val endorsements = ArrayDeque(listOf(stale, enclave.certificate.fingerprint))
         enclave.endorsed = { endorsements.removeFirst() }
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         enclave.server.enqueue(MockResponse().setBody("after rotation"))
         val writes = AtomicInteger()
         val body = object : RequestBody() {
@@ -120,7 +172,7 @@ class UserCacheSecretRequestsTest {
         val stale = enclave.authority.issue().fingerprint
         val endorsements = ArrayDeque(listOf(enclave.certificate.fingerprint, stale, enclave.certificate.fingerprint))
         enclave.endorsed = { endorsements.removeFirst() }
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         val writes = AtomicInteger()
         fun oneShot() = object : RequestBody() {
             override fun contentType() = json
@@ -152,7 +204,7 @@ class UserCacheSecretRequestsTest {
 
     @Test
     fun aRequestThatTheHttpClientSendsAgainCarriesTheSecretBothTimes() = test {
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         enclave.server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
         enclave.server.enqueue(MockResponse().setBody("ok"))
 
@@ -165,7 +217,7 @@ class UserCacheSecretRequestsTest {
 
     @Test
     fun aStreamOfUnknownLengthIsGivenTheSecretAndSentOnce() = test {
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         val writes = AtomicInteger()
         val stream = object : RequestBody() {
             override fun contentType() = json
@@ -189,7 +241,7 @@ class UserCacheSecretRequestsTest {
 
     @Test
     fun aBodyThatCannotBeExaminedIsRefusedBeforeAnythingIsSentOrVerified() = test {
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         // An expired verification, so that a request that got as far as
         // being sent would be seen to verify first.
         enclave.clock.advance(enclave.lifetimeSeconds)
@@ -242,7 +294,7 @@ class UserCacheSecretRequestsTest {
 
     @Test
     fun theSecretIsInNoErrorAndNoDescription() = test {
-        val client = enclave.client(userCacheSecret = secret)
+        val client = enclave.router(userCacheSecret = secret)
         val failures = mutableListOf<Throwable>()
         fun Throwable.all(): List<Throwable> = listOf(this) + suppressed.flatMap { it.all() } + listOfNotNull(cause).flatMap { it.all() }
 
@@ -275,7 +327,7 @@ class UserCacheSecretRequestsTest {
         for (text in failures.flatMap { it.all() }.map { it.toString() } + described) {
             assertFalse(text.contains(secret), text)
         }
-        failures += assertFailsWith<ConfigurationException> { enclave.client(userCacheSecret = "$secret\ud800") }
+        failures += assertFailsWith<ConfigurationException> { enclave.router(userCacheSecret = "$secret\ud800") }
         assertFalse(failures.last().toString().contains(secret))
         assertEquals(0, enclave.server.requestCount - 2, "only the two requests that were meant to arrive did")
     }
