@@ -64,7 +64,7 @@ class GatewayOpenAIClientLiveTest {
             Log.i(TAG, "OpenAI SDK through the gateway under a key that is none: ${error.javaClass.simpleName} (${error.statusCode()})")
             assertTrue(error.statusCode() in 400..499)
             assertNull(error.tinfoilException, "the refusal is the API's, not this SDK's")
-            assertEquals(1, http.current.size)
+            assertEquals(1, http.lastVerification().size)
         }
         http.close()
     }
@@ -85,7 +85,7 @@ class GatewayOpenAIClientLiveTest {
             val chunks = client.openAIAsync.chat().completions().createStreaming(params).asFlow().toList()
             Log.i(TAG, "gateway: a streamed completion in ${chunks.size} chunks")
             assertTrue(chunks.size > 1, "the completion arrived in ${chunks.size} chunk(s)")
-            assertTrue(http.current.isNotEmpty())
+            assertTrue(http.lastVerification().isNotEmpty())
         }
         http.close()
     }

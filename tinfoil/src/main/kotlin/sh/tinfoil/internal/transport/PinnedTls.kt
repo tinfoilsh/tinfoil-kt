@@ -16,7 +16,7 @@ import okhttp3.internal.tls.OkHostnameVerifier
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
-import sh.tinfoil.Verification
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.internal.Background
 import java.io.IOException
 import java.net.ProtocolException
@@ -115,7 +115,7 @@ internal class PinnedTls(private val settings: HttpSettings = HttpSettings()) : 
         }
     }
 
-    override fun bind(verification: Verification): PinnedTlsTransport =
+    override fun bind(verification: VerifiedFacts): PinnedTlsTransport =
         PinnedTlsTransport(LeafKeyPin.of(verification.tlsPublicKeyFingerprint), dispatcher, calls, settings)
 
     override fun refuse() = calls.refuse()

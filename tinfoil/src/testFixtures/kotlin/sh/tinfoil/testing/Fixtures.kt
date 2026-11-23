@@ -29,10 +29,16 @@ import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.SoftwareIdentity
 import sh.tinfoil.Transport
 import sh.tinfoil.Trust
-import sh.tinfoil.Verification
+import sh.tinfoil.PartialFacts
+import sh.tinfoil.Step
+import sh.tinfoil.StepStatus
+import sh.tinfoil.VerificationAttempt
 import sh.tinfoil.VerificationCheck
+import sh.tinfoil.VerificationException
 import sh.tinfoil.VerificationLayer
 import sh.tinfoil.VerificationMetadata
+import sh.tinfoil.VerificationReport
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.internal.Internals
 import sh.tinfoil.internal.RouterDiscovery
 import sh.tinfoil.internal.transport.HttpSettings
@@ -125,8 +131,8 @@ public const val TLS_KEY_FORMAT: String = Attestor.TLS_KEY_FORMAT
 public const val HPKE_KEY_FORMAT: String = Attestor.HPKE_KEY_FORMAT
 
 /**
- * A verification that endorses [fingerprint] as the TLS key, and [hpkePublicKey]
- * as the HPKE key if there is one, until [expiresAt].
+ * Verified facts that endorse [fingerprint] as the TLS key, and
+ * [hpkePublicKey] as the HPKE key if there is one, until [expiresAt].
  */
 public fun verification(
     fingerprint: String?,
@@ -137,7 +143,7 @@ public fun verification(
         hpkePublicKey?.let { CryptoMaterial("hpke", HPKE_KEY_FORMAT, it) },
     ),
     codeDigest: String = "ab".repeat(32),
-): Verification = Verification(
+): VerifiedFacts = VerifiedFacts(
     configRepo = "tinfoilsh/example",
     codeDigest = codeDigest,
     codeTag = null,
@@ -150,15 +156,58 @@ public fun verification(
     hpkePublicKey = hpkePublicKey,
     cryptoMaterial = cryptoMaterial,
     freshnessExpiresAt = expiresAt,
-    metadata = VerificationMetadata(SoftwareIdentity("test", "0"), Instant.EPOCH),
 )
+
+/**
+ * The verified facts of the attempt that [this] describes, which must have
+ * passed, or null before the first attempt.
+ */
+public val VerificationAttempt?.facts: VerifiedFacts?
+    get() = when (this) {
+        null -> null
+        is VerificationAttempt.Passed -> report.verifiedFacts
+        is VerificationAttempt.Failed -> throw AssertionError("the attempt failed", error)
+    }
+
+/** The four layers of the verifier, in order. */
+private val LAYERS = listOf(VerificationLayer.ENVELOPE, VerificationLayer.PROVENANCE, VerificationLayer.QUOTE, VerificationLayer.POLICY)
+
+private val TEST_METADATA = VerificationMetadata(SoftwareIdentity("test", "0"), Instant.EPOCH)
+
+/** The report of a verification that passed every step with [facts]. */
+public fun passedReport(facts: VerifiedFacts): VerificationReport =
+    VerificationReport(LAYERS.map { Step(it, StepStatus.PASSED, null) }, facts, partialFacts = null, TEST_METADATA)
+
+/**
+ * The verifier's rejection of a document at [layer], as the client throws
+ * it: an [AttestationException] whose cause is a [VerificationException]
+ * with a report in which [layer]'s step failed, the steps before it passed,
+ * and those after it did not run.
+ */
+public fun rejection(
+    layer: VerificationLayer = VerificationLayer.QUOTE,
+    detail: String = "report signature is invalid",
+    partialFacts: PartialFacts = PartialFacts(expected = null, measured = null),
+): AttestationException {
+    val message = "verification error: $layer: $detail"
+    val failed = LAYERS.indexOf(layer)
+    val steps = LAYERS.mapIndexed { i, it ->
+        when {
+            i < failed -> Step(it, StepStatus.PASSED, null)
+            i == failed -> Step(it, StepStatus.FAILED, message)
+            else -> Step(it, StepStatus.NOT_RUN, null)
+        }
+    }
+    val report = VerificationReport(steps, verifiedFacts = null, partialFacts, TEST_METADATA)
+    return AttestationException("$layer: $detail", layer, VerificationException(message, layer, report))
+}
 
 /**
  * A verifier that appraises nothing: it returns what [verify] says for each
  * document, and records what it was asked.
  */
 internal class FakeVerifier(
-    @Volatile var verify: (document: ByteArray, nonce: ByteArray, pin: Pin) -> Verification = { _, _, _ ->
+    @Volatile var verify: (document: ByteArray, nonce: ByteArray, pin: Pin) -> VerifiedFacts = { _, _, _ ->
         throw AttestationException("no verification was set up")
     },
 ) : AttestationVerifier {
@@ -189,10 +238,10 @@ internal class FakeVerifier(
         }
     }
 
-    override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification {
+    override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): VerificationReport {
         verifications.incrementAndGet()
         nonces += nonce.joinToString("") { "%02x".format(it) }
-        return verify.invoke(document, nonce, pin)
+        return passedReport(verify.invoke(document, nonce, pin))
     }
 }
 
@@ -220,7 +269,7 @@ internal class NotingVerifier(
         inner.checkPinVerifiability(pin)
     }
 
-    override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification {
+    override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): VerificationReport {
         note("verify")
         return inner.verify(document, nonce, pin)
     }
@@ -322,7 +371,7 @@ public class TestEnclave(
     public val pinChecks: Int get() = verifier.pinChecks.get()
 
     /** Replaces what [verifier] says of every document. */
-    public fun verifyWith(verify: (document: ByteArray, nonce: ByteArray) -> Verification) {
+    public fun verifyWith(verify: (document: ByteArray, nonce: ByteArray) -> VerifiedFacts) {
         verifier.verify = { document, nonce, _ -> verify(document, nonce) }
     }
 
@@ -387,13 +436,13 @@ public class TestEnclave(
     internal suspend fun router(
         transport: Transport = Transport.Tls,
         userCacheSecret: String? = null,
-        onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         internals: Internals = routerInternals(),
     ): RouterHttpClient = RouterHttpClient.create(internals) {
         this.transport = transport
         fetchAttestation = relayFetcher
         this.userCacheSecret = userCacheSecret
-        this.onVerificationResult = onVerificationResult
+        this.onVerification = onVerification
     }.also { clients += it }
 
     /**
@@ -413,14 +462,14 @@ public class TestEnclave(
         fetchAttestation: AttestationFetcher? = relayFetcher,
         policy: Policy = Policy(),
         verificationCheck: VerificationCheck? = null,
-        onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         internals: Internals = internals(),
     ): EnclaveHttpClient = EnclaveHttpClient.create(enclave, trust, internals) {
         this.policy = policy
         this.transport = transport
         this.fetchAttestation = fetchAttestation
         this.verificationCheck = verificationCheck
-        this.onVerificationResult = onVerificationResult
+        this.onVerification = onVerification
     }.also { clients += it }
 
     override fun close() {

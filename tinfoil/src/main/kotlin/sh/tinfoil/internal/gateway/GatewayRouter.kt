@@ -33,11 +33,12 @@ import sh.tinfoil.RecoverableResponse
 import sh.tinfoil.ReplicaVerification
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.Transport
-import sh.tinfoil.Verification
+import sh.tinfoil.VerificationReport
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.internal.Background
 import sh.tinfoil.internal.EnclaveConnection
 import sh.tinfoil.internal.Internals
+import sh.tinfoil.internal.VerificationObserver
 import sh.tinfoil.internal.requireNotEmpty
 import sh.tinfoil.internal.transport.AttestedSender
 import sh.tinfoil.internal.transport.EhbpSealing
@@ -267,25 +268,28 @@ internal class GatewayRouter private constructor(
     }
 
     /**
-     * A verification, valid now, of a replica that serves [model]. Replicas
-     * are tried in an order that is fixed for the model, so calling again
-     * verifies the same replica while it stays valid.
+     * The report of a verification, valid now, of a replica that serves
+     * [model]. Replicas are tried in an order that is fixed for the model,
+     * so calling again verifies the same replica while it stays valid.
      */
     @Throws(TinfoilException::class, CancellationException::class)
-    suspend fun ensureVerified(model: String): Verification {
+    suspend fun ensureVerified(model: String): VerificationReport {
         checkOpen()
         GatewayPolicy.requireNamed(model)
         val route = policy.resolve(model, catalogNow())
-        val (leased, verification) = firstVerified(route, rank(route.hosts, model, first = null), model)
+        val (leased, report) = firstVerified(route, rank(route.hosts, model, first = null), model)
         release(leased.second)
-        return verification
+        return report
     }
 
-    /** The last successful verification of each replica that is kept, unchecked. */
-    val current: List<ReplicaVerification>
+    /**
+     * The last attempt to verify each replica that is kept, failed ones
+     * included, unchecked.
+     */
+    val lastVerification: List<ReplicaVerification>
         get() = synchronized(lock) { replicas.entries.map { it.key to it.value } }
             .mapNotNull { (key, replica) ->
-                replica.connection.current?.let {
+                replica.connection.lastVerification?.let {
                     ReplicaVerification(key.host, replica.models.sorted(), key.reference, key.pinnedModel, it)
                 }
             }
@@ -489,14 +493,14 @@ internal class GatewayRouter private constructor(
         route: GatewayPolicy.Route,
         hosts: List<String>,
         model: String,
-    ): Pair<Pair<ReplicaKey, Replica>, Verification> {
+    ): Pair<Pair<ReplicaKey, Replica>, VerificationReport> {
         var failure: TinfoilException? = null
         for (host in hosts.take(MAX_REPLICAS_TRIED)) {
             coroutineContext.ensureActive()
             val key = route.on(host)
             try {
-                val (replica, verification) = verified(key)
-                return Pair(Pair(key, replica), verification)
+                val (replica, report) = verified(key)
+                return Pair(Pair(key, replica), report)
             } catch (e: TinfoilException) {
                 // A closed client is not a replica's failure.
                 checkOpen()
@@ -507,37 +511,26 @@ internal class GatewayRouter private constructor(
     }
 
     /**
-     * The replica [key] with a verification that is valid now, verifying
-     * it first if there is none. A replica that has never verified is not
-     * kept: the next request starts again with it. The caller holds the
-     * replica that is returned, and has to [release] it.
+     * The replica [key] with the report of a verification that is valid
+     * now, verifying it first if there is none. A replica that fails is
+     * kept, with its last attempt, like any other: the next request that
+     * needs it verifies it again. The caller holds the replica that is
+     * returned, and has to [release] it.
      */
-    private suspend fun verified(key: ReplicaKey): Pair<Replica, Verification> {
-        var attempts = 0
-        while (true) {
-            // A new replica's options are checked by the verifier library,
-            // which is not called on the caller's thread.
-            val replica = Background.making(::release) { replica(key) }
-            try {
-                val verification = replica.connection.ensureVerified()
+    private suspend fun verified(key: ReplicaKey): Pair<Replica, VerificationReport> {
+        // A new replica's options are checked by the verifier library,
+        // which is not called on the caller's thread.
+        val replica = Background.making(::release) { replica(key) }
+        try {
+            val report = replica.connection.ensureVerified()
+            checkOpen()
+            return Pair(replica, report)
+        } catch (e: Throwable) {
+            release(replica)
+            if (e is TinfoilException) {
                 checkOpen()
-                return Pair(replica, verification)
-            } catch (e: Throwable) {
-                release(replica)
-                if (e !is TinfoilException) {
-                    throw e
-                }
-                checkOpen()
-                // Another request's failure may have closed this one
-                // before it was asked; that says nothing about the replica.
-                val closedElsewhere = e is ConfigurationException && replica.connection.isClosed
-                if (replica.connection.current == null) {
-                    drop(key, replica)
-                }
-                if (!closedElsewhere || ++attempts >= MAX_REOPENS) {
-                    throw e
-                }
             }
+            throw e
         }
     }
 
@@ -576,15 +569,6 @@ internal class GatewayRouter private constructor(
         synchronized(lock) { replica.users-- }
     }
 
-    private fun drop(key: ReplicaKey, replica: Replica) {
-        synchronized(lock) {
-            if (replicas[key] === replica) {
-                replicas.remove(key)
-            }
-        }
-        replica.connection.close()
-    }
-
     private fun remember(prefix: String, host: String) {
         if (prefix.isEmpty()) {
             return
@@ -617,7 +601,6 @@ internal class GatewayRouter private constructor(
         const val MAX_REPLICAS: Int = 256
 
         private const val MAX_REROUTED = 1024
-        private const val MAX_REOPENS = 3
         private const val PRECONDITION_FAILED = 412
         private const val CALL_PARALLELISM = 64
         private const val MAX_PRINTED = 255
@@ -649,7 +632,7 @@ internal class GatewayRouter private constructor(
             policy: Policy,
             userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
+            onVerification: VerificationObserver?,
             catalog: (() -> Catalog)?,
             internals: Internals,
         ): GatewayRouter {
@@ -676,7 +659,7 @@ internal class GatewayRouter private constructor(
                     // The router scopes the cache itself.
                     cacheSecret = null,
                     verificationCheck = verificationCheck,
-                    onVerificationResult = onVerificationResult,
+                    onVerification = onVerification,
                     internals = internals,
                 )
             }

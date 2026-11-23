@@ -735,14 +735,14 @@ class OpenAIClientsTest {
         enclave.server.enqueue(completion("before"))
         client.openAI.chat().completions().create(params())
         client.enclaveHttp.reverify()
-        assertEquals(stale, client.enclaveHttp.current?.tlsPublicKeyFingerprint)
+        assertEquals(stale, client.enclaveHttp.lastVerification()?.report?.verifiedFacts?.tlsPublicKeyFingerprint)
 
         enclave.server.enqueue(completion("after"))
         val answer = client.openAI.chat().completions().create(params())
 
         assertEquals("after", answer.choices().single().message().content().get())
         assertEquals(3, enclave.fetches, "the enclave was verified again")
-        assertEquals(held, client.enclaveHttp.current?.tlsPublicKeyFingerprint)
+        assertEquals(held, client.enclaveHttp.lastVerification()?.report?.verifiedFacts?.tlsPublicKeyFingerprint)
         assertEquals(2, enclave.server.requestCount, "the second request reached the enclave once, under the held key")
         assertEquals(0, sleeper.sleeps.get(), "the attested client sent it again, not the OpenAI SDK")
         enclave.server.takeRequest()

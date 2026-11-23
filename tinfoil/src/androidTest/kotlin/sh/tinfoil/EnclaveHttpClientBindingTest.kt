@@ -7,7 +7,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -21,20 +20,13 @@ class EnclaveHttpClientBindingTest {
     private val trust = Trust.RepoPin("tinfoilsh/example")
 
     /** The observer is told once a verification is over, which can be just after its caller is. */
-    private fun <T> awaitOne(results: List<T>): T {
-        val deadline = System.nanoTime() + 10_000_000_000L
-        while (results.isEmpty() && System.nanoTime() < deadline) {
-            Thread.sleep(10)
-        }
-        return results.single()
-    }
 
     @Test
     fun theVerifiersOwnRulesRefuseOptionsBeforeAnyIo() = runBlocking<Unit> {
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val results = CopyOnWriteArrayList<VerificationAttempt>()
         val refused: List<Pair<String, suspend () -> Unit>> = listOf(
             "a malformed repository" to {
-                EnclaveHttpClient.create(nowhere, Trust.RepoPin("not a repository")) { onVerificationResult = { results += it } }
+                EnclaveHttpClient.create(nowhere, Trust.RepoPin("not a repository")) { onVerification = { _, attempt -> results += attempt } }
             },
             "a malformed project" to { EnclaveHttpClient.create(nowhere, Trust.ProjectPin("not a project")) },
             "keys that are not keys" to { EnclaveHttpClient.create(nowhere, Trust.SignedBy(listOf("not a key"))) },
@@ -65,15 +57,20 @@ class EnclaveHttpClientBindingTest {
 
     @Test
     fun anEnclaveThatCannotBeReachedIsANetworkError() = runBlocking<Unit> {
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val results = CopyOnWriteArrayList<VerificationAttempt>()
 
         val error = assertFailsWith<NetworkException> {
-            EnclaveHttpClient.create(nowhere, trust) { onVerificationResult = { results += it } }
+            EnclaveHttpClient.create(nowhere, trust) { onVerification = { _, attempt -> results += attempt } }
         }
 
         assertTrue(error.cause != null, "the cause is kept")
         assertEquals(1, error.suppressed.size, "the first of the two attempts is kept as well")
-        assertSame(error, awaitOne(results).exceptionOrNull())
+        // Each attempt is reported.
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (results.size < 2 && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        assertEquals(listOf(error.suppressed.single(), error), results.map { it.error })
     }
 
     @Test

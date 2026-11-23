@@ -9,7 +9,6 @@ import sh.tinfoil.ModelPin
 import sh.tinfoil.Policy
 import sh.tinfoil.RouterListFetcher
 import sh.tinfoil.Transport
-import sh.tinfoil.Verification
 import sh.tinfoil.VerificationCheck
 
 // What a caller's options block set, copied when the block returned. A
@@ -26,7 +25,7 @@ internal class RouteSettings(
     val policy: Policy = Policy(),
     val userCacheSecret: String? = null,
     val verificationCheck: VerificationCheck? = null,
-    val onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+    val onVerification: VerificationObserver? = null,
 )
 
 /** The options of a client for the gateway. */
@@ -37,6 +36,6 @@ internal class GatewaySettings(
     val policy: Policy = Policy(),
     val userCacheSecret: String? = null,
     val verificationCheck: VerificationCheck? = null,
-    val onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+    val onVerification: VerificationObserver? = null,
     val catalog: (() -> Catalog)? = null,
 )

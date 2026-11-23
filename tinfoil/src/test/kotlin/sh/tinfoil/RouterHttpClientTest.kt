@@ -32,6 +32,8 @@ import sh.tinfoil.testing.VerifierRequest
 import sh.tinfoil.testing.standInVerifiers
 import sh.tinfoil.testing.TestClock
 import sh.tinfoil.testing.awaitUntil
+import sh.tinfoil.testing.facts
+import sh.tinfoil.testing.rejection
 import sh.tinfoil.testing.fingerprint
 import sh.tinfoil.testing.httpsServer
 import sh.tinfoil.testing.verification
@@ -69,7 +71,7 @@ class RouterHttpClientTest {
         pins += pin
         val fingerprint = document.toString(Charsets.UTF_8)
         if (!Regex("[0-9a-f]{64}|malformed").matches(fingerprint)) {
-            throw AttestationException("the document does not verify", layer = VerificationLayer.QUOTE)
+            throw rejection(VerificationLayer.QUOTE, "the document does not verify")
         }
         verification(fingerprint, clock().plusSeconds(3600), hpkePublicKey = hpkeKeys[fingerprint]?.publicKey)
     }
@@ -185,7 +187,7 @@ class RouterHttpClientTest {
         policy: Policy = Policy(),
         userCacheSecret: String? = null,
         verificationCheck: VerificationCheck? = null,
-        onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         internals: Internals = internals(),
     ): RouterHttpClient = RouterHttpClient.create(internals) {
         this.transport = transport
@@ -194,7 +196,7 @@ class RouterHttpClientTest {
         this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
-        this.onVerificationResult = onVerificationResult
+        this.onVerification = onVerification
     }.also { closeables += it }
 
     @AfterTest
@@ -213,21 +215,22 @@ class RouterHttpClientTest {
         val first = Router()
         val second = Router()
         serveList(first.host, second.host)
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val results = CopyOnWriteArrayList<Pair<String, VerificationAttempt>>()
 
-        val client = client(onVerificationResult = { results += it })
+        val client = client(onVerification = { host, result -> results += host to result })
 
         assertEquals(first.host, client.enclave)
         assertEquals("https://${first.host}/", client.baseUrl.toString())
         assertEquals(Transport.Tls, client.transport)
-        assertEquals(first.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
-        assertSame(client.current, client.ensureVerified())
+        assertEquals(first.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
+        assertSame(client.lastVerification()?.report, client.ensureVerified())
         assertEquals(1, first.fetches.get(), "the chosen router is not verified a second time")
         assertEquals(0, second.fetches.get())
         assertEquals(0, fallback.fetches.get())
         assertEquals(listOf(routerPin), pins.distinct(), "every router is verified against the router's pin")
         awaitUntil { results.isNotEmpty() }
-        assertSame(client.current, results.single().getOrThrow())
+        assertEquals(first.host, results.single().first)
+        assertSame(client.lastVerification()?.report, results.single().second.report)
 
         val list = listServer.takeRequest()
         assertEquals("/routers", list.path)
@@ -254,7 +257,7 @@ class RouterHttpClientTest {
         val later = Router()
         serveList(unreachable.host, unverifiable.host, rejected.host, keyless.host, good.host, later.host)
         val checked = CopyOnWriteArrayList<String?>()
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val results = CopyOnWriteArrayList<Pair<String, VerificationAttempt>>()
 
         val client = client(
             verificationCheck = {
@@ -263,7 +266,7 @@ class RouterHttpClientTest {
                     throw IllegalStateException("not this router")
                 }
             },
-            onVerificationResult = { results += it },
+            onVerification = { host, result -> results += host to result },
         )
 
         assertEquals(good.host, client.enclave)
@@ -273,9 +276,17 @@ class RouterHttpClientTest {
         assertEquals(0, later.fetches.get())
         assertEquals(0, fallback.fetches.get())
         assertEquals<List<String?>>(listOf(rejected.certificate.fingerprint, "malformed", good.certificate.fingerprint), checked)
-        awaitUntil { results.isNotEmpty() }
+        // Every router that was tried is reported, with its own host; the
+        // client describes the one that it chose.
+        val tried = listOf(unreachable, unverifiable, rejected, keyless, good).map { it.host }
+        awaitUntil { results.size >= tried.size }
         Thread.sleep(50)
-        assertSame(client.current, results.single().getOrThrow(), "only the chosen router is reported")
+        assertEquals(tried, results.map { it.first })
+        assertEquals(listOf(false, false, false, false, true), results.map { it.second.report != null })
+        assertIs<NetworkException>(results[0].second.error)
+        val rejection = assertIs<AttestationException>(results[1].second.error)
+        assertIs<VerificationException>(rejection.cause)
+        assertSame(client.lastVerification()?.report, results.last().second.report)
         assertEquals(0, listOf(unreachable, unverifiable, rejected, keyless, later).sumOf { it.requests.size })
     }
 
@@ -356,7 +367,7 @@ class RouterHttpClientTest {
         assertEquals(fallback.host, client.enclave)
         assertEquals(1, bad.fetches.get())
         assertEquals(2, fallback.fetches.get())
-        assertEquals(fallback.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
+        assertEquals(fallback.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
         assertEquals(listOf(routerPin), pins.distinct())
     }
 
@@ -398,15 +409,19 @@ class RouterHttpClientTest {
 
     @Test
     fun aFallbackThatFailsFailsTheCreationWithItsError() = test {
-        serveList(Router().unverifiable().host)
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val unverifiable = Router().unverifiable()
+        serveList(unverifiable.host)
+        val results = CopyOnWriteArrayList<Pair<String, VerificationAttempt>>()
 
         fallback.unreachable()
-        val network = assertFailsWith<NetworkException> { client(onVerificationResult = { results += it }) }
+        val network = assertFailsWith<NetworkException> { client(onVerification = { host, result -> results += host to result }) }
         assertEquals(503, network.status)
         assertEquals(2, fallback.fetches.get())
-        awaitUntil { results.isNotEmpty() }
-        assertSame(network, results.single().exceptionOrNull())
+        // The router that was passed over, then each attempt at the fallback.
+        awaitUntil { results.size >= 3 }
+        assertEquals(listOf(unverifiable.host, fallback.host, fallback.host), results.map { it.first })
+        assertSame(network.suppressed.single(), results[1].second.error)
+        assertSame(network, results[2].second.error)
 
         fallback.unverifiable()
         val attestation = assertFailsWith<AttestationException> { client() }
@@ -510,9 +525,9 @@ class RouterHttpClientTest {
         val silent = silentRouter()
         val never = Router()
         serveList(silent.host, never.host)
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val results = CopyOnWriteArrayList<VerificationAttempt>()
 
-        val creating = async(Dispatchers.Default) { client(onVerificationResult = { results += it }) }
+        val creating = async(Dispatchers.Default) { client(onVerification = { _, result -> results += result }) }
         awaitUntil { silent.handshakes.get() == 1 }
         creating.cancelAndJoin()
 
@@ -522,7 +537,7 @@ class RouterHttpClientTest {
         assertEquals(0, never.fetches.get())
         assertEquals(0, fallback.fetches.get(), "a cancelled creation does not go on to the fallback")
         assertEquals(1, listServer.requestCount)
-        assertTrue(results.isEmpty(), "nothing is reported for a router that was not chosen")
+        assertTrue(results.isEmpty(), "an attempt that the cancellation ended has no outcome to report")
     }
 
     @Test
@@ -568,7 +583,7 @@ class RouterHttpClientTest {
         assertEquals(listOf(bad.host, unreachable.host, good.host), opened.map { it.enclave })
         assertSame(opened[2], chosen)
         assertEquals(listOf(true, true, false), opened.map { it.isClosed })
-        assertNotNull(chosen!!.current)
+        assertNotNull(chosen!!.lastVerification?.report)
 
         // With no router that verifies, there is nothing to return.
         opened.clear()
@@ -618,7 +633,7 @@ class RouterHttpClientTest {
         // The list now prefers another router, and the first one fails.
         serveList(second.host, first.host)
         val again = client.reverify()
-        assertEquals(first.certificate.fingerprint, again.tlsPublicKeyFingerprint)
+        assertEquals(first.certificate.fingerprint, again.verifiedFacts?.tlsPublicKeyFingerprint)
         assertEquals(2, first.fetches.get(), "the same router is verified again")
         assertEquals(1, listServer.requestCount, "verifying again does not consult the list")
 
@@ -666,7 +681,7 @@ class RouterHttpClientTest {
         assertEquals(second.host, client.enclave)
         assertEquals(Transport.Ehbp(), client.transport)
         assertEquals("https://${second.host}/", client.baseUrl.toString())
-        assertEquals(second.key.publicKey, client.current?.hpkePublicKey)
+        assertEquals(second.key.publicKey, client.lastVerification().facts?.hpkePublicKey)
         val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
             .post("""{"prompt":"plaintext-marker-0c77d1"}""".toRequestBody()).build()
         val recoverable = client.executeRecoverable(request)
