@@ -65,7 +65,8 @@ public class Step internal constructor(
     /** Whether the layer passed, failed, was skipped or did not run. */
     public val status: StepStatus,
     /**
-     * For a failed step, the message of the verifier's error; for a skipped
+     * For a failed step, the message of the check that failed, without the
+     * type and layer that lead [VerificationException.message]; for a skipped
      * step, the reason that it was skipped; otherwise null. It is for
      * people to read, and may change in any release.
      */

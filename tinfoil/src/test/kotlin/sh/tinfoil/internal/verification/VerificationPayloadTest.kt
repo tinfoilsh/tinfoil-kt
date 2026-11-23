@@ -502,7 +502,13 @@ class VerificationPayloadTest {
             put("measured", obj("tls_public_key_fp" to "aa", "hpke_public_key_fp" to "bb"))
         }
 
-        val (error, rejected) = rejected(rejection(partial = partial))
+        val steps = buildJsonArray {
+            add(obj("layer" to "envelope", "status" to "passed"))
+            add(obj("layer" to "provenance", "status" to "passed"))
+            add(obj("layer" to "quote", "status" to "failed", "message" to "report signature is invalid"))
+            add(obj("layer" to "policy", "status" to "not_run"))
+        }
+        val (error, rejected) = rejected(rejection(steps = steps, partial = partial))
 
         val message = "verification error: quote: report signature is invalid"
         assertEquals("quote: report signature is invalid", error.detail)
@@ -516,6 +522,9 @@ class VerificationPayloadTest {
             report.steps.map { it.status },
         )
         assertEquals(VerificationLayer.QUOTE, report.failedStep?.layer)
+        // The step carries the check's message as the library gives it; only
+        // the error leads with the type and the layer.
+        assertEquals("report signature is invalid", report.failedStep?.message)
         assertEquals(
             PartialFacts(
                 expected = ExpectedFacts(

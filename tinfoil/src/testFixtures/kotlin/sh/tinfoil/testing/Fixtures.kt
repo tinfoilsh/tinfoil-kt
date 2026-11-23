@@ -194,7 +194,7 @@ public fun rejection(
     val steps = LAYERS.mapIndexed { i, it ->
         when {
             i < failed -> Step(it, StepStatus.PASSED, null)
-            i == failed -> Step(it, StepStatus.FAILED, message)
+            i == failed -> Step(it, StepStatus.FAILED, detail)
             else -> Step(it, StepStatus.NOT_RUN, null)
         }
     }
