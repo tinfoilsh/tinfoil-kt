@@ -46,8 +46,9 @@ public fun interface VerificationCheck {
  * [Transport.Tls], only on a connection whose TLS certificate carries
  * the attested key; with [Transport.Ehbp], with its body sealed to the
  * attested HPKE key. The client verifies again by itself when a
- * verification reaches its freshness deadline or the enclave stops
- * holding the verified key.
+ * verification reaches its freshness deadline, when the enclave stops
+ * holding the verified key, and after a verification that was to replace
+ * it has been rejected.
  *
  * Send requests with [execute], or hand the client, which is an OkHttp
  * [Call.Factory], to a library that is built on OkHttp. Both follow the same
@@ -99,8 +100,9 @@ public class EnclaveHttpClient private constructor(
 
     /**
      * Returns a verification that is valid now, verifying first only if the
-     * last one has reached its freshness deadline or the enclave has
-     * rejected its key. Returning means that requests can be sent.
+     * last one has reached its freshness deadline, the enclave has rejected
+     * its key, or a verification that was to replace it has failed with an
+     * [AttestationException]. Returning means that requests can be sent.
      *
      * Callers that need a verification while one is running share it, its
      * failure included. Cancelling the coroutine ends only this caller's
@@ -118,11 +120,21 @@ public class EnclaveHttpClient private constructor(
      * Verifies the enclave again, even if the last verification is still
      * valid, and returns the new verification.
      *
-     * A failure here, whether the document could not be fetched or the
-     * enclave was rejected, does not withdraw the last verification: while
-     * that one is before its freshness deadline, requests keep going out
-     * under it, to connections that still present its key. To stop using an
-     * enclave whose new verification was rejected, [close] the client.
+     * A failure is thrown here, and what happens to the last verification
+     * depends on its kind:
+     * - An [AttestationException], which says that the enclave is not to be
+     *   trusted now, withdraws the last verification even if it is still
+     *   before its freshness deadline. No request that starts afterwards is
+     *   sent under it, and its idle connections are closed; requests that
+     *   are already in flight may complete. The next request, or
+     *   [ensureVerified], verifies the enclave again: it fails if the
+     *   enclave still does not pass, and goes through if it does.
+     * - A [NetworkException] or a [ConfigurationException] says nothing
+     *   about the enclave, so the last verification stays in use until its
+     *   freshness deadline.
+     *
+     * Cancelling the coroutine ends only this caller's wait, and changes
+     * nothing: the verification runs on, and its outcome applies as above.
      *
      * A call made while a verification is running shares that one.
      * Cancellation and errors are those of [ensureVerified]. It is safe to
