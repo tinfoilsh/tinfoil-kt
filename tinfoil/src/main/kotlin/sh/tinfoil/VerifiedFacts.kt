@@ -5,14 +5,19 @@ import java.time.Instant
 import java.util.Objects
 
 /**
- * What a verified attestation document proved about an enclave, and who
- * verified it. It holds no host: a document verifies the same whichever host
- * serves it, so the client records where it was fetched from.
+ * What a verified attestation document proved about an enclave: the facts
+ * of a [VerificationReport] whose every step passed or was skipped. It holds
+ * no host: a document verifies the same whichever host serves it, so the
+ * client records where it was fetched from.
+ *
+ * They are the only source of the keys that a channel is bound to: the
+ * client binds TLS and request bodies only to the keys here, never to the
+ * fingerprints of [PartialFacts].
  *
  * A fact that the verification did not establish is null, never an empty
  * string. Instances are immutable and compare by value.
  */
-public class Verification internal constructor(
+public class VerifiedFacts internal constructor(
     /**
      * The repository that the code provenance was authenticated against,
      * without a tag or digest, or null when the verification names none.
@@ -53,8 +58,6 @@ public class Verification internal constructor(
     cryptoMaterial: List<CryptoMaterial>,
     /** No new request may be authorized at or after this instant. */
     public val freshnessExpiresAt: Instant,
-    /** How the verification was performed. */
-    public val metadata: VerificationMetadata,
 ) {
     /**
      * Every key that the enclave endorses, including the two that
@@ -64,7 +67,7 @@ public class Verification internal constructor(
 
     override fun equals(other: Any?): Boolean =
         this === other || (
-            other is Verification &&
+            other is VerifiedFacts &&
                 configRepo == other.configRepo &&
                 codeDigest == other.codeDigest &&
                 codeTag == other.codeTag &&
@@ -76,21 +79,20 @@ public class Verification internal constructor(
                 tlsPublicKeyFingerprint == other.tlsPublicKeyFingerprint &&
                 hpkePublicKey == other.hpkePublicKey &&
                 cryptoMaterial == other.cryptoMaterial &&
-                freshnessExpiresAt == other.freshnessExpiresAt &&
-                metadata == other.metadata
+                freshnessExpiresAt == other.freshnessExpiresAt
             )
 
     override fun hashCode(): Int = Objects.hash(
         configRepo, codeDigest, codeTag, codeMeasurement, enclaveMeasurement, config, runtime, platform,
-        tlsPublicKeyFingerprint, hpkePublicKey, cryptoMaterial, freshnessExpiresAt, metadata,
+        tlsPublicKeyFingerprint, hpkePublicKey, cryptoMaterial, freshnessExpiresAt,
     )
 
     override fun toString(): String =
-        "Verification(configRepo=$configRepo, codeDigest=$codeDigest, codeTag=$codeTag, " +
+        "VerifiedFacts(configRepo=$configRepo, codeDigest=$codeDigest, codeTag=$codeTag, " +
             "codeMeasurement=$codeMeasurement, enclaveMeasurement=$enclaveMeasurement, config=$config, " +
             "runtime=$runtime, platform=$platform, tlsPublicKeyFingerprint=$tlsPublicKeyFingerprint, " +
             "hpkePublicKey=$hpkePublicKey, cryptoMaterial=$cryptoMaterial, " +
-            "freshnessExpiresAt=$freshnessExpiresAt, metadata=$metadata)"
+            "freshnessExpiresAt=$freshnessExpiresAt)"
 }
 
 /**
@@ -98,8 +100,8 @@ public class Verification internal constructor(
  * registers in that platform's order as lowercase hex.
  *
  * As a [Policy]'s pinned registers, an empty register is one that is not
- * pinned. In a [Verification], an empty register of a code measurement is one
- * that the release leaves open.
+ * pinned. In [VerifiedFacts] and [ExpectedFacts], an empty register of a code
+ * measurement is one that the release leaves open.
  */
 public class Measurement(
     /**
@@ -170,7 +172,8 @@ public value class ReferenceSource(
 }
 
 /**
- * The config bound to the hardware. Only an endorsed config has a reference,
+ * The config bound to the hardware, or the config that a verification
+ * expected. Only an endorsed config has a reference,
  * a signing key hint, a registry ID and times; they are null otherwise.
  */
 public class ConfigVerification internal constructor(
@@ -227,9 +230,9 @@ public class ConfigVerification internal constructor(
 }
 
 /**
- * A runtime or platform artifact that a config-based verification accepted.
- * An embedded artifact has no name, commit or approval time, and an embedded
- * platform has only a digest.
+ * A code release, or a runtime or platform artifact that a config-based
+ * verification accepted. An embedded artifact has no name, commit or approval
+ * time, and an embedded platform has only a digest.
  */
 public class ArtifactVerification internal constructor(
     /** Why the artifact was accepted. */
@@ -270,8 +273,9 @@ public class ArtifactVerification internal constructor(
 }
 
 /**
- * How a verification was performed. The SDK fills it in from its own state;
- * none of it is attested by the document or checked against it.
+ * How a verification was performed, whether it passed or failed. The SDK
+ * fills it in from its own state; none of it is attested by the document or
+ * checked against it.
  */
 public class VerificationMetadata internal constructor(
     /** The SDK that performed the verification. */
