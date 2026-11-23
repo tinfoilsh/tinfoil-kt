@@ -38,6 +38,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -584,17 +585,24 @@ class EnclaveHttpClientTest {
     }
 
     @Test
-    fun aFailedReverificationKeepsAVerificationThatIsStillValid() = test {
+    fun aReverificationThatFailsForAnotherReasonThanAttestationKeepsAVerificationThatIsStillValid() = test {
         val client = enclave.client()
         val valid = client.current
+        val serving = enclave.relay.dispatcher
         enclave.relay.dispatcher = status(502)
-
         assertFailsWith<NetworkException> { client.reverify() }
+
+        enclave.relay.dispatcher = serving
+        enclave.verifier.verify = { _, _, _ -> throw ConfigurationException("not usable") }
+        assertFailsWith<ConfigurationException> { client.reverify() }
+        val fetched = enclave.fetches
 
         enclave.server.enqueue(ok())
         client.execute(enclave.get()).close()
+        assertEquals(fetched, enclave.fetches, "the request needed no new verification")
         assertSame(valid, client.current)
         assertSame(valid, client.ensureVerified())
+        assertEquals(1, enclave.server.requestCount)
     }
 
     // Shared verifications.
@@ -740,29 +748,83 @@ class EnclaveHttpClientTest {
     }
 
     @Test
-    fun aRejectedReverificationLeavesAValidVerificationInUseUntilItsDeadline() = test {
+    fun aRejectedReverificationStopsRequestsUnderAVerificationThatIsStillValid() = test {
         val accept = AtomicInteger(1)
         val client = enclave.client(
             verificationCheck = { if (accept.getAndDecrement() <= 0) throw IOException("changed") },
         )
-        val valid = client.current
-        enclave.clock.advance(enclave.lifetimeSeconds - 1)
+        enclave.server.enqueue(ok())
+        client.execute(enclave.get()).close()
 
         assertFailsWith<AttestationException> { client.reverify() }
-        enclave.verifier.verify = { _, _, _ -> throw AttestationException("policy: no longer") }
+        val fetched = enclave.fetches
+        assertFailsWith<AttestationException> { client.execute(enclave.get()) }
+        assertFailsWith<AttestationException> { client.newCall(enclave.get()).execute() }
+        assertFailsWith<AttestationException> { client.ensureVerified() }
+
+        assertEquals(fetched + 3, enclave.fetches, "each call verified the enclave again")
+        assertEquals(1, enclave.server.requestCount, "nothing was sent after the rejection")
+        assertNotNull(client.current, "the last verification is still reported, unchecked")
+    }
+
+    @Test
+    fun aRequestAfterARejectedReverificationVerifiesAgainAndUsesNewConnections() = test {
+        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val client = enclave.client(onVerificationResult = { results += it })
+        val withdrawn = client.current
+        repeat(2) { enclave.server.enqueue(ok()) }
+        client.execute(enclave.get()).close()
+        val passes = enclave.verifier.verify
+        enclave.verifier.verify = { _, _, _ -> throw AttestationException("the nonce does not match") }
+
         assertFailsWith<AttestationException> { client.reverify() }
+        val fetched = enclave.fetches
+        enclave.verifier.verify = passes
+        client.execute(enclave.get()).close()
 
-        enclave.server.enqueue(ok("still served"))
-        assertEquals("still served", client.execute(enclave.get()).text())
-        assertSame(valid, client.current)
-        assertSame(valid, client.ensureVerified())
+        assertEquals(fetched + 1, enclave.fetches, "the request verified the enclave first")
+        assertNotSame(withdrawn, client.current)
+        assertEquals(listOf(0, 0), List(2) { enclave.server.takeRequest().sequenceNumber })
+        awaitUntil { results.size == 3 }
+        assertEquals(listOf(true, false, true), results.map { it.isSuccess })
+    }
 
-        enclave.clock.advance(1)
+    @Test
+    fun aRejectedVerificationAfterAKeyRotationStopsRequestsUntilTheEnclavePassesAgain() = test {
+        val client = enclave.client()
+        enclave.server.enqueue(ok())
+        client.execute(enclave.get()).close()
+        enclave.rotateKey()
+        val passes = enclave.verifier.verify
+        enclave.verifier.verify = { _, _, _ -> throw AttestationException("the document does not verify") }
+
+        assertFailsWith<AttestationException> { client.execute(enclave.get()) }
+        assertFailsWith<AttestationException> { client.execute(enclave.get()) }
+        assertEquals(0, enclave.server.requestCount, "nothing reached the rotated enclave")
+
+        enclave.verifier.verify = passes
+        enclave.server.enqueue(ok("recovered"))
+        assertEquals("recovered", client.execute(enclave.get()).text())
+        assertEquals(enclave.certificate.fingerprint, client.current?.tlsPublicKeyFingerprint)
+    }
+
+    @Test
+    fun aRejectedRefreshAtTheDeadlineStopsRequestsUntilTheEnclavePassesAgain() = test {
+        val client = enclave.client()
+        enclave.server.enqueue(ok())
+        client.execute(enclave.get()).close()
+        enclave.clock.advance(enclave.lifetimeSeconds)
+        val passes = enclave.verifier.verify
+        enclave.verifier.verify = { _, _, _ -> throw AttestationException("the document does not verify") }
+
         assertFailsWith<AttestationException> { client.execute(enclave.get()) }
         assertEquals(1, enclave.server.requestCount, "nothing is sent once the deadline is reached")
 
-        client.close()
-        assertFailsWith<ConfigurationException> { client.execute(enclave.get()) }
+        enclave.verifier.verify = passes
+        enclave.server.enqueue(ok("recovered"))
+        assertEquals("recovered", client.execute(enclave.get()).text())
+        assertEquals(0, enclave.server.takeRequest().sequenceNumber)
+        assertEquals(0, enclave.server.takeRequest().sequenceNumber, "the expired verification's connection was closed")
     }
 
     @Test

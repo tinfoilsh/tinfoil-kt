@@ -55,7 +55,10 @@ import kotlin.time.TimeSource
  * transport that is bound to its keys, and sends each request over the
  * transport of a verification that is valid when the request starts. The two
  * are published together, so a request is never sent under keys other than
- * those of the verification that it checked.
+ * those of the verification that it checked. A verification stops being
+ * valid at its freshness deadline, when the enclave refuses its keys, or when
+ * a verification that was to replace it fails with an
+ * [AttestationException].
  *
  * Creating one performs no I/O.
  */
@@ -113,8 +116,12 @@ internal class EnclaveConnection(
 
     /** A verification and the transport that was made for its keys. */
     private class State(val verification: Verification, val transport: BoundTransport) {
-        /** Set once the enclave has refused these keys. Guarded by the connection's lock. */
-        var rejected = false
+        /**
+         * Set once the enclave has refused these keys, or once a
+         * verification that was to replace this one has been rejected.
+         * Guarded by the connection's lock.
+         */
+        var withdrawn = false
     }
 
     /** A verification in progress, shared by every caller that needs one while it runs. */
@@ -169,7 +176,7 @@ internal class EnclaveConnection(
         } catch (e: IOException) {
             val reason = state.transport.keyRejection(e)
                 ?: throw NetworkException("connecting to $enclave: ${e.message ?: e.javaClass.simpleName}", cause = e)
-            synchronized(lock) { state.rejected = true }
+            synchronized(lock) { state.withdrawn = true }
             throw AttestationException(reason, cause = e)
         }
     }
@@ -210,7 +217,7 @@ internal class EnclaveConnection(
                 val reason = state.transport.keyRejection(e) ?: throw e
                 // The verification that the request was sent under is the
                 // one that failed, whichever is current by now.
-                synchronized(lock) { state.rejected = true }
+                synchronized(lock) { state.withdrawn = true }
                 if (rejection != null) {
                     throw AttestationException("$reason, after the enclave was verified again", cause = e)
                         .alsoSuppressing(rejection)
@@ -294,7 +301,7 @@ internal class EnclaveConnection(
         return !body.isOneShot() && !body.isDuplex()
     }
 
-    private fun State.isValid(): Boolean = !rejected && clock().isBefore(verification.freshnessExpiresAt)
+    private fun State.isValid(): Boolean = !withdrawn && clock().isBefore(verification.freshnessExpiresAt)
 
     /**
      * A state that is valid now. Callers that need a verification while one
@@ -357,8 +364,43 @@ internal class EnclaveConnection(
         // so it is not reported as one; neither is a candidate's.
         Outcome(failure, if (isClosed || once) null else Result.failure(failure))
 
-    /** Verifies the enclave and publishes the result. */
+    /**
+     * Verifies the enclave and publishes the result. A verification that
+     * fails with an [AttestationException] withdraws the one that it was to
+     * replace, even one that is still before its deadline: the enclave no
+     * longer passes, so nothing more is sent under keys that it once proved.
+     * Any other failure, such as a [NetworkException], leaves that one in use
+     * until its deadline.
+     */
     private suspend fun runRefresh(once: Boolean): Outcome {
+        // Refreshes run one at a time, so this is the state that the
+        // refresh would replace.
+        val replacing = synchronized(lock) { state }
+        val outcome = attestAndPublish(once)
+        if (outcome.failure is AttestationException && replacing != null) {
+            withdraw(replacing)
+        }
+        return outcome
+    }
+
+    /**
+     * Stops [replacing] from carrying requests, unless a newer verification
+     * has been published in its place, which is kept. Requests in flight
+     * under it may complete; its idle connections, which are tied to its
+     * keys, are closed, and so is each of its connections when its request
+     * ends.
+     */
+    private fun withdraw(replacing: State) {
+        synchronized(lock) {
+            if (state !== replacing) {
+                return
+            }
+            replacing.withdrawn = true
+        }
+        replacing.transport.retire()
+    }
+
+    private suspend fun attestAndPublish(once: Boolean): Outcome {
         val verification = try {
             if (once) attestor.attestOnce(enclave, pin) else attestor.attest(enclave, pin)
         } catch (e: CancellationException) {

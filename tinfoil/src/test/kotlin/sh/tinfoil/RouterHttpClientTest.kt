@@ -585,6 +585,29 @@ class RouterHttpClientTest {
     // After creation.
 
     @Test
+    fun aRejectedReverificationStopsRequestsToTheRouterUntilItPassesAgain() = test {
+        val router = Router()
+        serveList(router.host)
+        val client = client()
+        val request = Request.Builder().url(client.baseUrl).build()
+        client.execute(request).close()
+
+        val serving = router.attestation
+        router.unverifiable()
+        assertFailsWith<AttestationException> { client.reverify() }
+        assertFailsWith<AttestationException> { client.execute(request) }
+        assertEquals(1, router.requests.size, "nothing was sent after the rejection")
+
+        router.attestation = serving
+        val fetched = router.fetches.get()
+        client.execute(request).close()
+        assertEquals(fetched + 1, router.fetches.get(), "the request verified the router first")
+        assertEquals(2, router.requests.size)
+        assertEquals(router.host, client.enclave, "the client keeps its router")
+        assertEquals(1, listServer.requestCount, "the router is verified again without discovery")
+    }
+
+    @Test
     fun aClientKeepsItsRouterAndEachCreationChoosesAgain() = test {
         val first = Router()
         val second = Router()
