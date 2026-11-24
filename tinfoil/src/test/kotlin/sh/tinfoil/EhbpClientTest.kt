@@ -34,6 +34,7 @@ import sh.tinfoil.testing.SealingKey
 import sh.tinfoil.testing.TestEnclave
 import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.containsText
+import sh.tinfoil.testing.facts
 import sh.tinfoil.testing.fingerprint
 import java.io.IOException
 import java.io.InterruptedIOException
@@ -340,7 +341,7 @@ class EhbpClientTest {
         assertEquals(2, enclave.fetches)
         val received = atProxy.received.single()
         assertEquals("""{"q":"$MARKER"}""", received.text, "the body was sealed to the key of the new verification")
-        assertNotEquals(expired.publicKey, client.current?.hpkePublicKey)
+        assertNotEquals(expired.publicKey, client.lastVerification().facts?.hpkePublicKey)
     }
 
     // What is sealed.
@@ -376,7 +377,7 @@ class EhbpClientTest {
         enclave.endorsed = { other.fingerprint }
         val client = direct()
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
-        assertEquals(key.publicKey, client.current?.hpkePublicKey)
+        assertEquals(key.publicKey, client.lastVerification().facts?.hpkePublicKey)
 
         val response = client.execute(client.post("""{"question":"$MARKER"}"""))
 
@@ -1004,10 +1005,10 @@ class EhbpClientTest {
 
     @Test
     fun aKeyThatTheEnclaveNoLongerHoldsIsVerifiedAgainAndTheRequestReplayedOnce() = test {
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val results = CopyOnWriteArrayList<VerificationAttempt>()
         val client = enclave.client(
             transport = Transport.Ehbp(proxyUrl),
-            onVerificationResult = { results += it },
+            onVerification = { _, result -> results += result },
         )
         val attested = key
         key = SealingKey()
@@ -1034,8 +1035,8 @@ class EhbpClientTest {
             "each attempt is sealed anew",
         )
         assertEquals(2, enclave.fetches, "the enclave was verified again, once")
-        assertEquals(key.publicKey, client.current?.hpkePublicKey)
-        assertNotEquals(attested.publicKey, client.current?.hpkePublicKey)
+        assertEquals(key.publicKey, client.lastVerification().facts?.hpkePublicKey)
+        assertNotEquals(attested.publicKey, client.lastVerification().facts?.hpkePublicKey)
         assertNotNull(recoverable.recoveryToken, "the token is that of the request that was answered")
         awaitUntil { results.size == 2 }
 

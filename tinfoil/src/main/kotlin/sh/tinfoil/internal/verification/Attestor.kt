@@ -8,7 +8,8 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
-import sh.tinfoil.Verification
+import sh.tinfoil.VerificationReport
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.VerificationCheck
 import java.time.Instant
 import kotlin.coroutines.coroutineContext
@@ -39,17 +40,19 @@ internal class Attestor(
     }
 
     /**
-     * A verification of [host] against [pin], from a document that [fetch]
-     * obtains. The result is fresh, endorses a TLS key, and has passed
-     * the caller's check.
+     * The report of a verification of [host] against [pin], from a document
+     * that [fetch] obtains. Its verified facts are fresh, endorse a TLS key,
+     * and have passed the caller's check.
      *
      * A failed fetch or a rejected document is tried once more, against
      * fresh evidence, after a short wait. An invalid option is not, and
      * neither is a rejection by the caller's check, which is a decision
-     * about the evidence rather than a fault in getting it.
+     * about the evidence rather than a fault in getting it. [retried] is
+     * given the failure of an attempt that is tried again, before the wait;
+     * the outcome of the last attempt is this function's.
      */
     @Throws(TinfoilException::class)
-    suspend fun attest(host: String, pin: Pin): Verification {
+    suspend fun attest(host: String, pin: Pin, retried: (TinfoilException) -> Unit = {}): VerificationReport {
         val first = try {
             return attempt(host, pin)
         } catch (e: Final) {
@@ -61,6 +64,7 @@ internal class Attestor(
         } catch (e: AttestationException) {
             e
         }
+        retried(first)
         delay(retryDelay)
         try {
             return attempt(host, pin)
@@ -72,26 +76,28 @@ internal class Attestor(
     }
 
     /**
-     * A verification as [attest] returns it, from one attempt: a failure is
-     * not tried again. It is for a caller that has other hosts to try.
+     * A report as [attest] returns it, from one attempt: a failure is not
+     * tried again. It is for a caller that has other hosts to try.
      */
     @Throws(TinfoilException::class)
-    suspend fun attestOnce(host: String, pin: Pin): Verification =
+    suspend fun attestOnce(host: String, pin: Pin): VerificationReport =
         try {
             attempt(host, pin)
         } catch (e: Final) {
             throw e.error
         }
 
-    private suspend fun attempt(host: String, pin: Pin): Verification {
+    private suspend fun attempt(host: String, pin: Pin): VerificationReport {
         val nonce = verifier.newNonce()
         val document = fetch(host, nonce)
         coroutineContext.ensureActive()
-        val verification = verifier.verify(document, nonce, pin)
-        requireTransportKeys(verification)
-        requireFresh(verification, host)
+        val report = verifier.verify(document, nonce, pin)
+        val facts = report.verifiedFacts
+            ?: throw AttestationException("the verifier passed $host without verified facts")
+        requireTransportKeys(facts)
+        requireFresh(facts, host)
         try {
-            check?.check(verification)
+            check?.check(facts)
         } catch (e: Throwable) {
             // A cancelled verification is not the check's rejection.
             if (e is CancellationException) {
@@ -108,13 +114,13 @@ internal class Attestor(
         }
         // The check may have run past the deadline; a retry fetches fresh
         // evidence.
-        requireFresh(verification, host)
-        return verification
+        requireFresh(facts, host)
+        return report
     }
 
     /** A result is expired at the instant of its deadline, not only after it. */
-    private fun requireFresh(verification: Verification, host: String) {
-        if (!clock().isBefore(verification.freshnessExpiresAt)) {
+    private fun requireFresh(facts: VerifiedFacts, host: String) {
+        if (!clock().isBefore(facts.freshnessExpiresAt)) {
             throw AttestationException("the verification of $host is past its freshness deadline")
         }
     }
@@ -123,16 +129,16 @@ internal class Attestor(
      * Requires the keys that a transport binds traffic to, in the formats
      * that this SDK reads: a TLS key, and an HPKE key when one is endorsed.
      */
-    private fun requireTransportKeys(verification: Verification) {
-        requireFormat(verification, TLS_KEY_ID, TLS_KEY_FORMAT)
-        if (verification.tlsPublicKeyFingerprint == null) {
+    private fun requireTransportKeys(facts: VerifiedFacts) {
+        requireFormat(facts, TLS_KEY_ID, TLS_KEY_FORMAT)
+        if (facts.tlsPublicKeyFingerprint == null) {
             throw AttestationException("the attestation document endorses no \"$TLS_KEY_ID\" key")
         }
-        requireFormat(verification, HPKE_KEY_ID, HPKE_KEY_FORMAT)
+        requireFormat(facts, HPKE_KEY_ID, HPKE_KEY_FORMAT)
     }
 
-    private fun requireFormat(verification: Verification, id: String, format: String) {
-        val other = verification.cryptoMaterial.firstOrNull { it.id == id && it.format != format } ?: return
+    private fun requireFormat(facts: VerifiedFacts, id: String, format: String) {
+        val other = facts.cryptoMaterial.firstOrNull { it.id == id && it.format != format } ?: return
         throw AttestationException("the endorsed \"$id\" key has the format \"${other.format}\", not \"$format\"")
     }
 

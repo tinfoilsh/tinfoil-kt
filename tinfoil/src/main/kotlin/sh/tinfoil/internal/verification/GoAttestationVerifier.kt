@@ -4,7 +4,7 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
-import sh.tinfoil.Verification
+import sh.tinfoil.VerificationReport
 import sh.tinfoil.go.mobile.Mobile
 import sh.tinfoil.go.mobile.Verifier as GoVerifier
 
@@ -37,8 +37,8 @@ internal class GoAttestationVerifier private constructor(
         calling { verifier.checkPinVerifiability(pin.repo.orEmpty(), pin.project.orEmpty()) }
     }
 
-    override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification {
-        return verification { verifier.verify(document, nonce, pin.repo.orEmpty(), pin.project.orEmpty()) }
+    override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): VerificationReport {
+        return report { verifier.verify(document, nonce, pin.repo.orEmpty(), pin.project.orEmpty()) }
     }
 
     internal companion object {
@@ -76,13 +76,13 @@ internal class GoAttestationVerifier private constructor(
         }
 
         /**
-         * The verification that the library reports from [verify], a call
-         * into it that returns a verification payload: its error classified,
-         * or its payload decoded.
+         * The report that the library returns from [verify], a call into it
+         * that returns a result payload: an error that it throws classified,
+         * or its payload decoded, which throws for a rejected document.
          */
         @JvmSynthetic
         @Throws(TinfoilException::class)
-        fun verification(verify: () -> String?): Verification {
+        fun report(verify: () -> String?): VerificationReport {
             val payload = calling(verify)
             if (payload.isNullOrEmpty()) {
                 throw AttestationException("the verifier returned no result")

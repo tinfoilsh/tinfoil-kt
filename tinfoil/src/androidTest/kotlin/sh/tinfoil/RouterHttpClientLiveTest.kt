@@ -44,14 +44,14 @@ class RouterHttpClientLiveTest {
 
     @Test
     fun aRouterIsDiscoveredVerifiedAndAnswersOverPinnedConnections() = live {
-        val seen = CopyOnWriteArrayList<Verification>()
+        val seen = CopyOnWriteArrayList<VerifiedFacts>()
         val started = System.nanoTime()
 
         RouterHttpClient.create { verificationCheck = VerificationCheck { seen += it } }.use { client ->
-            val verified = assertNotNull(client.current, "a client is verified when it is returned")
+            val verified = assertNotNull(client.lastVerification()?.report?.verifiedFacts, "a client is verified when it is returned")
             Log.i(TAG, "discovered ${client.enclave} in ${(System.nanoTime() - started) / 1_000_000} ms, after ${seen.size} verification(s)")
             assertSame(verified, seen.last())
-            assertSame(verified, client.ensureVerified(), "a valid verification is reused")
+            assertSame(verified, client.ensureVerified().verifiedFacts, "a valid verification is reused")
 
             assertTrue(client.enclave.endsWith(".tinfoil.sh"), client.enclave)
             assertEquals("https://${client.enclave}/", client.baseUrl.toString())
@@ -84,7 +84,7 @@ class RouterHttpClientLiveTest {
             val enclave = client.enclave
             val again = client.reverify()
             assertEquals(enclave, client.enclave, "the same router is verified again")
-            assertTrue(!again.metadata.verifiedAt.isBefore(verified.metadata.verifiedAt))
+            assertTrue(!again.metadata.verifiedAt.isBefore(client.lastVerification()!!.report!!.metadata.verifiedAt))
             client.execute(models).use { assertEquals(200, it.code) }
 
             assertFailsWith<ConfigurationException> {

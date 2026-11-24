@@ -72,7 +72,7 @@ class DocumentationExamplesTest {
         val client = Client.create(enclave, apiKey) {
             apiPath = "/v1/"
         }
-        println(enclave.current?.codeDigest)
+        println(enclave.lastVerification()?.report?.verifiedFacts?.codeDigest)
     }
 
     @OptIn(ExperimentalTinfoilApi::class)

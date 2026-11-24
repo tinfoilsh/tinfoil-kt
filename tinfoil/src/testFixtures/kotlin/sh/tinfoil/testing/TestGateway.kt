@@ -6,14 +6,14 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
-import sh.tinfoil.AttestationException
 import sh.tinfoil.Catalog
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.ModelPin
 import sh.tinfoil.Pin
 import sh.tinfoil.Policy
-import sh.tinfoil.Verification
+import sh.tinfoil.VerificationAttempt
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.internal.GatewaySettings
 import sh.tinfoil.internal.Internals
@@ -78,7 +78,7 @@ public class TestGateway : AutoCloseable {
 
     /** What a replica's verification says; throw to fail it. */
     @Volatile
-    internal var endorse: (replica: String, pin: Pin) -> Verification = { replica, _ -> endorsement(replica) }
+    internal var endorse: (replica: String, pin: Pin) -> VerifiedFacts = { replica, _ -> endorsement(replica) }
 
     internal val verifier = FakeVerifier { document, _, pin ->
         val replica = document.toString(Charsets.UTF_8)
@@ -122,8 +122,8 @@ public class TestGateway : AutoCloseable {
         keys[replica] = SealingKey()
     }
 
-    /** A verification that endorses [replica]'s key for an hour. */
-    public fun endorsement(replica: String): Verification =
+    /** Verified facts that endorse [replica]'s key for an hour. */
+    public fun endorsement(replica: String): VerifiedFacts =
         verification("ab".repeat(32), clock().plusSeconds(3600), hpkePublicKey = key(replica).publicKey)
 
     /** Serves [models] as the catalog: each model's repository and replicas. */
@@ -184,7 +184,7 @@ public class TestGateway : AutoCloseable {
         policy: Policy = Policy(),
         userCacheSecret: String? = "test-secret",
         verificationCheck: VerificationCheck? = null,
-        onVerificationResult: ((Result<Verification>) -> Unit)? = null,
+        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         catalog: (() -> Catalog)? = null,
         note: ((String) -> Unit)? = null,
     ): GatewayHttpClient = GatewayHttpClient.create(internals(note)) {
@@ -194,7 +194,7 @@ public class TestGateway : AutoCloseable {
         this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
-        this.onVerificationResult = onVerificationResult
+        this.onVerification = onVerification
         this.catalog = catalog
     }.also { clients += it }
 
@@ -220,7 +220,7 @@ public class TestGateway : AutoCloseable {
     }
 
     /** A document that does not verify. */
-    public fun refuse(): Nothing = throw AttestationException("the document does not verify")
+    public fun refuse(): Nothing = throw rejection(detail = "the document does not verify")
 
     override fun close() {
         clients.forEach { it.close() }
