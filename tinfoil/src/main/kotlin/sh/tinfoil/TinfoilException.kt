@@ -68,11 +68,13 @@ public class NetworkException internal constructor(
  * The enclave's evidence, the trust policy or the channel binding was
  * rejected. The enclave must not be used.
  *
- * When the verifier rejected the attestation document, the [cause] is a
- * [VerificationException], which names the layer that rejected it and
- * carries the verification's report. Any other attestation failure, such as
- * expired verified facts, a rejection by the verification check or a key
- * that the enclave does not hold, says what failed in its [detail] alone.
+ * When the verifier rejected the attestation document with a report, the
+ * [cause] is a [VerificationException], which names the layer that rejected
+ * it and carries the report. Any other attestation failure says what failed
+ * in its [detail] alone: expired verified facts, a rejection by the
+ * verification check, a key that the enclave does not hold, or a rejection
+ * that the verifier reported without a report, whose detail leads with the
+ * layer, as in `quote: <detail>`.
  */
 public class AttestationException internal constructor(
     detail: String,
