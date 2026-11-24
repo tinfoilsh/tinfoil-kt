@@ -289,14 +289,65 @@ internal class GatewayRouter private constructor(
     }
 
     /**
-     * The last attempt to verify each replica that is kept, failed ones
-     * included, unchecked.
+     * Verifies again the replica that [ensureVerified] would return for
+     * [model], and returns its new report. Replicas are tried in
+     * [ensureVerified]'s order, each verified again even if its
+     * verification is still valid, and the first that passes ends the
+     * search. So does one that fails but keeps a verification that is
+     * valid, which requests for the model are still sent under: its failure
+     * is thrown. One whose verification the failure withdrew, or that had
+     * none, is passed over, as [ensureVerified] passes it over. If no
+     * replica passes or keeps a valid verification, the last failure is
+     * thrown.
      */
-    val lastVerification: List<ReplicaVerification>
+    @Throws(TinfoilException::class, CancellationException::class)
+    suspend fun reverify(model: String): VerificationReport {
+        checkOpen()
+        policy.requireServed(model)
+        val route = policy.resolve(model, catalogNow())
+        var failure: TinfoilException? = null
+        for (host in rank(route.hosts, model, first = null).take(MAX_REPLICAS_TRIED)) {
+            coroutineContext.ensureActive()
+            val key = route.on(host)
+            val replica = try {
+                Background.making(::release) { replica(key) }
+            } catch (e: TinfoilException) {
+                // A closed client is not a replica's failure.
+                checkOpen()
+                failure = e
+                continue
+            }
+            try {
+                val report = replica.connection.reverify()
+                checkOpen()
+                return report
+            } catch (e: TinfoilException) {
+                checkOpen()
+                // Requests for the model still go to a replica whose
+                // verification the failure left valid.
+                if (replica.connection.currentVerification != null) {
+                    throw e
+                }
+                failure = e
+            } finally {
+                release(replica)
+            }
+        }
+        throw failure ?: ConfigurationException("model ${quote(model)} has no replicas")
+    }
+
+    /**
+     * Each replica that is kept and has had an attempt to verify it, failed
+     * ones included: its current verification and its last attempt.
+     */
+    val replicaVerifications: List<ReplicaVerification>
         get() = synchronized(lock) { replicas.entries.map { it.key to it.value } }
             .mapNotNull { (key, replica) ->
-                replica.connection.lastVerification?.let {
-                    ReplicaVerification(key.host, replica.models.sorted(), key.reference, key.pinnedModel, it)
+                // Current first: an attempt that completes in between then
+                // shows as the last attempt, which can only be newer.
+                val current = replica.connection.currentVerification
+                replica.connection.lastVerificationAttempt?.let {
+                    ReplicaVerification(key.host, replica.models.sorted(), key.reference, key.pinnedModel, current, it)
                 }
             }
             .sortedWith(compareBy({ it.host }, { it.reference }, { it.pinnedModel }))
@@ -637,7 +688,7 @@ internal class GatewayRouter private constructor(
             policy: Policy,
             userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
-            onVerification: VerificationObserver?,
+            onVerificationAttempt: VerificationObserver?,
             catalog: (() -> Catalog)?,
             internals: Internals,
         ): GatewayRouter {
@@ -664,7 +715,7 @@ internal class GatewayRouter private constructor(
                     // The router scopes the cache itself.
                     cacheSecret = null,
                     verificationCheck = verificationCheck,
-                    onVerification = onVerification,
+                    onVerificationAttempt = onVerificationAttempt,
                     internals = internals,
                 )
             }

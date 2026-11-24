@@ -286,9 +286,9 @@ public class CpuEvidence internal constructor(
 /**
  * The outcome of one attempt to verify an enclave: [Passed], with the
  * attempt's report, or [Failed], with the exception that the client reported
- * for it. A client hands these to its `onVerification` option and returns
- * the last from `lastVerification()`. More may not be added: an attempt
- * passes or fails.
+ * for it. A client hands these to its `onVerificationAttempt` option and
+ * returns the last from `lastVerificationAttempt()`. More may not be added:
+ * an attempt passes or fails.
  */
 public sealed class VerificationAttempt {
     /** The report of an attempt that passed, whose verified facts are set; null for one that failed. */

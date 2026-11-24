@@ -183,7 +183,7 @@ public class TestGateway : AutoCloseable {
         policy: Policy = Policy(),
         userCacheSecret: String? = "test-secret",
         verificationCheck: VerificationCheck? = null,
-        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
+        onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         catalog: (() -> Catalog)? = null,
         note: ((String) -> Unit)? = null,
     ): GatewayHttpClient = GatewayHttpClient.create(internals(note)) {
@@ -192,7 +192,7 @@ public class TestGateway : AutoCloseable {
         this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
-        this.onVerification = onVerification
+        this.onVerificationAttempt = onVerificationAttempt
         this.catalog = catalog
     }.also { clients += it }
 

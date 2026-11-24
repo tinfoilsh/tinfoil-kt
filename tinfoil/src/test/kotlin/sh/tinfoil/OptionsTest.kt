@@ -161,7 +161,7 @@ class OptionsTest {
             assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)
-            assertNull(settings.onVerification)
+            assertNull(settings.onVerificationAttempt)
         }
         for (settings in listOf(gatewaySettings { })) {
             assertEquals(emptyMap(), settings.modelPins)
@@ -169,7 +169,7 @@ class OptionsTest {
             assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)
             assertNull(settings.verificationCheck)
-            assertNull(settings.onVerification)
+            assertNull(settings.onVerificationAttempt)
             assertNull(settings.catalog)
         }
     }

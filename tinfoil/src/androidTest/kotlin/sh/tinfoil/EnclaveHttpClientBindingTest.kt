@@ -26,7 +26,7 @@ class EnclaveHttpClientBindingTest {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
         val refused: List<Pair<String, suspend () -> Unit>> = listOf(
             "a malformed repository" to {
-                EnclaveHttpClient.create(nowhere, Trust.RepoPin("not a repository")) { onVerification = { _, attempt -> results += attempt } }
+                EnclaveHttpClient.create(nowhere, Trust.RepoPin("not a repository")) { onVerificationAttempt = { _, attempt -> results += attempt } }
             },
             "a malformed project" to { EnclaveHttpClient.create(nowhere, Trust.ProjectPin("not a project")) },
             "keys that are not keys" to { EnclaveHttpClient.create(nowhere, Trust.SignedBy(listOf("not a key"))) },
@@ -60,7 +60,7 @@ class EnclaveHttpClientBindingTest {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
 
         val error = assertFailsWith<NetworkException> {
-            EnclaveHttpClient.create(nowhere, trust) { onVerification = { _, attempt -> results += attempt } }
+            EnclaveHttpClient.create(nowhere, trust) { onVerificationAttempt = { _, attempt -> results += attempt } }
         }
 
         assertTrue(error.cause != null, "the cause is kept")

@@ -430,13 +430,13 @@ public class TestEnclave(
     internal suspend fun router(
         transport: Transport = Transport.Tls,
         userCacheSecret: String? = null,
-        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
+        onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         internals: Internals = routerInternals(),
     ): RouterHttpClient = RouterHttpClient.create(internals) {
         this.transport = transport
         fetchAttestation = relayFetcher
         this.userCacheSecret = userCacheSecret
-        this.onVerification = onVerification
+        this.onVerificationAttempt = onVerificationAttempt
     }.also { clients += it }
 
     /**
@@ -456,14 +456,14 @@ public class TestEnclave(
         fetchAttestation: AttestationFetcher? = relayFetcher,
         policy: Policy = Policy(),
         verificationCheck: VerificationCheck? = null,
-        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
+        onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         internals: Internals = internals(),
     ): EnclaveHttpClient = EnclaveHttpClient.create(enclave, trust, internals) {
         this.policy = policy
         this.transport = transport
         this.fetchAttestation = fetchAttestation
         this.verificationCheck = verificationCheck
-        this.onVerification = onVerification
+        this.onVerificationAttempt = onVerificationAttempt
     }.also { clients += it }
 
     override fun close() {

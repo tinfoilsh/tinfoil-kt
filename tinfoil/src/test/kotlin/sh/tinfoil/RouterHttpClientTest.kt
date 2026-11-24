@@ -187,7 +187,7 @@ class RouterHttpClientTest {
         policy: Policy = Policy(),
         userCacheSecret: String? = null,
         verificationCheck: VerificationCheck? = null,
-        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
+        onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         internals: Internals = internals(),
     ): RouterHttpClient = RouterHttpClient.create(internals) {
         this.transport = transport
@@ -196,7 +196,7 @@ class RouterHttpClientTest {
         this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
-        this.onVerification = onVerification
+        this.onVerificationAttempt = onVerificationAttempt
     }.also { closeables += it }
 
     @AfterTest
@@ -217,20 +217,20 @@ class RouterHttpClientTest {
         serveList(first.host, second.host)
         val results = CopyOnWriteArrayList<Pair<String, VerificationAttempt>>()
 
-        val client = client(onVerification = { host, result -> results += host to result })
+        val client = client(onVerificationAttempt = { host, result -> results += host to result })
 
         assertEquals(first.host, client.enclave)
         assertEquals("https://${first.host}/", client.baseUrl.toString())
         assertEquals(Transport.Tls, client.transport)
-        assertEquals(first.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
-        assertSame(client.lastVerification()?.report, client.ensureVerified())
+        assertEquals(first.certificate.fingerprint, client.lastVerificationAttempt().facts?.tlsPublicKeyFingerprint)
+        assertSame(client.lastVerificationAttempt()?.report, client.ensureVerified())
         assertEquals(1, first.fetches.get(), "the chosen router is not verified a second time")
         assertEquals(0, second.fetches.get())
         assertEquals(0, fallback.fetches.get())
         assertEquals(listOf(routerPin), pins.distinct(), "every router is verified against the router's pin")
         awaitUntil { results.isNotEmpty() }
         assertEquals(first.host, results.single().first)
-        assertSame(client.lastVerification()?.report, results.single().second.report)
+        assertSame(client.lastVerificationAttempt()?.report, results.single().second.report)
 
         val list = listServer.takeRequest()
         assertEquals("/routers", list.path)
@@ -266,7 +266,7 @@ class RouterHttpClientTest {
                     throw IllegalStateException("not this router")
                 }
             },
-            onVerification = { host, result -> results += host to result },
+            onVerificationAttempt = { host, result -> results += host to result },
         )
 
         assertEquals(good.host, client.enclave)
@@ -286,7 +286,8 @@ class RouterHttpClientTest {
         assertIs<NetworkException>(results[0].second.error)
         val rejection = assertIs<AttestationException>(results[1].second.error)
         assertIs<VerificationException>(rejection.cause)
-        assertSame(client.lastVerification()?.report, results.last().second.report)
+        assertSame(client.lastVerificationAttempt()?.report, results.last().second.report)
+        assertSame(client.lastVerificationAttempt()?.report, client.currentVerification(), "the chosen router's")
         assertEquals(0, listOf(unreachable, unverifiable, rejected, keyless, later).sumOf { it.requests.size })
     }
 
@@ -367,7 +368,7 @@ class RouterHttpClientTest {
         assertEquals(fallback.host, client.enclave)
         assertEquals(1, bad.fetches.get())
         assertEquals(2, fallback.fetches.get())
-        assertEquals(fallback.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
+        assertEquals(fallback.certificate.fingerprint, client.lastVerificationAttempt().facts?.tlsPublicKeyFingerprint)
         assertEquals(listOf(routerPin), pins.distinct())
     }
 
@@ -414,7 +415,7 @@ class RouterHttpClientTest {
         val results = CopyOnWriteArrayList<Pair<String, VerificationAttempt>>()
 
         fallback.unreachable()
-        val network = assertFailsWith<NetworkException> { client(onVerification = { host, result -> results += host to result }) }
+        val network = assertFailsWith<NetworkException> { client(onVerificationAttempt = { host, result -> results += host to result }) }
         assertEquals(503, network.status)
         assertEquals(2, fallback.fetches.get())
         // The router that was passed over, then each attempt at the fallback.
@@ -527,7 +528,7 @@ class RouterHttpClientTest {
         serveList(silent.host, never.host)
         val results = CopyOnWriteArrayList<VerificationAttempt>()
 
-        val creating = async(Dispatchers.Default) { client(onVerification = { _, result -> results += result }) }
+        val creating = async(Dispatchers.Default) { client(onVerificationAttempt = { _, result -> results += result }) }
         awaitUntil { silent.handshakes.get() == 1 }
         creating.cancelAndJoin()
 
@@ -583,7 +584,7 @@ class RouterHttpClientTest {
         assertEquals(listOf(bad.host, unreachable.host, good.host), opened.map { it.enclave })
         assertSame(opened[2], chosen)
         assertEquals(listOf(true, true, false), opened.map { it.isClosed })
-        assertNotNull(chosen!!.lastVerification?.report)
+        assertNotNull(chosen!!.lastVerificationAttempt?.report)
 
         // With no router that verifies, there is nothing to return.
         opened.clear()
@@ -681,7 +682,7 @@ class RouterHttpClientTest {
         assertEquals(second.host, client.enclave)
         assertEquals(Transport.Ehbp(), client.transport)
         assertEquals("https://${second.host}/", client.baseUrl.toString())
-        assertEquals(second.key.publicKey, client.lastVerification().facts?.hpkePublicKey)
+        assertEquals(second.key.publicKey, client.lastVerificationAttempt().facts?.hpkePublicKey)
         val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
             .post("""{"prompt":"plaintext-marker-0c77d1"}""".toRequestBody()).build()
         val recoverable = client.executeRecoverable(request)

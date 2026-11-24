@@ -79,12 +79,12 @@ class EnclaveHttpClientTest {
         val client = enclave.client()
 
         assertEquals(1, enclave.fetches)
-        assertEquals(enclave.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
+        assertEquals(enclave.certificate.fingerprint, client.lastVerificationAttempt().facts?.tlsPublicKeyFingerprint)
         assertEquals(enclave.host, client.enclave)
         assertEquals(Trust.RepoPin("tinfoilsh/example"), client.trust)
         assertEquals(Transport.Tls, client.transport)
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
-        assertSame(client.lastVerification()?.report, client.ensureVerified(), "a valid verification is reused")
+        assertSame(client.lastVerificationAttempt()?.report, client.ensureVerified(), "a valid verification is reused")
         assertEquals(1, enclave.fetches)
         assertEquals(0, enclave.server.requestCount, "verifying sends the enclave no request")
     }
@@ -224,7 +224,7 @@ class EnclaveHttpClientTest {
         enclave.verifier.verify = { _, _, _ -> throw AttestationException("policy: not this one") }
         val results = CopyOnWriteArrayList<VerificationAttempt>()
 
-        val error = assertFailsWith<AttestationException> { enclave.client(onVerification = { _, result -> results += result }) }
+        val error = assertFailsWith<AttestationException> { enclave.client(onVerificationAttempt = { _, result -> results += result }) }
 
         assertEquals("policy: not this one", error.detail)
         awaitUntil { results.size >= 2 }
@@ -412,7 +412,7 @@ class EnclaveHttpClientTest {
             server.enqueue(ok("renewed"))
 
             assertEquals("renewed", client.execute(enclave.get()).text())
-            assertEquals(attested, client.lastVerification().facts?.tlsPublicKeyFingerprint)
+            assertEquals(attested, client.lastVerificationAttempt().facts?.tlsPublicKeyFingerprint)
             assertEquals(1, enclave.fetches, "the key is what is attested, so nothing was verified again")
         }
     }
@@ -438,13 +438,13 @@ class EnclaveHttpClientTest {
         client.execute(enclave.get()).text()
         client.execute(enclave.get()).text()
 
-        val before = client.lastVerification()?.report
+        val before = client.lastVerificationAttempt()?.report
         enclave.clock.advance(1)
         val after = client.reverify()
         client.execute(enclave.get()).text()
 
         assertNotEquals(before, after)
-        assertSame(after, client.lastVerification()?.report)
+        assertSame(after, client.lastVerificationAttempt()?.report)
         assertEquals(2, enclave.fetches)
         assertEquals(listOf(0, 1, 0), List(3) { enclave.server.takeRequest().sequenceNumber })
     }
@@ -457,7 +457,7 @@ class EnclaveHttpClientTest {
         val endorsements = ArrayDeque(listOf(stale, enclave.certificate.fingerprint))
         enclave.endorsed = { endorsements.removeFirst() }
         val results = CopyOnWriteArrayList<VerificationAttempt>()
-        val client = enclave.client(onVerification = { _, result -> results += result })
+        val client = enclave.client(onVerificationAttempt = { _, result -> results += result })
         enclave.server.enqueue(ok("after rotation"))
 
         val body = "payload".toRequestBody()
@@ -469,7 +469,7 @@ class EnclaveHttpClientTest {
         assertEquals(2, enclave.fetches)
         awaitUntil { results.size == 2 }
         assertEquals(listOf(stale, enclave.certificate.fingerprint), results.map { it.facts?.tlsPublicKeyFingerprint })
-        assertEquals(enclave.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
+        assertEquals(enclave.certificate.fingerprint, client.lastVerificationAttempt().facts?.tlsPublicKeyFingerprint)
     }
 
     @Test
@@ -485,7 +485,7 @@ class EnclaveHttpClientTest {
 
         assertEquals("after", response.text())
         assertNotEquals(first, enclave.certificate.fingerprint)
-        assertEquals(enclave.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
+        assertEquals(enclave.certificate.fingerprint, client.lastVerificationAttempt().facts?.tlsPublicKeyFingerprint)
         assertEquals(2, enclave.fetches)
         assertEquals(1, enclave.server.requestCount)
         assertEquals(0, enclave.server.takeRequest().sequenceNumber)
@@ -559,7 +559,7 @@ class EnclaveHttpClientTest {
     @Test
     fun anExpiredVerificationIsNeverUsedWhenVerifyingAgainFails() = test {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
-        val client = enclave.client(onVerification = { _, result -> results += result })
+        val client = enclave.client(onVerificationAttempt = { _, result -> results += result })
         enclave.server.enqueue(ok())
         client.execute(enclave.get()).close()
 
@@ -571,7 +571,7 @@ class EnclaveHttpClientTest {
         assertFailsWith<NetworkException> { client.newCall(enclave.get()).execute() }
         assertFailsWith<NetworkException> { client.ensureVerified() }
         assertEquals(1, enclave.server.requestCount, "nothing was sent under the expired verification")
-        assertIs<NetworkException>(client.lastVerification()?.error, "the last attempt failed")
+        assertIs<NetworkException>(client.lastVerificationAttempt()?.error, "the last attempt failed")
         // Each failed verification was tried once more.
         awaitUntil { results.size == 7 }
         assertEquals(listOf(true) + List(6) { false }, results.map { it.report != null })
@@ -590,7 +590,7 @@ class EnclaveHttpClientTest {
     @Test
     fun aReverificationThatFailsForAnotherReasonThanAttestationKeepsAVerificationThatIsStillValid() = test {
         val client = enclave.client()
-        val valid = client.lastVerification()?.report
+        val valid = client.lastVerificationAttempt()?.report
         val serving = enclave.relay.dispatcher
         enclave.relay.dispatcher = status(502)
         assertFailsWith<NetworkException> { client.reverify() }
@@ -603,7 +603,7 @@ class EnclaveHttpClientTest {
         enclave.server.enqueue(ok())
         client.execute(enclave.get()).close()
         assertEquals(fetched, enclave.fetches, "the request needed no new verification")
-        assertIs<ConfigurationException>(client.lastVerification()?.error, "the last attempt failed")
+        assertIs<ConfigurationException>(client.lastVerificationAttempt()?.error, "the last attempt failed")
         assertSame(valid, client.ensureVerified())
         assertEquals(1, enclave.server.requestCount)
     }
@@ -637,7 +637,7 @@ class EnclaveHttpClientTest {
         release.countDown()
 
         assertEquals(List(12) { "ok" }, requests.awaitAll())
-        assertSame(client.lastVerification()?.report, explicit.await())
+        assertSame(client.lastVerificationAttempt()?.report, explicit.await())
         assertEquals(2, enclave.fetches, "one at creation and one for everyone who waited")
         assertEquals(2, enclave.verifier.verifications.get())
         assertEquals(12, enclave.server.requestCount)
@@ -667,7 +667,7 @@ class EnclaveHttpClientTest {
         release.countDown()
 
         val verified = patient.await()
-        assertSame(client.lastVerification()?.report, verified)
+        assertSame(client.lastVerificationAttempt()?.report, verified)
         assertEquals(2, enclave.verifier.verifications.get(), "the shared verification ran once, to its end")
         assertEquals(0, enclave.server.requestCount, "the cancelled request was never sent")
     }
@@ -724,7 +724,7 @@ class EnclaveHttpClientTest {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
 
         val error = assertFailsWith<AttestationException> {
-            enclave.client(verificationCheck = { throw reason }, onVerification = { _, result -> results += result })
+            enclave.client(verificationCheck = { throw reason }, onVerificationAttempt = { _, result -> results += result })
         }
 
         assertSame(reason, error.cause)
@@ -767,14 +767,14 @@ class EnclaveHttpClientTest {
 
         assertEquals(fetched + 3, enclave.fetches, "each call verified the enclave again")
         assertEquals(1, enclave.server.requestCount, "nothing was sent after the rejection")
-        assertIs<AttestationException>(client.lastVerification()?.error, "the last attempt failed")
+        assertIs<AttestationException>(client.lastVerificationAttempt()?.error, "the last attempt failed")
     }
 
     @Test
     fun aRequestAfterARejectedReverificationVerifiesAgainAndUsesNewConnections() = test {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
-        val client = enclave.client(onVerification = { _, result -> results += result })
-        val withdrawn = client.lastVerification()?.report
+        val client = enclave.client(onVerificationAttempt = { _, result -> results += result })
+        val withdrawn = client.lastVerificationAttempt()?.report
         repeat(2) { enclave.server.enqueue(ok()) }
         client.execute(enclave.get()).close()
         val passes = enclave.verifier.verify
@@ -786,7 +786,7 @@ class EnclaveHttpClientTest {
         client.execute(enclave.get()).close()
 
         assertEquals(fetched + 1, enclave.fetches, "the request verified the enclave first")
-        assertNotSame(withdrawn, client.lastVerification()?.report)
+        assertNotSame(withdrawn, client.lastVerificationAttempt()?.report)
         assertEquals(listOf(0, 0), List(2) { enclave.server.takeRequest().sequenceNumber })
         // The rejected reverification was tried once more.
         awaitUntil { results.size == 4 }
@@ -809,7 +809,7 @@ class EnclaveHttpClientTest {
         enclave.verifier.verify = passes
         enclave.server.enqueue(ok("recovered"))
         assertEquals("recovered", client.execute(enclave.get()).text())
-        assertEquals(enclave.certificate.fingerprint, client.lastVerification().facts?.tlsPublicKeyFingerprint)
+        assertEquals(enclave.certificate.fingerprint, client.lastVerificationAttempt().facts?.tlsPublicKeyFingerprint)
     }
 
     @Test
@@ -836,7 +836,7 @@ class EnclaveHttpClientTest {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
 
         val error = assertFailsWith<AttestationException> {
-            enclave.client(verificationCheck = { throw AssertionError("not what I expect") }, onVerification = { _, result -> results += result })
+            enclave.client(verificationCheck = { throw AssertionError("not what I expect") }, onVerificationAttempt = { _, result -> results += result })
         }
 
         assertIs<AssertionError>(error.cause)
@@ -849,7 +849,7 @@ class EnclaveHttpClientTest {
     fun anObserverThatThrowsAnErrorChangesNothing() = test {
         val calls = AtomicInteger()
         val client = enclave.client(
-            onVerification = { _, _ ->
+            onVerificationAttempt = { _, _ ->
                 calls.incrementAndGet()
                 throw NotImplementedError("observer failure")
             },
@@ -868,7 +868,7 @@ class EnclaveHttpClientTest {
         val holder = java.util.concurrent.atomic.AtomicReference<EnclaveHttpClient>()
         val reentered = CopyOnWriteArrayList<VerificationReport>()
         val client = enclave.client(
-            onVerification = { _, result ->
+            onVerificationAttempt = { _, result ->
                 val client = holder.get()
                 if (client != null && result.report != null) {
                     reentered += runBlocking { client.ensureVerified() }
@@ -894,7 +894,7 @@ class EnclaveHttpClientTest {
         val retried = CopyOnWriteArrayList<Result<VerificationReport>>()
         val serving = enclave.relay.dispatcher
         val client = enclave.client(
-            onVerification = { _, result ->
+            onVerificationAttempt = { _, result ->
                 val client = holder.get()
                 if (client != null && result.error != null) {
                     enclave.relay.dispatcher = serving
@@ -917,7 +917,7 @@ class EnclaveHttpClientTest {
         assertTrue(retried.all { it.isSuccess }, "$retried")
         enclave.server.enqueue(ok())
         client.execute(enclave.get()).close()
-        assertSame(retried.last().getOrThrow(), client.lastVerification()?.report)
+        assertSame(retried.last().getOrThrow(), client.lastVerificationAttempt()?.report)
     }
 
     @Test
@@ -946,7 +946,7 @@ class EnclaveHttpClientTest {
     fun anObserverThatThrowsChangesNothing() = test {
         val calls = AtomicInteger()
         val client = enclave.client(
-            onVerification = { _, _ ->
+            onVerificationAttempt = { _, _ ->
                 calls.incrementAndGet()
                 throw IllegalStateException("observer failure")
             },
@@ -980,14 +980,14 @@ class EnclaveHttpClientTest {
         }
         assertEquals(0, enclave.server.requestCount)
         assertEquals(1, enclave.fetches)
-        assertNotNull(client.lastVerification()?.report)
+        assertNotNull(client.lastVerificationAttempt()?.report)
     }
 
     @Test
     fun closingCancelsAVerificationInProgress() = test {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
-        val client = enclave.client(onVerification = { _, result -> results += result })
-        val first = client.lastVerification()
+        val client = enclave.client(onVerificationAttempt = { _, result -> results += result })
+        val first = client.lastVerificationAttempt()
         val verifying = CountDownLatch(1)
         val release = CountDownLatch(1)
         val inner = enclave.verifier.verify
@@ -1010,7 +1010,7 @@ class EnclaveHttpClientTest {
         assertEquals(0, enclave.server.requestCount)
         awaitUntil { results.size >= 1 }
         assertEquals(1, results.size, "a verification that the close ended is not reported")
-        assertSame(first, client.lastVerification(), "a verification that finishes after the close is not kept")
+        assertSame(first, client.lastVerificationAttempt(), "a verification that finishes after the close is not kept")
     }
 
     @Test

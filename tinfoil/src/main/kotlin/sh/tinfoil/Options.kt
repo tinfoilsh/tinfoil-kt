@@ -75,10 +75,13 @@ public class EnclaveOptions internal constructor() {
 
     /**
      * Called once for every attempt to verify the enclave, in `create` and
-     * later, whether it passes or fails: with the enclave's host, and the
-     * attempt's outcome, as [EnclaveHttpClient.lastVerification] returns
-     * it: its [VerificationReport], or the [TinfoilException] that it
-     * failed with. An attempt that is tried again is reported too, and so
+     * later, whether it passes or fails: with the enclave's host, and that
+     * attempt's own outcome, its [VerificationReport] or the
+     * [TinfoilException] that it failed with, in the form that
+     * [EnclaveHttpClient.lastVerificationAttempt] returns it, though by the
+     * time that an attempt that was tried again is reported,
+     * [EnclaveHttpClient.lastVerificationAttempt] may describe a later
+     * one. An attempt that is tried again is reported too, and so
      * is each verification that a refused key, a freshness deadline or
      * [EnclaveHttpClient.reverify] starts; a verification that concurrent
      * callers share is one attempt. An attempt that
@@ -92,12 +95,12 @@ public class EnclaveOptions internal constructor() {
      * from several threads. Keep it fast: it holds a thread of the client's
      * verifications while it runs.
      */
-    public var onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
+    public var onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
 
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transport, fetchAttestation, null, policy, null, verificationCheck, onVerification,
+        transport, fetchAttestation, null, policy, null, verificationCheck, onVerificationAttempt,
     )
 }
 
@@ -201,8 +204,8 @@ public class RouterOptions internal constructor() {
      * In `create` it is called for each router that is tried, the ones
      * that are passed over and the fallback included, each with its own
      * host; afterwards, for each attempt to verify the router that the
-     * client chose, as [EnclaveOptions.onVerification] describes.
-     * [RouterHttpClient.lastVerification] describes the chosen router.
+     * client chose, as [EnclaveOptions.onVerificationAttempt] describes.
+     * [RouterHttpClient.lastVerificationAttempt] describes the chosen router.
      *
      * It only observes: it cannot change the outcome, and anything that it
      * throws is ignored. It is called once the verification is over, on a
@@ -210,12 +213,12 @@ public class RouterOptions internal constructor() {
      * back into the client. It may be called from several threads. Keep it
      * fast: it holds a thread of the client's verifications while it runs.
      */
-    public var onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
+    public var onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
 
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transport, fetchAttestation, fetchRouterList, policy, userCacheSecret, verificationCheck, onVerification,
+        transport, fetchAttestation, fetchRouterList, policy, userCacheSecret, verificationCheck, onVerificationAttempt,
     )
 }
 
@@ -305,7 +308,8 @@ public class GatewayOptions internal constructor() {
      * Called once for every attempt to verify a replica, whether it passes
      * or fails: with the replica's host, and the attempt's outcome: its
      * [VerificationReport], or the [TinfoilException] that it failed with,
-     * as [EnclaveOptions.onVerification] describes for one enclave.
+     * as [EnclaveOptions.onVerificationAttempt] describes for one
+     * enclave.
      *
      * It only observes: it cannot change the outcome, and anything that it
      * throws is ignored. It is called once the verification is over, on a
@@ -313,7 +317,7 @@ public class GatewayOptions internal constructor() {
      * back into the client. It may be called from several threads. Keep it
      * fast: it holds a thread of the client's verifications while it runs.
      */
-    public var onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
+    public var onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
 
     /**
      * Called for every request, and by [GatewayHttpClient.models] and
@@ -333,7 +337,7 @@ public class GatewayOptions internal constructor() {
     @JvmSynthetic
     internal fun snapshot(): GatewaySettings = GatewaySettings(
         LinkedHashMap(modelPins), url, policy, userCacheSecret, verificationCheck,
-        onVerification, catalog,
+        onVerificationAttempt, catalog,
     )
 }
 

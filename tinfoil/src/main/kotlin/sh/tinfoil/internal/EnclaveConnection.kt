@@ -73,7 +73,7 @@ internal class EnclaveConnection(
     private val attestor: Attestor,
     private val protocol: TransportProtocol,
     /** Told of every attempt to verify the enclave; see [observe]. */
-    private val onVerification: VerificationObserver?,
+    private val onVerificationAttempt: VerificationObserver?,
     /** The prompt-cache secret that requests are given, if any. */
     private val cacheSecret: UserCacheSecret? = null,
     private val clock: () -> Instant = Instant::now,
@@ -145,8 +145,19 @@ internal class EnclaveConnection(
      * exception of one that failed. An attempt that the client's close
      * ended has no outcome, and leaves this as it was.
      */
-    val lastVerification: VerificationAttempt?
+    val lastVerificationAttempt: VerificationAttempt?
         get() = synchronized(lock) { last }
+
+    /**
+     * The report of the verification that requests are sent under now, or
+     * null if there is none: none has passed yet, the last one has reached
+     * its freshness deadline, the enclave has refused its keys, or a
+     * verification that was to replace it has failed with an
+     * [AttestationException]. It performs no I/O and starts no
+     * verification.
+     */
+    val currentVerification: VerificationReport?
+        get() = synchronized(lock) { state?.takeIf { it.isValid() }?.report }
 
     val isClosed: Boolean
         get() = synchronized(lock) { closed }
@@ -491,7 +502,7 @@ internal class EnclaveConnection(
      */
     private fun observe(attempt: VerificationAttempt) {
         try {
-            onVerification?.invoke(enclave, attempt)
+            onVerificationAttempt?.invoke(enclave, attempt)
         } catch (_: Throwable) {
             // Deliberately ignored, an Error included: the verification is
             // over, and its observer's failure is not the client's.
@@ -517,7 +528,7 @@ internal class EnclaveConnection(
             verifier: AttestationVerifier,
             cacheSecret: UserCacheSecret?,
             verificationCheck: VerificationCheck?,
-            onVerification: VerificationObserver?,
+            onVerificationAttempt: VerificationObserver?,
             internals: Internals,
             /**
              * Whether [enclave] was proposed by something that is not
@@ -575,7 +586,7 @@ internal class EnclaveConnection(
                         settings = internals.http,
                     )
                 },
-                onVerification = onVerification,
+                onVerificationAttempt = onVerificationAttempt,
                 cacheSecret = cacheSecret,
                 clock = internals.clock,
                 onClose = {
