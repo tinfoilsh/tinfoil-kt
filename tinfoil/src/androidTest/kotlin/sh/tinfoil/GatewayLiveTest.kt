@@ -17,7 +17,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -71,14 +70,17 @@ class GatewayLiveTest {
     @Test
     fun aReplicaIsVerifiedThroughTheGatewayAndAnswersASealedRequest() = live {
         val results = java.util.concurrent.CopyOnWriteArrayList<VerificationAttempt>()
-        GatewayHttpClient.create { onVerification = { _, attempt -> results += attempt } }.use { client ->
+        val catalog = GatewayHttpClient.fetchCatalog(gateway)
+        val model = catalog.entries.keys.first()
+        GatewayHttpClient.create {
+            modelPins = mapOf(model to ModelPin(catalog[model]!!.repo))
+            onVerification = { _, attempt -> results += attempt }
+        }.use { client ->
             assertEquals(GatewayHttpClient.DEFAULT_URL, client.baseUrl.toString())
             val models = client.models()
             Log.i(TAG, "models: $models")
-            assertTrue(models.isNotEmpty())
+            assertEquals(listOf(model), models)
             assertEquals(emptyList(), client.lastVerification(), "creating a client verifies nothing")
-            val model = models.first()
-            val catalog = GatewayHttpClient.fetchCatalog(gateway)
 
             val report = client.ensureVerified(model)
             val verification = assertNotNull(report.verifiedFacts)
@@ -93,7 +95,7 @@ class GatewayLiveTest {
             assertEquals(report, replica.attempt.report)
             assertEquals(catalog[model]?.repo, replica.reference)
             assertTrue(replica.host in catalog[model]!!.hosts, replica.host)
-            assertNull(replica.pinnedModel)
+            assertEquals(model, replica.pinnedModel)
             assertEquals(report, client.ensureVerified(model), "a valid verification is reused")
 
             // A sealed chat request without an API key.
@@ -130,7 +132,6 @@ class GatewayLiveTest {
         val other = catalog.entries.keys.firstOrNull { it != model }
         GatewayHttpClient.create {
             modelPins = mapOf(model to ModelPin(entry.repo))
-            pinnedModelsOnly = true
         }.use { client ->
             assertEquals(listOf(model), client.models())
             val verification = client.ensureVerified(model).verifiedFacts

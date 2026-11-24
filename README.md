@@ -266,7 +266,6 @@ import sh.tinfoil.openai.Client
 suspend fun gateway(apiKey: String): Client {
     val gateway = GatewayHttpClient.create {
         modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
-        pinnedModelsOnly = true
     }
     val client = Client.create(gateway, apiKey)
     println(gateway.models())
@@ -274,13 +273,13 @@ suspend fun gateway(apiKey: String): Client {
 }
 ```
 
-A model with a pin is verified against the pin's repository, and against one
-release of it if the pin has a tag or a digest. A model without a pin is
-verified against the repository that the gateway's catalog names for it,
-which must be one of Tinfoil's, `tinfoilsh/<name>`: the client is then
-assured that the request goes to an enclave that runs a release of one of
-Tinfoil's repositories, and trusts Tinfoil for which of them serves the
-model. `pinnedModelsOnly` serves no model without a pin.
+A gateway client serves only the models that its `modelPins` name, so it
+requires at least one pin, and a request for any other model fails with a
+`ConfigurationException` before any replica is contacted. A model's replicas
+are verified against its pin's repository, and against one release of it if
+the pin has a tag or a digest; the gateway's catalog must name that
+repository for the model. A pin without a policy of its own takes the
+client's `policy`.
 
 A request has to name its model, so the calls of the OpenAI SDK that name
 none, such as listing models, are refused; `GatewayHttpClient.models()` lists what
@@ -541,6 +540,9 @@ SDKs. The changes are breaking:
 | `EmbeddedReferences(runtime = ..., platform = ...)` | `Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime, platform))` |
 | `ModelPin(repo, verifier)` | `ModelPin(repo, policy)` |
 | `GatewayOptions.baseUrl`, `GatewayHttpClient.DEFAULT_BASE_URL` | `GatewayOptions.url`, `GatewayHttpClient.DEFAULT_URL` |
+| `GatewayOptions.pinnedModelsOnly = true` | none: a gateway client serves only the models in `modelPins` |
+| a gateway client without `modelPins`, or a request for a model without a pin, which was verified against the catalog's repository | refused with a `ConfigurationException`: pin every model that the client is to serve |
+| `ReplicaVerification.pinnedModel: String?` | `ReplicaVerification.pinnedModel: String` |
 | `Verifier.PUBLIC_REGISTRY_ID` | `Trust.PUBLIC_REGISTRY_ID` |
 | `client.pin` | `client.trust` on the enclave client; none on the router client |
 | `transportMode = TransportMode.EHBP` | `transport = Transport.Ehbp()` |

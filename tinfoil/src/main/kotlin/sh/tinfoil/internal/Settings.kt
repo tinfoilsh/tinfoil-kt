@@ -31,7 +31,6 @@ internal class RouteSettings(
 /** The options of a client for the gateway. */
 internal class GatewaySettings(
     val modelPins: Map<String, ModelPin> = emptyMap(),
-    val pinnedModelsOnly: Boolean = false,
     val url: String? = null,
     val policy: Policy = Policy(),
     val userCacheSecret: String? = null,

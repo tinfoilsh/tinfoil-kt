@@ -84,7 +84,10 @@ class GatewayHttpClientTest {
     fun everyOptionIsCheckedBeforeAnyIo() = test {
         val pin = mapOf("m" to ModelPin("tinfoilsh/m"))
         val refused: List<Pair<String, suspend () -> Unit>> = listOf(
-            "pinned-only mode requires at least one model pin" to { gateway.client(pinnedModelsOnly = true) },
+            "requires at least one model pin" to {
+                gateway.track(GatewayHttpClient.create(gateway.internals()) { url = gateway.baseUrl })
+            },
+            "requires at least one model pin" to { gateway.client(modelPins = emptyMap()) },
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf("m" to ModelPin("acme/m"))) },
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf("m" to ModelPin(""))) },
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf("m" to ModelPin("Tinfoilsh/m"))) },
@@ -92,6 +95,13 @@ class GatewayHttpClientTest {
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf("" to ModelPin("tinfoilsh/m"))) },
             "must belong to tinfoilsh/" to { gateway.client(modelPins = mapOf(" \t" to ModelPin("tinfoilsh/m"))) },
             "freshness maximum age" to { gateway.client(policy = Policy(freshnessMaxAge = (-1).seconds)) },
+            // The client's policy is checked even if every pin has its own.
+            "freshness maximum age" to {
+                gateway.client(
+                    modelPins = mapOf("m" to ModelPin("tinfoilsh/m", Policy())),
+                    policy = Policy(freshnessMaxAge = (-1).seconds),
+                )
+            },
             "model \"m\": freshness maximum age" to {
                 gateway.client(modelPins = mapOf("m" to ModelPin("tinfoilsh/m", Policy(freshnessMaxAge = (-1).seconds))))
             },
@@ -143,7 +153,7 @@ class GatewayHttpClientTest {
     @Test
     fun thePinsAreCopiedWhenTheClientIsCreated() = test {
         val pins = mutableMapOf("m" to ModelPin("tinfoilsh/m"))
-        val client = gateway.client(modelPins = pins, pinnedModelsOnly = true, catalog = { entries("m" to ("tinfoilsh/m" to listOf("a.example")), "n" to ("tinfoilsh/n" to listOf("a.example"))) })
+        val client = gateway.client(modelPins = pins, catalog = { entries("m" to ("tinfoilsh/m" to listOf("a.example")), "n" to ("tinfoilsh/n" to listOf("a.example"))) })
         pins["n"] = ModelPin("tinfoilsh/n")
         pins.remove("m")
         assertEquals(listOf("m"), client.models())
@@ -219,15 +229,20 @@ class GatewayHttpClientTest {
             "tagged" to ("tinfoilsh/tagged@v1" to listOf("a.example")),
             "empty" to ("tinfoilsh/empty" to emptyList()),
         )
-        assertEquals(listOf("Beta", "alpha", "moved", "zeta"), gateway.client().models())
         val pins = mapOf(
             "alpha" to ModelPin("tinfoilsh/alpha@v1.2.3"),
+            "zeta" to ModelPin("tinfoilsh/zeta"),
             "moved" to ModelPin("tinfoilsh/moved"),
+            "foreign" to ModelPin("tinfoilsh/foreign"),
+            "tagged" to ModelPin("tinfoilsh/tagged"),
+            "empty" to ModelPin("tinfoilsh/empty"),
             "absent" to ModelPin("tinfoilsh/absent"),
         )
-        // A pin whose repository the catalog does not name is not served.
-        assertEquals(listOf("Beta", "alpha", "zeta"), gateway.client(modelPins = pins).models())
-        assertEquals(listOf("alpha"), gateway.client(modelPins = pins, pinnedModelsOnly = true).models())
+        // A model without a pin is not served, whatever the catalog says;
+        // nor is a pin whose repository the catalog does not name, or that
+        // the catalog has no usable entry for.
+        assertEquals(listOf("alpha", "zeta"), gateway.client(modelPins = pins).models())
+        assertEquals(emptyList(), gateway.client().models())
         assertEquals(0, gateway.verifier.verifications.get())
         assertEquals(emptyList(), gateway.attestationFetches)
     }
@@ -235,7 +250,7 @@ class GatewayHttpClientTest {
     @Test
     fun theCatalogIsFetchedAgainOnUseAfterTenSecondsAndAFailedFetchKeepsTheLast() = test {
         gateway.serve("old" to ("tinfoilsh/old" to listOf("a.example")))
-        val client = gateway.client()
+        val client = gateway.client(modelPins = mapOf("old" to ModelPin("tinfoilsh/old"), "new" to ModelPin("tinfoilsh/new")))
         assertEquals(listOf("old"), client.models())
         gateway.serve("new" to ("tinfoilsh/new" to listOf("b.example")))
 
@@ -266,6 +281,26 @@ class GatewayHttpClientTest {
     }
 
     @Test
+    fun aModelThatARefreshOfTheCatalogAddsIsNotServedWithoutAPin() = test {
+        gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
+        val client = gateway.client()
+        assertEquals(listOf("m"), client.models())
+        gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")), "added" to ("tinfoilsh/added" to listOf("b.example")))
+        gateway.timeSource += GatewayCatalog.REFRESH_INTERVAL
+        client.models()
+        awaitUntil { gateway.catalogFetches.get() == 2 }
+        assertEquals(listOf("m"), client.models())
+
+        val error = assertFailsWith<ConfigurationException> { client.ensureVerified("added") }
+        assertEquals("model \"added\" is not pinned", error.detail)
+        assertFailsWith<ConfigurationException> { client.execute(client.post(chat(model = "added"))) }
+        assertEquals(emptyList(), gateway.attestationFetches)
+        assertEquals(0, gateway.verifier.verifications.get())
+        assertEquals(0, gateway.received.size)
+        assertEquals(emptyList(), client.lastVerification())
+    }
+
+    @Test
     fun aRequestUsesTheCatalogAsItIsWhenItIsSent() = test {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
@@ -286,7 +321,7 @@ class GatewayHttpClientTest {
     fun aCatalogThatTheCallerSuppliesIsReadForEveryRequestAndNeverFetched() = test {
         val reads = AtomicInteger()
         var hosts = listOf("a.example")
-        val client = gateway.client(catalog = {
+        val client = gateway.client(modelPins = TestGateway.PINS + ("foreign" to ModelPin("tinfoilsh/x")), catalog = {
             reads.incrementAndGet()
             entries("m" to ("tinfoilsh/m" to hosts), "foreign" to ("acme/x" to hosts))
         })
@@ -551,10 +586,17 @@ class GatewayHttpClientTest {
     }
 
     @Test
-    fun aModelThatTheCatalogDoesNotListIsAConfigurationError() = test {
+    fun aPinnedModelThatTheCatalogDoesNotListIsAConfigurationError() = test {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")), "foreign" to ("acme/x" to listOf("a.example")))
-        val client = gateway.client(modelPins = mapOf("absent" to ModelPin("tinfoilsh/absent")))
-        for (model in listOf("unknown", "foreign", "M", "m.", "absent")) {
+        val pins = mapOf(
+            "unknown" to ModelPin("tinfoilsh/unknown"),
+            "foreign" to ModelPin("tinfoilsh/x"),
+            "M" to ModelPin("tinfoilsh/m"),
+            "m." to ModelPin("tinfoilsh/m"),
+            "absent" to ModelPin("tinfoilsh/absent"),
+        )
+        val client = gateway.client(modelPins = pins)
+        for (model in pins.keys) {
             val error = assertFailsWith<ConfigurationException>(model) { client.execute(client.post(chat(model = model))) }
             assertTrue(error.detail.contains("has no valid bare tinfoilsh/ repository with replicas"), error.detail)
             assertFailsWith<ConfigurationException>(model) { client.ensureVerified(model) }
@@ -609,7 +651,10 @@ class GatewayHttpClientTest {
         val own = FakeVerifier { document, _, _ -> gateway.endorsement(document.toString(Charsets.UTF_8)) }
         val ownPolicy = Policy(freshnessMaxAge = 1.hours)
         gateway.verifierFor = { policy -> own.takeIf { policy.freshnessMaxAgeNs == 3_600_000_000_000 } }
-        val pins = mapOf("pinned" to ModelPin("tinfoilsh/pinned@v1.2.3@sha256:${"cd".repeat(32)}", ownPolicy))
+        val pins = mapOf(
+            "pinned" to ModelPin("tinfoilsh/pinned@v1.2.3@sha256:${"cd".repeat(32)}", ownPolicy),
+            "plain" to ModelPin("tinfoilsh/plain"),
+        )
         val client = gateway.client(modelPins = pins)
 
         client.execute(client.post(chat(model = "pinned"))).close()
@@ -624,7 +669,7 @@ class GatewayHttpClientTest {
         assertEquals(
             listOf(
                 Triple("a.example", "tinfoilsh/pinned@v1.2.3@sha256:${"cd".repeat(32)}", "pinned"),
-                Triple("a.example", "tinfoilsh/plain", null),
+                Triple("a.example", "tinfoilsh/plain", "plain"),
             ),
             client.lastVerification().map { Triple(it.host, it.reference, it.pinnedModel) },
         )
@@ -656,11 +701,10 @@ class GatewayHttpClientTest {
     }
 
     @Test
-    fun withPinnedModelsOnlyAnyOtherModelIsRefusedBeforeAnyIo() = test {
+    fun aModelWithoutAPinIsRefusedBeforeAnyIo() = test {
         val reads = AtomicInteger()
         val client = gateway.unverified(
             modelPins = mapOf("pinned" to ModelPin("tinfoilsh/pinned")),
-            pinnedModelsOnly = true,
             catalog = {
                 reads.incrementAndGet()
                 entries("pinned" to ("tinfoilsh/pinned" to listOf("a.example")), "plain" to ("tinfoilsh/plain" to listOf("a.example")))
@@ -673,6 +717,7 @@ class GatewayHttpClientTest {
             client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "plain").build())
         }
         assertNoIo()
+        assertEquals(0, reads.get(), "the catalog is not read for a model without a pin")
         client.execute(client.post(chat(model = "pinned"))).close()
         assertEquals(1, gateway.received.size)
     }
@@ -680,7 +725,7 @@ class GatewayHttpClientTest {
     @Test
     fun theModelThatAHeaderNamesIsTheOneWhoseReplicaIsVerified() = test {
         gateway.serve("a" to ("tinfoilsh/a" to listOf("a.example")), "b" to ("tinfoilsh/b" to listOf("b.example")))
-        val client = gateway.client()
+        val client = gateway.client(modelPins = mapOf("a" to ModelPin("tinfoilsh/a"), "b" to ModelPin("tinfoilsh/b")))
         val request = client.post(chat(model = "b")).newBuilder().header("X-Tinfoil-Model", "a").build()
         client.execute(request).close()
         val received = gateway.received.single()
@@ -819,7 +864,7 @@ class GatewayHttpClientTest {
         assertEquals(order[1], current.host)
         assertEquals(emptyList(), current.models, "no request has named a model to it yet")
         assertEquals("tinfoilsh/m", current.reference)
-        assertNull(current.pinnedModel)
+        assertEquals("test-model", current.pinnedModel)
         assertEquals(verification, current.attempt.report)
     }
 
@@ -850,7 +895,7 @@ class GatewayHttpClientTest {
     @Test
     fun noMoreReplicasAreKeptThanTheLimitAndTheLeastRecentlyUsedGoesFirst() = test {
         val count = GatewayRouter.MAX_REPLICAS + 2
-        val client = gateway.client(catalog = {
+        val client = gateway.client(modelPins = (1..count).associate { "m$it" to ModelPin("tinfoilsh/m") }, catalog = {
             Catalog((1..count).associate { "m$it" to CatalogEntry("tinfoilsh/m", listOf("h$it.example")) })
         })
         client.ensureVerified("m1")
@@ -874,7 +919,7 @@ class GatewayHttpClientTest {
     @Test
     fun aReplicaWithARequestInFlightIsNotLetGo() = test {
         val count = GatewayRouter.MAX_REPLICAS + 3
-        val client = gateway.client(catalog = {
+        val client = gateway.client(modelPins = (1..count).associate { "m$it" to ModelPin("tinfoilsh/m") }, catalog = {
             Catalog((1..count).associate { "m$it" to CatalogEntry("tinfoilsh/m", listOf("h$it.example")) })
         })
         gateway.answer = { it.reply("a-long-answer-".repeat(64), pieces = 8) }
@@ -1008,7 +1053,7 @@ class GatewayHttpClientTest {
     fun aBodyThatCanBeWrittenOnlyOnceIsNotSentAgain() = test {
         gateway.serve("whisper" to ("tinfoilsh/whisper" to listOf("a.example")))
         gateway.intercept = { routedTo("b.example") }
-        val client = gateway.client()
+        val client = gateway.client(modelPins = mapOf("whisper" to ModelPin("tinfoilsh/whisper")))
         val upload = MultipartBody.Builder("the-boundary-0123456789").setType(MultipartBody.FORM)
             .addFormDataPart("model", "whisper").addFormDataPart("file", "a.wav", "audio".toRequestBody()).build()
         val once = object : RequestBody() {

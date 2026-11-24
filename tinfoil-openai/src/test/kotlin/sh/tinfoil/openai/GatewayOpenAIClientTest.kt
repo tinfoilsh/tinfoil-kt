@@ -44,8 +44,7 @@ class GatewayOpenAIClientTest {
     private fun test(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
     private suspend fun client(
-        modelPins: Map<String, ModelPin> = emptyMap(),
-        pinnedModelsOnly: Boolean = false,
+        modelPins: Map<String, ModelPin> = mapOf("a-model" to ModelPin("tinfoilsh/a-model")),
         baseUrl: String? = gateway.baseUrl,
         userCacheSecret: String? = "test-secret",
         apiKey: String = KEY,
@@ -54,7 +53,6 @@ class GatewayOpenAIClientTest {
     ): Client {
         val http = gateway.connections().gateway {
             this.modelPins = modelPins
-            this.pinnedModelsOnly = pinnedModelsOnly
             this.url = baseUrl
             this.userCacheSecret = userCacheSecret
         }.also(gateway::track)
@@ -126,7 +124,7 @@ class GatewayOpenAIClientTest {
     fun anUploadIsRoutedByItsModelFieldAndSealed() = test {
         gateway.serve("whisper" to ("tinfoilsh/whisper" to listOf("a.example")))
         gateway.answer = { it.reply("""{"text":"transcribed"}""") }
-        val client = client()
+        val client = client(modelPins = mapOf("whisper" to ModelPin("tinfoilsh/whisper")))
         val audio = "audio-bytes-that-must-not-be-seen-on-the-wire"
         val params = TranscriptionCreateParams.builder().model("whisper").file(audio.toByteArray()).build()
 
@@ -164,7 +162,9 @@ class GatewayOpenAIClientTest {
     @Test
     fun failuresOfTheGatewayClientReachTheCallerWithTheirCategoryAndAreNotSentAgain() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")), "pinned" to ("tinfoilsh/other" to listOf("a.example")))
-        val client = client(modelPins = mapOf("pinned" to ModelPin("tinfoilsh/pinned")))
+        val client = client(
+            modelPins = mapOf("a-model" to ModelPin("tinfoilsh/a-model"), "pinned" to ModelPin("tinfoilsh/pinned")),
+        )
 
         val unknown = assertFailsWith<OpenAIException> { client.openAI.chat().completions().create(params(model = "unknown")) }
         assertIs<ConfigurationException>(unknown.tinfoilException)
@@ -184,7 +184,7 @@ class GatewayOpenAIClientTest {
 
     @Test
     fun optionsAreCheckedBeforeAnyIoAndACatalogThatCannotBeFetchedFailsTheCreation() = test {
-        assertFailsWith<ConfigurationException> { client(pinnedModelsOnly = true) }
+        assertFailsWith<ConfigurationException> { client(modelPins = emptyMap()) }
         assertFailsWith<ConfigurationException> { client(baseUrl = "http://${gateway.host}/v1/") }
         assertFailsWith<ConfigurationException> { client(baseUrl = "") }
         assertEquals(0, gateway.server.requestCount)
@@ -195,7 +195,10 @@ class GatewayOpenAIClientTest {
     @Test
     fun anEmptyApiKeyIsRefusedWithoutAnyIo() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
-        val http = gateway.connections().gateway { url = gateway.baseUrl }.also(gateway::track)
+        val http = gateway.connections().gateway {
+            modelPins = mapOf("a-model" to ModelPin("tinfoilsh/a-model"))
+            url = gateway.baseUrl
+        }.also(gateway::track)
         val requests = gateway.server.requestCount
         assertFailsWith<ConfigurationException> { Client.create(http, "") }
         assertEquals(requests, gateway.server.requestCount)

@@ -100,8 +100,8 @@ public class ReplicaVerification internal constructor(
     models: List<String>,
     /** What the replica was verified against: a repository, with the tag or digest of a pin that has one. */
     public val reference: String,
-    /** The model whose [ModelPin] the replica was verified under, or null for a model that is not pinned. */
-    public val pinnedModel: String?,
+    /** The model whose [ModelPin] the replica was verified under. */
+    public val pinnedModel: String,
     /**
      * The outcome of the last attempt to verify the replica: its
      * [VerificationReport] if it passed, which may have reached its
