@@ -31,7 +31,8 @@ import sh.tinfoil.openai.internal.OpenAISettings
 public class OpenAIOptions internal constructor() {
     /**
      * The path of the API under the HTTP client's base URL: the proxy URL,
-     * the enclave's origin or the gateway's URL. Null selects `/v1/`. It
+     * the enclave's origin or the gateway's URL. Null selects `/v1/`; to
+     * keep the default, leave it null, since an empty string is refused. It
      * must be an absolute path, as RFC 3986 defines `path-absolute`: it
      * starts with `/` but not `//`, holds only path characters and escapes,
      * and has no query or fragment. It must not have a `.` or `..` segment,

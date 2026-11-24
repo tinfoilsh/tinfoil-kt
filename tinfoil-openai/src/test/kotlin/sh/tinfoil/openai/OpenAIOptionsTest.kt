@@ -242,6 +242,17 @@ class OpenAIOptionsTest {
     }
 
     @Test
+    fun anEmptyApiPathIsRefusedWithEveryClientAndSendsNothing() = test {
+        gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
+        for (http in listOf(enclaveHttp(), gateway.client())) {
+            val sent = enclave.server.requestCount + gateway.server.requestCount
+            val error = assertFailsWith<ConfigurationException>("$http") { Client.create(http, KEY) { apiPath = "" } }
+            assertTrue(error.detail.startsWith("invalid apiPath"), error.detail)
+            assertEquals(sent, enclave.server.requestCount + gateway.server.requestCount, "$http")
+        }
+    }
+
+    @Test
     fun aGatewayClientsApiPathJoinsUnderItsUrl() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
         val http = gateway.client()

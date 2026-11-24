@@ -164,7 +164,9 @@ go to `apiPath`, `/v1/` by default, under the HTTP client's `baseUrl`: the
 enclave's origin, `https://<enclave>/`, the proxy URL of `Transport.Ehbp`,
 whose path is where the proxy is mounted, or the gateway's URL, which is
 its origin, `https://inference-gateway.tinfoil.sh/` by default, or the URL
-that it is mounted under, never the API path. The OpenAI client does not own the HTTP client: close each, and one
+that it is mounted under, never the API path. An `apiPath` must be an
+absolute path, and an empty one is refused: leave it unset for `/v1/`. The
+OpenAI client does not own the HTTP client: close each, and one
 HTTP client can serve several OpenAI clients, each with its own API key.
 `Client.create(apiKey)` makes its own router client, and closes it with
 itself.
