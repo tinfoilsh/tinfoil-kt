@@ -589,6 +589,7 @@ public final class sh/tinfoil/VerificationReport {
 	public final fun getSteps ()Ljava/util/List;
 	public final fun getVerifiedFacts ()Lsh/tinfoil/VerifiedFacts;
 	public fun hashCode ()I
+	public final fun toJson ()Ljava/lang/String;
 	public fun toString ()Ljava/lang/String;
 }
 
