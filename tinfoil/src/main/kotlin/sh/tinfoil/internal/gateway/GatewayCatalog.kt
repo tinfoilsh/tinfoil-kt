@@ -53,7 +53,7 @@ internal object GatewayCatalog {
     /** How many replicas a catalog may list for one model. */
     const val MAX_HOSTS: Int = 1024
 
-    private const val PATH = "/catalog"
+    private const val PATH = "catalog"
     private const val OK = 200
 
     /**
@@ -74,7 +74,11 @@ internal object GatewayCatalog {
     private fun isNameCharacter(c: Char): Boolean =
         c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '_' || c == '.' || c == '-'
 
-    /** Where the catalog of the gateway at [host] is: [host] is a host with an optional port, not a URL. */
+    /**
+     * Where the catalog of the gateway at the root of [host] is:
+     * `https://<host>/catalog`. [host] is a host with an optional port, not
+     * a URL.
+     */
     @Throws(ConfigurationException::class)
     fun url(host: String): HttpUrl {
         val origin = try {
@@ -82,7 +86,17 @@ internal object GatewayCatalog {
         } catch (_: ConfigurationException) {
             throw ConfigurationException("invalid gateway host: want a host with an optional port, not a URL")
         }
-        return origin.newBuilder().encodedPath(PATH).build()
+        return under(origin)
+    }
+
+    /**
+     * Where the catalog of the gateway at [gateway] is: `catalog` joined
+     * under its path, which ends with `/`, as the gateway's origin or the
+     * URL that it is mounted under does.
+     */
+    fun under(gateway: HttpUrl): HttpUrl {
+        require(gateway.encodedPath.endsWith("/")) { "a gateway URL ends with /" }
+        return gateway.newBuilder().encodedPath(gateway.encodedPath + PATH).build()
     }
 
     /**
@@ -94,14 +108,13 @@ internal object GatewayCatalog {
         DocumentFetcher(settings, timeout = FETCH_TIMEOUT, maxBodyBytes = MAX_BYTES, accepted = OK..OK)
 
     /**
-     * The catalog of the gateway at [host], with only the entries that can
-     * be routed to.
+     * The catalog at [url], from [url] or [under], with only the entries
+     * that can be routed to.
      *
-     * @throws ConfigurationException if [host] is not a host.
      * @throws NetworkException if the catalog cannot be fetched or read.
      */
     @Throws(TinfoilException::class)
-    suspend fun fetch(host: String, fetcher: DocumentFetcher): Catalog = parse(fetcher.fetch(url(host)))
+    suspend fun fetch(url: HttpUrl, fetcher: DocumentFetcher): Catalog = parse(fetcher.fetch(url))
 
     /**
      * The catalog that [body] spells, with only the entries that can be

@@ -53,8 +53,13 @@ public class GatewayHttpClient private constructor(
     private val router: GatewayRouter,
 ) : AttestedHttpClient {
     /**
-     * The gateway's base URL, which requests are sent under. Resolve request
-     * paths against it, as in `baseUrl.resolve("chat/completions")`.
+     * The gateway's URL, which requests are sent under: [GatewayOptions.url]
+     * or Tinfoil's gateway, [DEFAULT_URL], ending with `/`. It is the
+     * gateway's origin or the URL that it is mounted under, never the API
+     * path, as the proxy URL of [Transport.Ehbp] is for an
+     * [EnclaveHttpClient]: an OpenAI client joins its API path under it.
+     * Resolve request paths against it, as in
+     * `baseUrl.resolve("v1/chat/completions")`.
      */
     override val baseUrl: HttpUrl get() = router.baseUrl
 
@@ -286,7 +291,7 @@ public class GatewayHttpClient private constructor(
     override fun toString(): String = "GatewayHttpClient(baseUrl=$baseUrl)"
 
     public companion object {
-        /** The base URL of Tinfoil's gateway, which a client uses unless it is given another. */
+        /** The URL of Tinfoil's gateway, its origin, which a client uses unless it is given another. */
         // Not a `const`: the compiler would copy a constant's value into
         // the code that reads it, which would then keep the URL that it was
         // compiled against.
@@ -367,8 +372,9 @@ public class GatewayHttpClient private constructor(
         )
 
         /**
-         * Fetches the catalog of the gateway at [host], a host with an
-         * optional port, and returns the models in it that a client can be
+         * Fetches the catalog of the gateway at the root of [host], a host
+         * with an optional port, from `https://<host>/catalog`, and
+         * returns the models in it that a client can be
          * routed to: those whose replicas run a repository of Tinfoil's,
          * `tinfoilsh/<name>`, named without a tag or a digest, and that
          * have at least one replica.
@@ -388,13 +394,13 @@ public class GatewayHttpClient private constructor(
         /** [fetchCatalog] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun fetchCatalog(host: String, internals: Internals): Catalog {
-            GatewayCatalog.url(host)
+            val url = GatewayCatalog.url(host)
             // The fetch, the reading of what it returns and the closing of
             // its connections run on a background thread.
             return withContext(Background.dispatcher) {
                 val fetcher = GatewayCatalog.fetcher(internals.http)
                 try {
-                    GatewayCatalog.fetch(host, fetcher)
+                    GatewayCatalog.fetch(url, fetcher)
                 } finally {
                     fetcher.close()
                 }

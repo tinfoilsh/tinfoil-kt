@@ -61,7 +61,7 @@ class GatewayHttpClientTest {
 
     private fun GatewayHttpClient.post(
         body: String,
-        path: String = "chat/completions",
+        path: String = "v1/chat/completions",
         authorization: String? = "Bearer $API_KEY",
     ): Request = Request.Builder().url(baseUrl.resolve(path)!!).post(body.toRequestBody(JSON)).apply {
         authorization?.let { header("Authorization", it) }
@@ -146,10 +146,33 @@ class GatewayHttpClientTest {
 
     @Test
     fun theDefaultBaseUrlIsTinfoilsGateway() {
-        assertEquals("https://inference-gateway.tinfoil.sh/v1/", GatewayHttpClient.DEFAULT_URL)
+        assertEquals("https://inference-gateway.tinfoil.sh/", GatewayHttpClient.DEFAULT_URL, "the gateway's origin")
         val client = gateway.unverified(baseUrl = null)
         assertEquals(GatewayHttpClient.DEFAULT_URL, client.baseUrl.toString())
-        assertEquals("GatewayHttpClient(baseUrl=https://inference-gateway.tinfoil.sh/v1/)", client.toString())
+        assertEquals("GatewayHttpClient(baseUrl=https://inference-gateway.tinfoil.sh/)", client.toString())
+    }
+
+    @Test
+    fun theCatalogTheRelayAndRequestsJoinUnderTheGatewaysUrl() = test {
+        // The gateway's origin, and a gateway mounted under a path, given
+        // with and without a trailing slash.
+        for ((mount, url) in listOf("/" to "", "/tinfoil/" to "tinfoil", "/tinfoil/" to "tinfoil/")) {
+            TestGateway(mount).use { at ->
+                at.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
+                val client = at.client(baseUrl = "https://${at.host}/$url")
+                val root = "https://${at.host}$mount"
+                assertEquals(root, client.baseUrl.toString())
+
+                client.execute(client.post(chat())).close()
+
+                assertEquals(
+                    listOf("${root}catalog", "${root}.well-known/tinfoil-attestation", "${root}v1/chat/completions"),
+                    at.requestUrls.map { it.substringBefore('?') },
+                    url,
+                )
+                assertTrue(at.received.single().sealed)
+            }
+        }
     }
 
     @Test
@@ -178,7 +201,7 @@ class GatewayHttpClientTest {
                     sink.writeUtf8(text)
                 }
             }
-            val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
+            val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
                 .header("X-Tinfoil-Model", "m").post(body).build()
             try {
                 client.execute(request).close()
@@ -447,7 +470,7 @@ class GatewayHttpClientTest {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
         val body = """{ "model" : "m", "input" : [ 12345678901234567890 ] }"""
-        client.execute(client.post(body, path = "embeddings")).close()
+        client.execute(client.post(body, path = "v1/embeddings")).close()
         val received = gateway.received.single()
         assertEquals(body, received.text)
         assertTrue(received.sealed)
@@ -463,7 +486,7 @@ class GatewayHttpClientTest {
             assertEquals("ok", recoverable.response.body!!.string())
             assertTrue(recoverable.toString().contains("redacted"))
         }
-        val unsealed = Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "m").build()
+        val unsealed = Request.Builder().url(client.baseUrl.resolve("v1/models")!!).header("X-Tinfoil-Model", "m").build()
         client.executeRecoverable(unsealed).use { assertNull(it.recoveryToken) }
     }
 
@@ -483,7 +506,7 @@ class GatewayHttpClientTest {
             """{"model":"m","cache_salt":"a","c\u0061che_salt":"b"}""" to "\"cache_salt\" member",
         )
         for ((body, message) in repeats) {
-            for (path in listOf("chat/completions", "embeddings")) {
+            for (path in listOf("v1/chat/completions", "v1/embeddings")) {
                 val error = assertFailsWith<ConfigurationException>(body) { client.execute(client.post(body, path)) }
                 assertTrue(error.detail.contains("request body repeats the $message"), error.detail)
                 val named = client.post(body, path).newBuilder().header("X-Tinfoil-Model", "m").build()
@@ -499,7 +522,7 @@ class GatewayHttpClientTest {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
         val body = """{"model":"m","n":{"model":"a","model":"b","cache_salt":1},"temperature":0,"temperature":1}"""
-        client.execute(client.post(body, path = "embeddings")).close()
+        client.execute(client.post(body, path = "v1/embeddings")).close()
         assertEquals(body, gateway.received.single().text)
     }
 
@@ -525,7 +548,7 @@ class GatewayHttpClientTest {
             assertEquals(listOf("m"), client.models())
             val before = reads.get()
             val unnamed = listOf(
-                Request.Builder().url(client.baseUrl.resolve("models")!!).build(),
+                Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build(),
                 client.post("{}"),
                 client.post("""{"model":""}"""),
                 client.post("""{"model":7}"""),
@@ -533,8 +556,8 @@ class GatewayHttpClientTest {
                 client.post("""[{"model":"m"}]"""),
                 client.post("\"m\""),
                 client.post(chat()).newBuilder().header("X-Tinfoil-Model", "").build().newBuilder().post("{}".toRequestBody(JSON)).build(),
-                Request.Builder().url(client.baseUrl.resolve("chat/completions")!!).post(chat().toRequestBody("text/plain".toMediaType())).build(),
-                Request.Builder().url(client.baseUrl.resolve("files/f1")!!).delete().build(),
+                Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!).post(chat().toRequestBody("text/plain".toMediaType())).build(),
+                Request.Builder().url(client.baseUrl.resolve("v1/files/f1")!!).delete().build(),
             )
             for (request in unnamed) {
                 val error = assertFailsWith<ConfigurationException>(request.toString()) { client.execute(request) }
@@ -565,7 +588,7 @@ class GatewayHttpClientTest {
             """{"model":"m","Model":"n"}""".toByteArray(),
         )
         for (body in bodies) {
-            val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
+            val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
                 .header("X-Tinfoil-Model", "m").post(body.toRequestBody(JSON)).build()
             assertFailsWith<ConfigurationException> { client.execute(request) }
         }
@@ -577,7 +600,7 @@ class GatewayHttpClientTest {
     fun aRequestWithoutABodyGoesOutUnderTheModelThatItsHeaderNames() = test {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
-        val request = Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "m").build()
+        val request = Request.Builder().url(client.baseUrl.resolve("v1/models")!!).header("X-Tinfoil-Model", "m").build()
         client.execute(request).close()
         val received = gateway.received.single()
         // Its replica is verified all the same, and named to the gateway.
@@ -614,7 +637,7 @@ class GatewayHttpClientTest {
             reads.incrementAndGet()
             entries("m" to ("tinfoilsh/m" to listOf("a.example")))
         })
-        val url = client.baseUrl.resolve("realtime?model=m")!!
+        val url = client.baseUrl.resolve("v1/realtime?model=m")!!
         fun named() = Request.Builder().header("X-Tinfoil-Model", "m")
         val refused = listOf(
             named().url(url).header("Connection", "Upgrade").header("Upgrade", "websocket").build(),
@@ -716,7 +739,7 @@ class GatewayHttpClientTest {
         assertEquals("model \"plain\" is not pinned", error.detail)
         assertFailsWith<ConfigurationException> { client.ensureVerified("plain") }
         assertFailsWith<ConfigurationException> {
-            client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "plain").build())
+            client.execute(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).header("X-Tinfoil-Model", "plain").build())
         }
         assertNoIo()
         assertEquals(0, reads.get(), "the catalog is not read for a model without a pin")
@@ -1174,7 +1197,7 @@ class GatewayHttpClientTest {
 
             override fun writeTo(sink: BufferedSink) = upload.writeTo(sink)
         }
-        val url = client.baseUrl.resolve("audio/transcriptions")!!
+        val url = client.baseUrl.resolve("v1/audio/transcriptions")!!
         // With the header, the upload is streamed, and the gateway's answer is the caller's.
         val streamed = Request.Builder().url(url).header("X-Tinfoil-Model", "whisper").post(once).build()
         client.execute(streamed).use { assertEquals(412, it.code) }

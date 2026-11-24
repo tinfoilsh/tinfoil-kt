@@ -242,15 +242,22 @@ class OpenAIOptionsTest {
     }
 
     @Test
-    fun aGatewayClientSendsUnderItsUrlAndTakesNoApiPath() = test {
+    fun aGatewayClientsApiPathJoinsUnderItsUrl() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
         val http = gateway.client()
         val client = Client.create(http, KEY)
         closeables += client
+        val other = Client.create(http, KEY) { apiPath = "/openai/v1" }
+        closeables += other
 
-        assertEquals(gateway.baseUrl, client.baseUrl.toString())
-        val error = assertFailsWith<ConfigurationException> { Client.create(http, KEY) { apiPath = "/v1/" } }
-        assertTrue(error.detail.contains("apiPath must not be set with a gateway client"), error.detail)
+        assertEquals("${gateway.baseUrl}v1/", client.baseUrl.toString())
+        assertEquals("${gateway.baseUrl}openai/v1/", other.baseUrl.toString())
+    }
+
+    @Test
+    fun tinfoilsGatewayKeepsItsApiUnderV1() {
+        val http = gateway.unverified(baseUrl = null)
+        assertEquals("https://inference-gateway.tinfoil.sh/v1/", ApiPath.baseUrl(http, null).toString())
     }
 
     @Test

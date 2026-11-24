@@ -2,20 +2,16 @@ package sh.tinfoil.openai.internal
 
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.AttestedHttpClient
 import sh.tinfoil.ConfigurationException
-import sh.tinfoil.EnclaveHttpClient
-import sh.tinfoil.GatewayHttpClient
 import sh.tinfoil.InternalTinfoilApi
-import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.internal.CrossArtifact
 
 /**
  * Where an OpenAI client sends its requests: the API path joined under an
  * attested client's base URL.
  */
-@OptIn(InternalTinfoilApi::class, ExperimentalTinfoilApi::class)
+@OptIn(InternalTinfoilApi::class)
 internal object ApiPath {
     /** The API path when none is set. */
     const val DEFAULT: String = "/v1/"
@@ -23,29 +19,18 @@ internal object ApiPath {
     /**
      * The OpenAI base URL for [httpClient] and [apiPath]: [apiPath], or
      * [DEFAULT] when it is null, joined under the client's base URL, the
-     * proxy URL or `https://<enclave>/`, whether or not that ends with `/`,
-     * and ending with `/`. For a gateway client it is the gateway's URL as
-     * it is given, ending with `/`, and an API path is refused, since the
-     * gateway's URL already carries its path.
+     * proxy URL, `https://<enclave>/` or the gateway's URL, whether or not
+     * that ends with `/`, and ending with `/`.
      *
      * @throws ConfigurationException for an [apiPath] that is not a valid
-     *   API path, and for any API path with a gateway client.
+     *   API path, the empty string included.
      */
     fun baseUrl(httpClient: AttestedHttpClient, apiPath: String?): HttpUrl {
-        val base = when (httpClient) {
-            is EnclaveHttpClient, is RouterHttpClient -> httpClient.baseUrl
-            is GatewayHttpClient -> {
-                if (apiPath != null) {
-                    throw CrossArtifact.configurationException(
-                        "apiPath must not be set with a gateway client: the gateway's URL already carries its path",
-                    )
-                }
-                return withSlash(httpClient.baseUrl)
-            }
-        }
+        val base = httpClient.baseUrl
         val path = check(apiPath ?: DEFAULT)
         // The base URL ends with exactly the one slash that the join adds;
-        // any slash before it belongs to the proxy's own path.
+        // any slash before it belongs to the path of the proxy or the
+        // gateway mount.
         val joined = base.toString().removeSuffix("/") + path + if (path.endsWith("/")) "" else "/"
         return joined.toHttpUrlOrNull()
             ?: throw CrossArtifact.configurationException("apiPath does not make a URL under ${base.scheme}://${base.host}")
@@ -93,9 +78,6 @@ internal object ApiPath {
         }
         return path
     }
-
-    private fun withSlash(url: HttpUrl): HttpUrl =
-        if (url.encodedPath.endsWith("/")) url else url.newBuilder().encodedPath(url.encodedPath + "/").build()
 
     private fun isHex(c: Char): Boolean = c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
 

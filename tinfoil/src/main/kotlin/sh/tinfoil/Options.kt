@@ -261,12 +261,19 @@ public class GatewayOptions internal constructor() {
     public var modelPins: Map<String, ModelPin> = emptyMap()
 
     /**
-     * The gateway's URL, which requests are sent to. Null selects Tinfoil's
-     * gateway, [GatewayHttpClient.DEFAULT_URL]. It must be an absolute
-     * `https` URL without user information, a query or a fragment. Its path
-     * is the API's: an OpenAI client over the gateway client sends to it as
-     * it is given. Attestation documents and the catalog are fetched from
-     * its origin, which relays them.
+     * The gateway's URL: its origin, or the URL that it is mounted under.
+     * Null selects Tinfoil's gateway, [GatewayHttpClient.DEFAULT_URL],
+     * `https://inference-gateway.tinfoil.sh/`. It must be an absolute
+     * `https` URL without user information, a query or a fragment. Its path,
+     * if any, is where the gateway is mounted, not the API path, as for the
+     * proxy URL of [Transport.Ehbp]: requests, the catalog, the attestation
+     * relay and an OpenAI client's API path, `/v1/` by default, all join
+     * under it, whether or not it ends with `/`. So with
+     * `https://gateway.example/tinfoil`, the catalog is read from
+     * `https://gateway.example/tinfoil/catalog`, attestation documents are
+     * fetched through `https://gateway.example/tinfoil/.well-known/tinfoil-attestation`,
+     * and chat completions go to
+     * `https://gateway.example/tinfoil/v1/chat/completions`.
      */
     public var url: String? = null
 

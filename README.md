@@ -161,10 +161,10 @@ println(enclave.currentVerification()?.verifiedFacts?.codeDigest)
 Creating the OpenAI client does no network I/O: the HTTP client verified
 its service when it was created, and verifies it again by itself. Requests
 go to `apiPath`, `/v1/` by default, under the HTTP client's `baseUrl`: the
-enclave's origin, `https://<enclave>/`, or the proxy URL of
-`Transport.Ehbp`, whose path is where the proxy is mounted. Over a gateway
-client they go to the gateway's URL as it is given, and `apiPath` is
-refused. The OpenAI client does not own the HTTP client: close each, and one
+enclave's origin, `https://<enclave>/`, the proxy URL of `Transport.Ehbp`,
+whose path is where the proxy is mounted, or the gateway's URL, which is
+its origin, `https://inference-gateway.tinfoil.sh/` by default, or the URL
+that it is mounted under, never the API path. The OpenAI client does not own the HTTP client: close each, and one
 HTTP client can serve several OpenAI clients, each with its own API key.
 `Client.create(apiKey)` makes its own router client, and closes it with
 itself.
@@ -616,6 +616,7 @@ SDKs. The changes are breaking:
 | `EmbeddedReferences(runtime = ..., platform = ...)` | `Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime, platform))` |
 | `ModelPin(repo, verifier)` | `ModelPin(repo, policy)` |
 | `GatewayOptions.baseUrl`, `GatewayHttpClient.DEFAULT_BASE_URL` | `GatewayOptions.url`, `GatewayHttpClient.DEFAULT_URL` |
+| a gateway URL that carries the API path, as `https://inference-gateway.tinfoil.sh/v1/`, with the catalog and the attestation relay at its origin | the gateway's origin, `https://inference-gateway.tinfoil.sh/`, or the URL that it is mounted under, with the catalog and the relay joined under it; the OpenAI client adds `apiPath`, `/v1/` by default, which it now takes with a gateway client too |
 | `GatewayOptions.pinnedModelsOnly = true` | none: a gateway client serves only the models in `modelPins` |
 | a gateway client without `modelPins`, or a request for a model without a pin, which was verified against the catalog's repository | refused with a `ConfigurationException`: pin every model that the client is to serve |
 | `ReplicaVerification.pinnedModel: String?` | `ReplicaVerification.pinnedModel: String` |

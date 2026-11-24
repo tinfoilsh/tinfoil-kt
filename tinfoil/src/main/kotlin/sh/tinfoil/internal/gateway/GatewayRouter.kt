@@ -211,7 +211,8 @@ internal class GatewayRouter private constructor(
     private val policy: GatewayPolicy,
     private val secret: UserCacheSecret,
     private val suppliedCatalog: (() -> Catalog)?,
-    private val relay: String,
+    /** Where the gateway's catalog is: under [baseUrl]. */
+    private val catalogUrl: HttpUrl,
     private val internals: Internals,
     private val open: (ReplicaKey) -> EnclaveConnection,
 ) : AttestedSender {
@@ -228,7 +229,7 @@ internal class GatewayRouter private constructor(
     private val catalogFetcher: DocumentFetcher? =
         if (suppliedCatalog == null) GatewayCatalog.fetcher(internals.http) else null
     private val fetchedCatalog: CatalogCache? = catalogFetcher?.let { fetcher ->
-        CatalogCache({ GatewayCatalog.fetch(relay, fetcher) }, catalogScope, internals.timeSource)
+        CatalogCache({ GatewayCatalog.fetch(catalogUrl, fetcher) }, catalogScope, internals.timeSource)
     }
 
     private val origin = Origin.of(baseUrl)
@@ -641,8 +642,8 @@ internal class GatewayRouter private constructor(
     private fun closedError() = ConfigurationException("the client is closed")
 
     internal companion object {
-        /** Tinfoil's gateway. */
-        const val DEFAULT_URL: String = "https://inference-gateway.tinfoil.sh/v1/"
+        /** Tinfoil's gateway: its origin. */
+        const val DEFAULT_URL: String = "https://inference-gateway.tinfoil.sh/"
 
         /** How often one request follows the gateway to another replica. */
         const val MAX_REROUTES: Int = 3
@@ -692,15 +693,20 @@ internal class GatewayRouter private constructor(
             catalog: (() -> Catalog)?,
             internals: Internals,
         ): GatewayRouter {
-            val base = Urls.baseUrl(requireNotEmpty(url, "url") ?: DEFAULT_URL)
-            if (!base.isHttps) {
+            val given = Urls.baseUrl(requireNotEmpty(url, "url") ?: DEFAULT_URL)
+            if (!given.isHttps) {
                 throw ConfigurationException("invalid base URL: the gateway base URL must use HTTPS")
             }
-            // Attestation documents and the catalog come through the gateway.
-            val authority = if (base.host.contains(':')) "[${base.host}]" else base.host
-            val relay = if (base.port == HttpUrl.defaultPort(base.scheme)) authority else "$authority:${base.port}"
-            Urls.requireRelay(relay)
-            val relayAtOrigin = AttestationRelay("https://$relay")
+            // The URL is the gateway's origin or the URL that it is mounted
+            // under, and its path is the mount's, not the API path:
+            // requests, the catalog and the attestation relay all join
+            // under it, whether or not it ends with a slash.
+            val base = if (given.encodedPath.endsWith("/")) {
+                given
+            } else {
+                given.newBuilder().encodedPath(given.encodedPath + "/").build()
+            }
+            val relay = AttestationRelay(base.toString())
             // The caller's map is read once, here.
             val gatewayPolicy = GatewayPolicy(HashMap(modelPins), policy, internals.newVerifier)
             val secret = UserCacheSecret.resolve(userCacheSecret, internals.processSecret)
@@ -709,8 +715,8 @@ internal class GatewayRouter private constructor(
                     enclave = replica.host,
                     pin = GatewayPolicy.pinOf(replica.reference),
                     transport = Transport.Ehbp(proxyUrl = base.toString()),
-                    // The gateway relays attestation documents at its origin.
-                    fetchAttestation = relayAtOrigin,
+                    // The gateway relays attestation documents under its URL.
+                    fetchAttestation = relay,
                     verifier = gatewayPolicy.verifierFor(replica),
                     // The router scopes the cache itself.
                     cacheSecret = null,
@@ -719,7 +725,7 @@ internal class GatewayRouter private constructor(
                     internals = internals,
                 )
             }
-            return GatewayRouter(base, gatewayPolicy, secret, catalog, relay, internals, open)
+            return GatewayRouter(base, gatewayPolicy, secret, catalog, GatewayCatalog.under(base), internals, open)
         }
 
         /**

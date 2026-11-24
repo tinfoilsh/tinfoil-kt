@@ -51,7 +51,7 @@ class GatewayLiveTest {
     private fun live(block: suspend () -> Unit) = runBlocking { withTimeout(240.seconds) { block() } }
 
     private fun chat(client: GatewayHttpClient, model: String): Request = Request.Builder()
-        .url(client.baseUrl.resolve("chat/completions")!!)
+        .url(client.baseUrl.resolve("v1/chat/completions")!!)
         .post("""{"model":"$model","messages":[{"role":"user","content":"hello"}],"max_tokens":8}""".toRequestBody("application/json".toMediaType()))
         .build()
 
@@ -118,7 +118,7 @@ class GatewayLiveTest {
 
             // A request that names no model, and a model that is not served.
             assertFailsWith<ConfigurationException> {
-                client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).build())
+                client.execute(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build())
             }
             assertFailsWith<ConfigurationException> { client.ensureVerified("no-such-model") }
         }
