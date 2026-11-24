@@ -425,7 +425,7 @@ class RouterHttpClientTest {
 
         fallback.unverifiable()
         val attestation = assertFailsWith<AttestationException> { client() }
-        assertEquals(VerificationLayer.QUOTE, attestation.layer)
+        assertEquals(VerificationLayer.QUOTE, assertIs<VerificationException>(attestation.cause).layer)
 
         fallback.attestation = { MockResponse().setBody(fallback.certificate.fingerprint) }
         val rejection = assertFailsWith<AttestationException> { client(verificationCheck = { error("no router at all") }) }
@@ -980,7 +980,7 @@ class RouterHttpClientTest {
         val refused = assertFailsWith<AttestationException> {
             client(fetchAttestation = { _, _ -> "a document that does not verify".toByteArray() })
         }
-        assertEquals(VerificationLayer.QUOTE, refused.layer)
+        assertEquals(VerificationLayer.QUOTE, assertIs<VerificationException>(refused.cause).layer)
     }
 
     @Test

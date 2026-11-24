@@ -1025,6 +1025,8 @@ class GatewayHttpClientTest {
         val client = gateway.client()
         val error = assertFailsWith<AttestationException> { client.execute(client.post(chat())) }
         assertTrue(error.detail.startsWith("following gateway route to enclave evil.example: "), error.detail)
+        // The verifier's rejection stays the cause, under the added context.
+        assertEquals(VerificationLayer.QUOTE, assertIs<VerificationException>(error.cause).layer)
         // A route that is not a host is refused without a fetch.
         gateway.attestationFetches.clear()
         gateway.intercept = { routedTo("evil.example/x?") }

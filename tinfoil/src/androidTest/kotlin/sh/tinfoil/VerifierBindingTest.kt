@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -67,6 +68,10 @@ class VerifierBindingTest {
 
     private fun verifyFixture(verifier: AttestationVerifier): AttestationException =
         assertFailsWith<AttestationException> { verifier.verify(fixture.document, fixture.nonce, Pin.NONE) }
+
+    /** The layer that rejected the document, from the verifier's error that is the cause. */
+    private val AttestationException.rejectedAt: VerificationLayer
+        get() = assertIs<VerificationException>(cause, detail).layer
 
     @Test
     fun thePublicRegistryIsAccepted() {
@@ -199,7 +204,7 @@ class VerifierBindingTest {
 
         val error = verifyFixture(verifier)
 
-        assertEquals(VerificationLayer.PROVENANCE, error.layer)
+        assertEquals(VerificationLayer.PROVENANCE, error.rejectedAt)
         assertTrue(error.detail.contains("config is not on the allow list"), error.detail)
         assertEquals(listOf(ConfigEndorsement(fixture.config)), seen.toList())
     }
@@ -216,7 +221,7 @@ class VerifierBindingTest {
 
         val error = verifyFixture(verifier)
 
-        assertEquals(VerificationLayer.QUOTE, error.layer)
+        assertEquals(VerificationLayer.QUOTE, error.rejectedAt)
         assertEquals(listOf(ConfigEndorsement(fixture.config)), seen.toList())
     }
 
@@ -231,7 +236,7 @@ class VerifierBindingTest {
         )
         for ((failure, expected) in thrown) {
             val error = verifyFixture(authorizedBy { throw failure })
-            assertEquals(VerificationLayer.PROVENANCE, error.layer, expected)
+            assertEquals(VerificationLayer.PROVENANCE, error.rejectedAt, expected)
             assertTrue(error.detail.contains(expected), error.detail)
         }
     }
@@ -290,10 +295,10 @@ class VerifierBindingTest {
             for ((result, rejecting) in results) {
                 for (error in result.get(120, TimeUnit.SECONDS)) {
                     if (rejecting) {
-                        assertEquals(VerificationLayer.PROVENANCE, error.layer, error.detail)
+                        assertEquals(VerificationLayer.PROVENANCE, error.rejectedAt, error.detail)
                         assertTrue(error.detail.contains("rejected on reject-"), error.detail)
                     } else {
-                        assertEquals(VerificationLayer.QUOTE, error.layer, error.detail)
+                        assertEquals(VerificationLayer.QUOTE, error.rejectedAt, error.detail)
                     }
                 }
             }

@@ -217,7 +217,7 @@ class ConformanceVectorTest {
             // instant, this fails, and the exception is to be removed.
             same("the vector's verdict", true, expected.accepted)
             if (outcome is AttestationException) {
-                same("layer", VerificationLayer.PROVENANCE, outcome.layer)
+                same("layer", VerificationLayer.PROVENANCE, rejectedAt(outcome))
                 if (outcome.message?.contains("freshness witnesses expired") != true) {
                     failures += "expected the expiry of the freshness witnesses, got: ${outcome.message}"
                 }
@@ -307,7 +307,7 @@ class ConformanceVectorTest {
     private fun checkRejectionReport(error: TinfoilException, failures: MutableList<String>) {
         val rejected = error.cause as? VerificationException ?: return
         val report = rejected.report
-        if (error !is AttestationException || error.layer != rejected.layer) {
+        if (error !is AttestationException || !error.detail.startsWith("${rejected.layer}: ")) {
             failures += "the verifier's rejection at ${rejected.layer} was reported as ${error.javaClass.simpleName}"
         }
         if (report.steps.map { it.layer } != LAYERS) {
@@ -367,11 +367,23 @@ class ConformanceVectorTest {
         return Result(id, "accepted", failures)
     }
 
-    /** The suite's rejection code for an exception, from its type and layer. */
+    /** The suite's rejection code for an exception, from its type and the layer that rejected the document. */
     private fun code(error: TinfoilException): String = when (error) {
         is ConfigurationException -> "MALFORMED_INPUT"
-        is AttestationException -> error.layer?.let { "${it.value.uppercase()}_REJECTED" } ?: "an attestation error without a layer"
+        is AttestationException -> rejectedAt(error)?.let { "${it.value.uppercase()}_REJECTED" } ?: "an attestation error without a layer"
         is NetworkException -> "a network error"
+    }
+
+    /**
+     * The layer that rejected the document: the one that the verifier's
+     * error, the cause, names, or for a rejection that the library reports
+     * without a result, the one that leads the detail, as in
+     * `provenance: <detail>`.
+     */
+    private fun rejectedAt(error: AttestationException): VerificationLayer? {
+        (error.cause as? VerificationException)?.let { return it.layer }
+        val name = error.detail.substringBefore(": ", missingDelimiterValue = "")
+        return if (name.isNotEmpty() && name.all { it in 'a'..'z' }) VerificationLayer(name) else null
     }
 
     private fun hex(text: String): ByteArray {

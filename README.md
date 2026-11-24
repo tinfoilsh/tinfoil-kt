@@ -327,6 +327,12 @@ an `AttestationException` when the enclave is not to be trusted, a
 `ConfigurationException` for an invalid argument. A retry loop that retries
 any `IOException` should first read `isRetryable`, which is true only for a
 `NetworkException`: an attestation failure must not be retried blindly.
+When the verifier rejected the attestation document, the cause of the
+`AttestationException` is a `VerificationException`, which names the layer
+that rejected it and carries the report (see
+[Verification reports](#verification-reports)); any other attestation
+failure, such as a rejection by `verificationCheck`, says what failed in
+its `detail`.
 
 The OpenAI SDK throws unchecked exceptions, all of them `OpenAIException`s.
 An error status from the API is one of its subclasses, such as
