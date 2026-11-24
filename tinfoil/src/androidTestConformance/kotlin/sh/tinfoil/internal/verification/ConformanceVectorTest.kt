@@ -7,7 +7,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.runner.RunWith
 import sh.tinfoil.AttestationException
@@ -35,7 +42,8 @@ import kotlin.test.fail
  * decoded into a [VerificationReport], and each error classified into a
  * [TinfoilException]. The verdict, the rejection's layer and the verified
  * facts must be the ones that the vector expects, and the report of a
- * rejection must hold what the specification requires of it.
+ * rejection must hold what the specification requires of it. The JSON form
+ * of the report of each vector that a golden file names must be the file's.
  *
  * It is compiled only in the conformance build (`TINFOIL_CONFORMANCE=1`),
  * against a verifier library built with
@@ -93,7 +101,7 @@ class ConformanceVectorTest {
         val results = files.map { file ->
             // A vector that cannot be read fails the run here; it is never
             // left out.
-            val vector = strict.decodeFromString(Vector.serializer(), assets.open(file).use { it.readBytes() }.decodeToString())
+            val vector = strict.decodeFromString(Vector.serializer(), read(file))
             assertEquals(FULL_VERIFY_STAGE, vector.stage, "$file is packaged but is not a full-verify vector")
             val result = try {
                 check(vector)
@@ -120,6 +128,65 @@ class ConformanceVectorTest {
         assertTrue(unseen.isEmpty(), "the known divergences $unseen name no vector; remove them")
     }
 
+    /**
+     * Verifies the vector that each golden file of the report's JSON form
+     * names, and compares the JSON that [VerificationReport.toJson] writes
+     * for its report with the file's. The files come from tinfoil-go, and
+     * their README says what a comparison leaves out: the step messages and
+     * the metadata. Times compare as instants.
+     */
+    @Test
+    fun reportJsonGoldenFiles() {
+        val files = assets.list(GOLDEN).orEmpty().filter { it.endsWith(".json") }.sorted()
+        val failures = mutableListOf<String>()
+        var ran = 0
+        for (name in files) {
+            val golden = Json.parseToJsonElement(read("$GOLDEN/$name")).jsonObject
+            // A file without a vector is built by a test of tinfoil-go, and
+            // ReportJsonTest checks it on the JVM.
+            val path = (golden["vector"] as? JsonPrimitive)?.content ?: continue
+            ran++
+            val vector = strict.decodeFromString(Vector.serializer(), read("$VECTORS/$path"))
+            val report = when (val outcome = verify(vector)) {
+                is VerificationReport -> outcome
+                is TinfoilException -> (outcome.cause as? VerificationException)?.report
+                else -> null
+            }
+            if (report == null) {
+                failures += "$name: $path has no report"
+                continue
+            }
+            val want = comparable(golden.getValue("report").jsonObject)
+            val got = comparable(Json.parseToJsonElement(report.toJson()).jsonObject)
+            if (want != got) {
+                failures += "$name: expected\n    $want\ngot\n    $got"
+            }
+            Log.i(TAG, "$name ($path): ${if (want == got) "as expected" else "FAILED"}")
+        }
+        if (failures.isNotEmpty()) {
+            fail("${failures.size} golden reports differ:\n" + failures.joinToString("\n"))
+        }
+        assertEquals(GOLDEN_VECTOR_FILES, ran, "golden files that name a vector")
+    }
+
+    private fun read(asset: String): String = assets.open(asset).use { it.readBytes() }.decodeToString()
+
+    /** [report] without the step messages and the metadata, and with its times as instants. */
+    private fun comparable(report: JsonObject): JsonElement {
+        val steps = report.getValue("steps").jsonArray.map { step -> JsonObject(step.jsonObject - "message") }
+        return times(JsonObject(report - "metadata" + ("steps" to JsonArray(steps))))
+    }
+
+    private fun times(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> JsonObject(
+            element.mapValues { (name, value) ->
+                if (name in TIMES) JsonPrimitive(Instant.parse(value.jsonPrimitive.content).toString()) else times(value)
+            },
+        )
+        is JsonArray -> JsonArray(element.map(::times))
+        else -> element
+    }
+
     /** Every file under [directory] in the assets, in a stable order. */
     private fun vectorFiles(directory: String): List<String> =
         assets.list(directory).orEmpty().sorted().flatMap { name ->
@@ -142,25 +209,8 @@ class ConformanceVectorTest {
         if (expected.accepted == (expected.code != null)) {
             failures += "the vector must expect either acceptance or a rejection code"
         }
-        val roots = buildJsonObject {
-            input.sigstoreTrustedRootJsonB64?.let { put("sigstore_trusted_root_json_b64", it) }
-            input.amdRootCaPem?.let { put("amd_root_ca_pem", it) }
-            input.askPem?.let { put("ask_pem", it) }
-            input.intelSgxRootPem?.let { put("intel_sgx_root_pem", it) }
-        }
-        val verifier = checkNotNull(Mobile.newDangerousTestOnlyVerifier(roots.toString())) { "no verifier" }
-        val document = Base64.getDecoder().decode(input.documentB64)
-        val nonce = hex(input.nonceHex)
         val at = input.verificationTimeUnix
-        check(at != 0L) { "every full-verify vector is frozen at a time" }
-
-        val outcome: Any = try {
-            GoAttestationVerifier.report {
-                verifier.dangerousTestOnlyVerifyAt(document, nonce, input.repo, input.project, at)
-            }
-        } catch (e: TinfoilException) {
-            e
-        }
+        val outcome = verify(vector)
 
         if (id in REJECTED_AT_EXPIRY) {
             // If the verifier library and the verifier come to agree at this
@@ -200,6 +250,33 @@ class ConformanceVectorTest {
                 return checkVerifiedFacts(id, expected, facts, appraisedAt, failures)
             }
             else -> error("unreachable")
+        }
+    }
+
+    /**
+     * What the verifier library and this SDK's side of its boundary make of
+     * [vector]: a [VerificationReport], or the [TinfoilException] that the
+     * client would throw.
+     */
+    private fun verify(vector: Vector): Any {
+        val input = vector.input
+        val roots = buildJsonObject {
+            input.sigstoreTrustedRootJsonB64?.let { put("sigstore_trusted_root_json_b64", it) }
+            input.amdRootCaPem?.let { put("amd_root_ca_pem", it) }
+            input.askPem?.let { put("ask_pem", it) }
+            input.intelSgxRootPem?.let { put("intel_sgx_root_pem", it) }
+        }
+        val verifier = checkNotNull(Mobile.newDangerousTestOnlyVerifier(roots.toString())) { "no verifier" }
+        val document = Base64.getDecoder().decode(input.documentB64)
+        val nonce = hex(input.nonceHex)
+        val at = input.verificationTimeUnix
+        check(at != 0L) { "every full-verify vector is frozen at a time" }
+        return try {
+            GoAttestationVerifier.report {
+                verifier.dangerousTestOnlyVerifyAt(document, nonce, input.repo, input.project, at)
+            }
+        } catch (e: TinfoilException) {
+            e
         }
     }
 
@@ -307,6 +384,15 @@ class ConformanceVectorTest {
         const val PIN = "conformance/pin.properties"
         const val VECTORS = "conformance/vectors"
         const val FULL_VERIFY_STAGE = "verify-attestation-v3"
+
+        /** The golden files of the report's JSON form, from `testdata/report-json`. */
+        const val GOLDEN = "report-json"
+
+        /** How many of them name a vector. */
+        const val GOLDEN_VECTOR_FILES = 7
+
+        /** The members of the JSON form that hold a time. */
+        val TIMES = setOf("verified_at", "freshness_expires_at", "approval_time", "signature_time")
 
         /** Unknown members are refused, and nothing is read leniently. */
         val strict = Json
