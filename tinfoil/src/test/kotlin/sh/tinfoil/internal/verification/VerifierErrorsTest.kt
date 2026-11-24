@@ -2,11 +2,9 @@ package sh.tinfoil.internal.verification
 
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
-import sh.tinfoil.VerificationLayer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class VerifierErrorsTest {
@@ -27,47 +25,19 @@ class VerifierErrorsTest {
     }
 
     @Test
-    fun aVerificationErrorIsAnAttestationErrorWithItsLayer() {
-        val layers = mapOf(
-            "envelope" to VerificationLayer.ENVELOPE,
-            "provenance" to VerificationLayer.PROVENANCE,
-            "quote" to VerificationLayer.QUOTE,
-            "policy" to VerificationLayer.POLICY,
-        )
-        for ((name, layer) in layers) {
+    fun aVerificationErrorIsAnAttestationErrorThatKeepsItsLayerInTheDetail() {
+        for (name in listOf("envelope", "provenance", "quote", "policy", "firmware")) {
             val error = attestation("verification error: $name: rejected")
-            assertEquals(layer, error.layer)
             assertEquals("$name: rejected", error.detail, "The layer stays in the detail.")
             assertEquals("attestation error: $name: rejected", error.message)
         }
-    }
-
-    @Test
-    fun aLayerThisSdkDoesNotNameIsCarried() {
-        assertEquals(VerificationLayer("firmware"), attestation("verification error: firmware: rejected").layer)
-    }
-
-    @Test
-    fun textBeforeAColonIsALayerOnlyIfItIsOneLowercaseWord() {
-        val unlayered = listOf(
-            "verification error: rejected",
-            "verification error: could not parse: bad JSON",
-            "verification error: Quote: rejected",
-            "verification error: quote2: rejected",
-            "verification error: : rejected",
-            "verification error: quote:rejected",
-            "verification error: ",
-        )
-        for (message in unlayered) {
-            assertNull(attestation(message).layer, message)
-        }
         assertEquals("could not parse: bad JSON", attestation("verification error: could not parse: bad JSON").detail)
+        assertEquals("", attestation("verification error: ").detail)
     }
 
     @Test
     fun anErrorThatCannotBeClassifiedIsARejectedAttestation() {
         assertEquals("unexpected", attestation("unexpected").detail)
-        assertNull(attestation("unexpected").layer)
         assertEquals("the verifier failed without a message", attestation(null).detail)
         assertEquals("the verifier failed without a message", attestation("").detail)
         // A prefix counts only where the message starts with it, exactly.
@@ -80,7 +50,7 @@ class VerifierErrorsTest {
     @Test
     fun aRejectionThatQuotesAUsageErrorStaysARejection() {
         val error = attestation("verification error: provenance: usage error: let me in")
-        assertEquals(VerificationLayer.PROVENANCE, error.layer)
+        assertEquals("provenance: usage error: let me in", error.detail)
     }
 
     @Test

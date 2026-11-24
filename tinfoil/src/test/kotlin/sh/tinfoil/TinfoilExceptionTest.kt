@@ -19,16 +19,15 @@ class TinfoilExceptionTest {
         assertEquals("network error: attestation fetch failed", network.message)
         assertEquals(503, network.status)
 
-        val attestation = AttestationException("quote: rejected", VerificationLayer.QUOTE)
+        val attestation = AttestationException("quote: rejected")
         assertEquals("attestation error", attestation.category)
         assertEquals("attestation error: quote: rejected", attestation.message)
-        assertEquals(VerificationLayer.QUOTE, attestation.layer)
     }
 
     @Test
     fun optionalDetailsDefaultToNull() {
         assertNull(NetworkException("offline").status)
-        assertNull(AttestationException("rejected by the verification check").layer)
+        assertNull(AttestationException("rejected by the verification check").cause)
         assertNull(ConfigurationException("bad option").cause)
     }
 
@@ -60,7 +59,6 @@ class TinfoilExceptionTest {
         assertEquals(true, NetworkException("unavailable", status = 503).isRetryable)
         assertEquals(false, ConfigurationException("bad option").isRetryable)
         assertEquals(false, AttestationException("rejected").isRetryable)
-        assertEquals(false, AttestationException("quote: rejected", VerificationLayer.QUOTE).isRetryable)
     }
 
     @Test

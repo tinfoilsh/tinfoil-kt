@@ -105,11 +105,9 @@ class EnclaveHttpClientLiveTest {
             }
         }
 
-        assertNotNull(error.layer, error.message)
         // The verifier's rejection, with its report, is the cause.
-        val rejected = assertIs<VerificationException>(error.cause)
-        assertEquals(error.layer, rejected.layer)
-        assertEquals(error.layer, rejected.report.failedStep?.layer)
+        val rejected = assertIs<VerificationException>(error.cause, error.message)
+        assertEquals(rejected.layer, rejected.report.failedStep?.layer)
         assertNull(rejected.report.verifiedFacts)
         assertNotNull(rejected.report.partialFacts)
         val deadline = System.nanoTime() + 10_000_000_000L

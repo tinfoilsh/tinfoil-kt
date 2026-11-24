@@ -173,8 +173,10 @@ class VerificationPayloadTest {
     private fun assertRejectedPayload(expected: String, payload: String): AttestationException {
         val error = assertFailsWith<AttestationException>(payload) { VerificationPayload.decode(payload) }
         assertTrue(error.detail.contains(expected), "${error.detail} should mention $expected")
-        assertNull(error.layer, "A payload that cannot be read was rejected by no layer of the verifier.")
-        assertNull(error.cause as? VerificationException, "A payload that cannot be read carries no report.")
+        assertNull(
+            error.cause as? VerificationException,
+            "A payload that cannot be read was rejected by no layer of the verifier, and carries no report.",
+        )
         return error
     }
 
@@ -652,7 +654,6 @@ class VerificationPayloadTest {
 
         val message = "verification error: quote: report signature is invalid"
         assertEquals("quote: report signature is invalid", error.detail)
-        assertEquals(VerificationLayer.QUOTE, error.layer)
         assertEquals(message, rejected.message)
         assertEquals(VerificationLayer.QUOTE, rejected.layer)
         val report = rejected.report
@@ -718,7 +719,7 @@ class VerificationPayloadTest {
     @Test
     fun aRejectionAtTheEnvelopeHasNeitherGroupOfFacts() {
         val (error, rejected) = rejected(rejection("envelope", steps("failed", "not_run", "not_run", "not_run")))
-        assertEquals(VerificationLayer.ENVELOPE, error.layer)
+        assertEquals(VerificationLayer.ENVELOPE, rejected.layer)
         assertEquals(PartialFacts(expected = null, measured = null), rejected.report.partialFacts)
     }
 

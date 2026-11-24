@@ -67,14 +67,17 @@ public class NetworkException internal constructor(
 /**
  * The enclave's evidence, the trust policy or the channel binding was
  * rejected. The enclave must not be used.
+ *
+ * When the verifier rejected the attestation document with a report, the
+ * [cause] is a [VerificationException], which names the layer that rejected
+ * it and carries the report. Any other attestation failure says what failed
+ * in its [detail] alone: expired verified facts, a rejection by the
+ * verification check, a key that the enclave does not hold, or a rejection
+ * that the verifier reported without a report, whose detail leads with the
+ * layer, as in `quote: <detail>`.
  */
 public class AttestationException internal constructor(
     detail: String,
-    /**
-     * The layer of the verifier that rejected the attestation document, or
-     * null when the rejection came from somewhere else.
-     */
-    public val layer: VerificationLayer? = null,
     cause: Throwable? = null,
 ) : TinfoilException(ATTESTATION_ERROR, detail, cause) {
     override val isRetryable: Boolean get() = false
@@ -85,9 +88,10 @@ private const val NETWORK_ERROR = "network error"
 private const val ATTESTATION_ERROR = "attestation error"
 
 /**
- * The layer of the verifier that rejected an attestation document. More
- * layers may be added, so handle the ones that you know and tolerate any
- * other.
+ * A layer of the verifier: the subject of a [Step] of a [VerificationReport],
+ * and the layer that a [VerificationException] names as the one that
+ * rejected the document. More layers may be added, so handle the ones that
+ * you know and tolerate any other.
  */
 @JvmInline
 public value class VerificationLayer(

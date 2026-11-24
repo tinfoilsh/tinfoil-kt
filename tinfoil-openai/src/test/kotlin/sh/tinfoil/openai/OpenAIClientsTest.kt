@@ -39,17 +39,18 @@ import sh.tinfoil.NetworkException
 import sh.tinfoil.RouterHttpClient
 import sh.tinfoil.Trust
 import sh.tinfoil.Transport
+import sh.tinfoil.VerificationException
 import sh.tinfoil.VerificationLayer
 import sh.tinfoil.openai.internal.TinfoilEvents
 import sh.tinfoil.testing.RawTlsServer
 import sh.tinfoil.testing.SealingDispatcher
 import sh.tinfoil.testing.SealingKey
 import sh.tinfoil.testing.TestEnclave
-import sh.tinfoil.testing.attestationFailure
 import sh.tinfoil.testing.awaitUntil
 import sh.tinfoil.testing.containsText
 import sh.tinfoil.testing.fingerprint
 import sh.tinfoil.testing.httpsServer
+import sh.tinfoil.testing.rejection
 import sh.tinfoil.tinfoilException
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -524,11 +525,11 @@ class OpenAIClientsTest {
 
     @Test
     fun aFailedCreationLeavesNothingOpen() = test {
-        enclave.verifyWith { _, _ -> throw attestationFailure("not this enclave", layer = VerificationLayer.POLICY) }
+        enclave.verifyWith { _, _ -> throw rejection(VerificationLayer.POLICY, "not this enclave") }
 
         val error = assertFailsWith<AttestationException> { enclaveClient() }
 
-        assertEquals(VerificationLayer.POLICY, error.layer)
+        assertEquals(VerificationLayer.POLICY, assertIs<VerificationException>(error.cause).layer)
         assertEquals(0, enclave.server.requestCount)
     }
 
@@ -675,7 +676,7 @@ class OpenAIClientsTest {
     fun anEnclaveThatFailsItsVerificationIsNotTriedAgainByTheOpenAiSdk() = test {
         val sleeper = NoSleep()
         val client = enclaveClient(configure = { sleeper(sleeper) })
-        enclave.verifyWith { _, _ -> throw attestationFailure("the quote is forged", layer = VerificationLayer.QUOTE) }
+        enclave.verifyWith { _, _ -> throw rejection(VerificationLayer.QUOTE, "the quote is forged") }
         enclave.clock.advance(enclave.lifetimeSeconds + 1)
 
         // What one request costs when it is sent directly.
@@ -696,7 +697,7 @@ class OpenAIClientsTest {
         for (e in listOf(blocking, async, streamed)) {
             assertEquals(OpenAIException::class.java, e.javaClass)
             val failure = assertIs<AttestationException>(e.tinfoilException)
-            assertEquals(VerificationLayer.QUOTE, failure.layer)
+            assertEquals(VerificationLayer.QUOTE, assertIs<VerificationException>(failure.cause).layer)
             assertTrue(e.message!!.startsWith("attestation error: "), e.message)
             assertFalse(e.allText().contains(KEY), e.allText())
         }
