@@ -33,6 +33,7 @@ import sh.tinfoil.RecoverableResponse
 import sh.tinfoil.ReplicaVerification
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.Transport
+import sh.tinfoil.VerificationException
 import sh.tinfoil.VerificationReport
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.internal.Background
@@ -719,9 +720,14 @@ private fun quote(text: String): String = buildString(text.length + 2) {
     append('"')
 }
 
-/** The same error, in the same category, with [context] ahead of its detail. */
+/**
+ * The same error, in the same category, with [context] ahead of its detail.
+ * An attestation error that the verifier's rejection caused keeps that
+ * [VerificationException] as its cause, so that a caller finds the layer and
+ * the report where an unprefixed one has them.
+ */
 private fun TinfoilException.prefixed(context: String): TinfoilException = when (this) {
     is ConfigurationException -> ConfigurationException("$context: $detail", cause = this)
     is NetworkException -> NetworkException("$context: $detail", status = status, cause = this)
-    is AttestationException -> AttestationException("$context: $detail", layer = layer, cause = this)
+    is AttestationException -> AttestationException("$context: $detail", cause = cause as? VerificationException ?: this)
 }

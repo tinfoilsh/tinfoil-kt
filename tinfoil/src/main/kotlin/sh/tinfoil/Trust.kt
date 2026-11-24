@@ -168,8 +168,9 @@ public sealed interface Trust {
  * the config's endorsement; see [Trust.AuthorizedBy].
  *
  * Return to authorize the config. Throw to reject it: the document then fails
- * verification with an [AttestationException] at the
- * [provenance][VerificationLayer.PROVENANCE] layer that carries the thrown
+ * verification with an [AttestationException] whose cause, a
+ * [VerificationException], names the
+ * [provenance][VerificationLayer.PROVENANCE] layer and carries the thrown
  * exception's message. The runtime, the platform and the hardware are still
  * verified, but approving a config authenticates no registry, name or
  * approval time.

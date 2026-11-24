@@ -141,7 +141,7 @@ internal object VerificationPayload {
             ),
         )
         val detail = message.removePrefix(VerifierErrors.VERIFICATION_PREFIX)
-        throw AttestationException(detail, layer, rejected)
+        throw AttestationException(detail, rejected)
     }
 
     // A member that the form does not name is ignored, since members may be

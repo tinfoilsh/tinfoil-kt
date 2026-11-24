@@ -5,6 +5,7 @@ import org.junit.runner.RunWith
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
+import sh.tinfoil.VerificationException
 import sh.tinfoil.VerificationLayer
 import sh.tinfoil.Trust
 import sh.tinfoil.go.mobile.Mobile
@@ -13,6 +14,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
@@ -89,11 +91,10 @@ class GoAttestationVerifierTest {
 
         for (document in listOf(ByteArray(0), "{}".toByteArray(), "not a document".toByteArray(), garbage)) {
             val error = assertFailsWith<AttestationException> { verifier.verify(document, nonce, routerPin) }
-            assertEquals(VerificationLayer.ENVELOPE, error.layer)
+            assertEquals(VerificationLayer.ENVELOPE, assertIs<VerificationException>(error.cause).layer)
             assertTrue(error.detail.startsWith("envelope: "), error.detail)
             assertFalse(error.detail.startsWith(Mobile.VerificationErrorPrefix), "The library's prefix is dropped.")
             assertTrue(error.message.orEmpty().startsWith("attestation error: envelope: "), error.message)
-            assertTrue(error.cause != null, "The library's error is kept as the cause.")
         }
     }
 

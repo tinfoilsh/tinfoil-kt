@@ -197,7 +197,7 @@ public fun rejection(
         }
     }
     val report = VerificationReport(steps, verifiedFacts = null, partialFacts, TEST_METADATA)
-    return AttestationException("$layer: $detail", layer, VerificationException(message, layer, report))
+    return AttestationException("$layer: $detail", VerificationException(message, layer, report))
 }
 
 /**
@@ -242,10 +242,6 @@ internal class FakeVerifier(
         return passedReport(verify.invoke(document, nonce, pin))
     }
 }
-
-/** The failure of a verification, for a test that cannot make one itself: the constructor is this module's. */
-public fun attestationFailure(detail: String, layer: VerificationLayer? = null): AttestationException =
-    AttestationException(detail, layer = layer)
 
 /** A verifier that tells [note] the name of every call into [inner], and then makes it. */
 internal class NotingVerifier(
