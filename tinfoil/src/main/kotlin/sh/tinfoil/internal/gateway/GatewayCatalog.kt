@@ -59,10 +59,9 @@ internal object GatewayCatalog {
     /**
      * Whether [entry] can be routed to: its repository is one of Tinfoil's,
      * `tinfoilsh/name` with nothing after the name, and it has a replica.
-     * A catalog's repository is what a model that the caller did not pin is
-     * verified against, so only a repository of the one trusted owner is
-     * taken from it, and never a tag or a digest, which would choose a
-     * release.
+     * A catalog's repository must equal the repository of the model's pin,
+     * so only a repository of the one trusted owner is taken from it, and
+     * never a tag or a digest, which would choose a release.
      */
     fun isTrusted(entry: CatalogEntry?): Boolean {
         if (entry == null || entry.hosts.isEmpty() || !entry.repo.startsWith(TRUSTED_OWNER)) {

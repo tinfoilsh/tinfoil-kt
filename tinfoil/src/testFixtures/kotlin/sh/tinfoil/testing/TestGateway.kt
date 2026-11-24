@@ -178,8 +178,7 @@ public class TestGateway : AutoCloseable {
     )
 
     public suspend fun client(
-        modelPins: Map<String, ModelPin> = emptyMap(),
-        pinnedModelsOnly: Boolean = false,
+        modelPins: Map<String, ModelPin> = PINS,
         baseUrl: String? = this.baseUrl,
         policy: Policy = Policy(),
         userCacheSecret: String? = "test-secret",
@@ -189,7 +188,6 @@ public class TestGateway : AutoCloseable {
         note: ((String) -> Unit)? = null,
     ): GatewayHttpClient = GatewayHttpClient.create(internals(note)) {
         this.modelPins = modelPins
-        this.pinnedModelsOnly = pinnedModelsOnly
         this.url = baseUrl
         this.policy = policy
         this.userCacheSecret = userCacheSecret
@@ -200,14 +198,13 @@ public class TestGateway : AutoCloseable {
 
     /** A client that is checked but has fetched nothing, so that any I/O shows. */
     public fun unverified(
-        modelPins: Map<String, ModelPin> = emptyMap(),
-        pinnedModelsOnly: Boolean = false,
+        modelPins: Map<String, ModelPin> = PINS,
         baseUrl: String? = this.baseUrl,
         policy: Policy = Policy(),
         userCacheSecret: String? = "test-secret",
         catalog: (() -> Catalog)? = null,
     ): GatewayHttpClient = GatewayHttpClient.unverified(
-        GatewaySettings(modelPins, pinnedModelsOnly, baseUrl, policy, userCacheSecret, null, null, catalog), internals(),
+        GatewaySettings(modelPins, baseUrl, policy, userCacheSecret, null, null, catalog), internals(),
     ).also { clients += it }
 
     public fun track(client: AutoCloseable) {
@@ -226,5 +223,14 @@ public class TestGateway : AutoCloseable {
         clients.forEach { it.close() }
         gates.forEach { it.countDown() }
         server.shutdown()
+    }
+
+    public companion object {
+        /**
+         * The pins of a client that is given none: the models `m` and
+         * `test-model`, which both run `tinfoilsh/m`.
+         */
+        public val PINS: Map<String, ModelPin> =
+            mapOf("m" to ModelPin("tinfoilsh/m"), "test-model" to ModelPin("tinfoilsh/m"))
     }
 }

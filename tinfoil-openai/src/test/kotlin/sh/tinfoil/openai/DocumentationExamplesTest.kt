@@ -79,7 +79,6 @@ class DocumentationExamplesTest {
     private suspend fun gateway(apiKey: String): Client {
         val gateway = GatewayHttpClient.create {
             modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
-            pinnedModelsOnly = true
         }
         val client = Client.create(gateway, apiKey)
         println(gateway.models())

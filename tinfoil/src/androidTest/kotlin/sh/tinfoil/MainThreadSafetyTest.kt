@@ -217,8 +217,9 @@ class MainThreadSafetyTest {
     @Test
     fun aGatewayClientIsCreatedUsedAndClosedOnTheMainThread() {
         requireLive()
-        val client = fromMain { GatewayHttpClient.create() }
-        val model = fromMain { client.models() }.first()
+        val (model, entry) = fromMain { GatewayHttpClient.fetchCatalog("inference-gateway.tinfoil.sh") }.entries.entries.first()
+        val client = fromMain { GatewayHttpClient.create { modelPins = mapOf(model to ModelPin(entry.repo)) } }
+        assertEquals(listOf(model), fromMain { client.models() })
         fromMain { client.ensureVerified(model) }
         val chat = Request.Builder()
             .url(client.baseUrl.resolve("chat/completions")!!)
