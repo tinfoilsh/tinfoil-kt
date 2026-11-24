@@ -287,7 +287,11 @@ The JSON has a `schema_version`, one step for each layer, and either
 lowercase, times are RFC 3339 in UTC, and a fact that was not established
 is left out. A measurement names its `platform` and its registers, as in
 `{"platform": "tdx", "rtmr1": "…", "rtmr2": "…"}`, and the TLS and HPKE
-keys appear only in `verified_facts.crypto_material`.
+keys appear only in `verified_facts.crypto_material`. Every report that a
+client hands out names the host that the client contacted for the document
+in `metadata.host` (for a router client the router, for a gateway client
+the replica), so that a proxy that passes a report on need not add it. The
+host is what the client connected to, not an attested fact.
 
 The JSON authorizes nothing. This SDK has no API that reads it back into a
 report or into verified facts, and whoever holds it cannot tell whether a

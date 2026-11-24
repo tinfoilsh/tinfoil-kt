@@ -577,6 +577,7 @@ public final class sh/tinfoil/VerificationLayer$Companion {
 
 public final class sh/tinfoil/VerificationMetadata {
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHost ()Ljava/lang/String;
 	public final fun getVerifiedAt ()Ljava/time/Instant;
 	public final fun getVerifier ()Lsh/tinfoil/SoftwareIdentity;
 	public fun hashCode ()I

@@ -60,7 +60,8 @@ public class VerificationReport internal constructor(
      *   "partial_facts": {"expected": {...}, "measured": {...}},
      *   "metadata": {
      *     "verified_at": "2026-11-24T16:00:00Z",
-     *     "verifier": {"name": "tinfoil-kt", "version": "<version>"}
+     *     "verifier": {"name": "tinfoil-kt", "version": "<version>"},
+     *     "host": "<host[:port]>"
      *   }
      * }
      * ```
@@ -76,6 +77,8 @@ public class VerificationReport internal constructor(
      * platform. The TLS and HPKE keys appear only in
      * `verified_facts.crypto_material`. A step's `message` is present only
      * for a failed or a skipped step, and is for people to read.
+     * `metadata.host` is present only in a report that a client produced,
+     * and names the host that it contacted, which is not attested.
      *
      * **The JSON authorizes nothing.** This SDK offers no way to read it back
      * into a report or into verified facts, and whoever holds it cannot tell
@@ -100,6 +103,12 @@ public class VerificationReport internal constructor(
     override fun toString(): String =
         "VerificationReport(steps=$steps, verifiedFacts=$verifiedFacts, partialFacts=$partialFacts, " +
             "metadata=$metadata)"
+
+    /** This report, with [host] as the host that its metadata names. */
+    @JvmSynthetic
+    internal fun withHost(host: String): VerificationReport = VerificationReport(
+        steps, verifiedFacts, partialFacts, VerificationMetadata(metadata.verifier, metadata.verifiedAt, host),
+    )
 }
 
 /** The outcome of one layer of a verification. */

@@ -285,22 +285,34 @@ public class ArtifactVerification internal constructor(
 
 /**
  * How a verification was performed, whether it passed or failed. The SDK
- * fills it in from its own state; none of it is attested by the document or
- * checked against it.
+ * fills it in from its own state, and so does the client that ran the
+ * verification; none of it is attested by the document or checked against
+ * it.
  */
 public class VerificationMetadata internal constructor(
     /** The SDK that performed the verification. */
     public val verifier: SoftwareIdentity,
     /** When the document was appraised. It is not a freshness guarantee. */
     public val verifiedAt: Instant,
+    /**
+     * The enclave that the client contacted for the document, a host with
+     * an optional port: for a router client the router that it tried or
+     * chose, and for a gateway client the replica. A client sets it on
+     * every report that it hands out, the report of a rejection included.
+     * It is what the client connected to, not an attested fact, so it
+     * proves nothing about the enclave.
+     */
+    public val host: String? = null,
 ) {
     override fun equals(other: Any?): Boolean =
-        this === other ||
-            (other is VerificationMetadata && verifier == other.verifier && verifiedAt == other.verifiedAt)
+        this === other || (
+            other is VerificationMetadata && verifier == other.verifier && verifiedAt == other.verifiedAt &&
+                host == other.host
+            )
 
-    override fun hashCode(): Int = Objects.hash(verifier, verifiedAt)
+    override fun hashCode(): Int = Objects.hash(verifier, verifiedAt, host)
 
-    override fun toString(): String = "VerificationMetadata(verifier=$verifier, verifiedAt=$verifiedAt)"
+    override fun toString(): String = "VerificationMetadata(verifier=$verifier, verifiedAt=$verifiedAt, host=$host)"
 }
 
 /** Identifies the software that performed a verification. */

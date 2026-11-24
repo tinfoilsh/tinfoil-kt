@@ -780,7 +780,9 @@ class GatewayHttpClientTest {
         assertEquals(setOf(order[0], order[1], order[2]), entries.keys)
         assertEquals(gateway.key(order[2]).publicKey, entries.getValue(order[2]).lastAttempt.facts?.hpkePublicKey)
         assertEquals(entries.getValue(order[2]).lastAttempt.report, entries.getValue(order[2]).current)
+        assertEquals(order[2], jsonHost(entries.getValue(order[2]).current))
         for (failed in listOf(order[0], order[1])) {
+            assertEquals(failed, jsonHost(rejectedReport(entries.getValue(failed).lastAttempt.error)))
             assertNull(entries.getValue(failed).current, "a replica that failed has no current verification")
             val error = assertIs<AttestationException>(entries.getValue(failed).lastAttempt.error)
             val rejected = assertIs<VerificationException>(error.cause)
@@ -790,6 +792,7 @@ class GatewayHttpClientTest {
         awaitUntil { results.size == 5 }
         assertEquals(listOf(order[0], order[0], order[1], order[1], order[2]), hosts)
         assertEquals(listOf(false, false, false, false, true), results.map { it.report != null })
+        assertEquals(hosts, results.map { jsonHost(it.report ?: rejectedReport(it.error)) })
     }
 
     @Test
@@ -885,6 +888,8 @@ class GatewayHttpClientTest {
 
         assertNotSame(ensured, reverified)
         assertEquals(gateway.key(order[0]).publicKey, reverified.verifiedFacts?.hpkePublicKey)
+        assertEquals(order[0], jsonHost(ensured))
+        assertEquals(order[0], jsonHost(reverified))
         assertEquals(listOf(order[0], order[0]), gateway.attestationFetches, "no other replica is verified")
         val entry = client.replicas().single()
         assertEquals(order[0], entry.host)

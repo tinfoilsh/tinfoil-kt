@@ -292,6 +292,24 @@ class RouterHttpClientTest {
     }
 
     @Test
+    fun eachCandidatesReportNamesItsOwnRouter() = test {
+        val unverifiable = Router().unverifiable()
+        val good = Router()
+        serveList(unverifiable.host, good.host)
+        val results = CopyOnWriteArrayList<Pair<String, VerificationAttempt>>()
+
+        val client = client(onVerificationAttempt = { host, result -> results += host to result })
+
+        awaitUntil { results.size == 2 }
+        assertEquals(unverifiable.host, jsonHost(rejectedReport(results[0].second.error)))
+        assertEquals(good.host, jsonHost(results[1].second.report))
+        assertEquals(good.host, jsonHost(client.currentVerification()))
+        assertEquals(good.host, jsonHost(client.lastVerificationAttempt()?.report))
+        assertEquals(good.host, jsonHost(client.ensureVerified()))
+        assertEquals(good.host, jsonHost(client.reverify()))
+    }
+
+    @Test
     fun entriesThatAreNotHostsAreSkipped() = test {
         val good = Router()
         val port = good.server.port

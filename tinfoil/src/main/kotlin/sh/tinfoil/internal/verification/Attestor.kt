@@ -8,6 +8,7 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
+import sh.tinfoil.VerificationException
 import sh.tinfoil.VerificationReport
 import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.VerificationCheck
@@ -91,7 +92,11 @@ internal class Attestor(
         val nonce = verifier.newNonce()
         val document = fetch(host, nonce)
         coroutineContext.ensureActive()
-        val report = verifier.verify(document, nonce, pin)
+        val report = try {
+            verifier.verify(document, nonce, pin)
+        } catch (e: AttestationException) {
+            throw e.namingHost(host)
+        }.withHost(host)
         val facts = report.verifiedFacts
             ?: throw AttestationException("the verifier passed $host without verified facts")
         requireTransportKeys(facts)
@@ -140,6 +145,23 @@ internal class Attestor(
     private fun requireFormat(facts: VerifiedFacts, id: String, format: String) {
         val other = facts.cryptoMaterial.firstOrNull { it.id == id && it.format != format } ?: return
         throw AttestationException("the endorsed \"$id\" key has the format \"${other.format}\", not \"$format\"")
+    }
+
+    /**
+     * The verifier's rejection, with [host] named in the report that it
+     * carries, if it carries one. The verifier does not know where the
+     * document came from, and this is the one place that every attempt
+     * passes through, so every report that a client hands out, a rejection's
+     * included, names the host here.
+     */
+    private fun AttestationException.namingHost(host: String): AttestationException {
+        val rejected = cause as? VerificationException ?: return this
+        val named = VerificationException(rejected.message.orEmpty(), rejected.layer, rejected.report.withHost(host))
+        named.stackTrace = rejected.stackTrace
+        return AttestationException(detail, named).also { renamed ->
+            renamed.stackTrace = stackTrace
+            suppressed.forEach(renamed::addSuppressed)
+        }
     }
 
     /** An error that ends a verification without another attempt. */
