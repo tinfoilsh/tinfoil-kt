@@ -1,5 +1,6 @@
 package sh.tinfoil
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -16,6 +17,7 @@ import sh.tinfoil.testing.rejection
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -224,6 +226,58 @@ class VerificationAttemptTest {
         assertSame(read[0].first.report, read[0].second?.report)
         assertIs<VerificationAttempt.Failed>(read[1].second)
         assertSame(read[2].first.error, read[2].second?.error)
+    }
+
+    @Test
+    fun anObserverThatThrowsChangesNoOutcomeAndNoWaiterSeesWhatItThrew() = test {
+        // Each call throws something else: an exception, an Error, and a
+        // cancellation of its own.
+        val thrown = listOf(IllegalStateException("observer"), NotImplementedError("observer"), CancellationException("observer"))
+        val calls = AtomicInteger()
+        val client = enclave.client(onVerification = { host, attempt ->
+            attempts += host to attempt
+            throw thrown[calls.getAndIncrement() % thrown.size]
+        })
+        enclave.clock.advance(enclave.lifetimeSeconds)
+        val release = CountDownLatch(1)
+        val passes = enclave.verifier.verify
+        enclave.verifier.verify = { document, nonce, pin ->
+            release.await(30, TimeUnit.SECONDS)
+            passes(document, nonce, pin)
+        }
+
+        // Two callers wait for the same verification.
+        val waiters = List(2) { async(Dispatchers.IO) { runCatching { client.ensureVerified() } } }
+        Thread.sleep(200)
+        release.countDown()
+        val reports = waiters.awaitAll().map { it.getOrThrow() }
+
+        assertSame(reports[0], reports[1], "both waiters got the one outcome")
+        assertSame(reports[0], client.lastVerification()?.report)
+
+        // A failed verification reaches both of its waiters as itself, and
+        // each of its attempts is still reported after the observer threw.
+        val failing = CountDownLatch(1)
+        enclave.verifier.verify = { _, _, _ ->
+            failing.await(30, TimeUnit.SECONDS)
+            throw rejection(VerificationLayer.QUOTE)
+        }
+        val failed = List(2) { async(Dispatchers.IO) { runCatching { client.reverify() }.exceptionOrNull() } }
+        Thread.sleep(200)
+        failing.countDown()
+        val errors = failed.awaitAll()
+
+        val error = assertIs<AttestationException>(errors[0])
+        assertSame(error, errors[1], "both waiters got the one outcome")
+        assertIs<VerificationException>(error.cause)
+        assertSame(error, client.lastVerification()?.error)
+        // Creation, the shared verification, and the two attempts of the
+        // failed one, which was tried once more.
+        val reported = awaitAttempts(4)
+        assertSame(reports[0], reported[1].second.report)
+        assertSame(error.suppressed.single(), reported[2].second.error)
+        assertSame(error, reported[3].second.error)
+        assertEquals(4, calls.get())
     }
 
     @Test
