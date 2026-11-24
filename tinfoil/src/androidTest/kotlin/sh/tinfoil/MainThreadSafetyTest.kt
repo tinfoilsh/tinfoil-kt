@@ -33,6 +33,7 @@ import sh.tinfoil.internal.transport.HttpSettings
 import sh.tinfoil.internal.transport.LeafKeyPin
 import sh.tinfoil.internal.transport.TlsTrust
 import sh.tinfoil.internal.verification.AttestationVerifier
+import sh.tinfoil.internal.verification.Attestor
 import sh.tinfoil.testing.MainThread
 import sh.tinfoil.testing.passedReport
 import java.io.IOException
@@ -108,9 +109,10 @@ class MainThreadSafetyTest {
                 config = null,
                 runtime = null,
                 platform = null,
-                tlsPublicKeyFingerprint = LeafKeyPin.fingerprint(leaf.certificate),
-                hpkePublicKey = "cd".repeat(32),
-                cryptoMaterial = emptyList(),
+                cryptoMaterial = listOf(
+                    CryptoMaterial(Attestor.TLS_KEY_ID, Attestor.TLS_KEY_FORMAT, LeafKeyPin.fingerprint(leaf.certificate)),
+                    CryptoMaterial(Attestor.HPKE_KEY_ID, Attestor.HPKE_KEY_FORMAT, "cd".repeat(32)),
+                ),
                 freshnessExpiresAt = Instant.now().plusSeconds(3600),
             ),
         )

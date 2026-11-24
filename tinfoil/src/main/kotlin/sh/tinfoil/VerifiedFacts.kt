@@ -1,6 +1,7 @@
 package sh.tinfoil
 
 import sh.tinfoil.internal.immutableCopy
+import sh.tinfoil.internal.verification.Attestor
 import java.time.Instant
 import java.util.Objects
 
@@ -30,7 +31,7 @@ public class VerifiedFacts internal constructor(
     /**
      * The registers that the release fixes, in the layout of
      * [enclaveMeasurement], with an empty register for one that the release
-     * leaves open.
+     * leaves open; or null if the release fixes none on that platform.
      */
     public val codeMeasurement: Measurement?,
     /** The hardware quote's authenticated registers. */
@@ -44,26 +45,39 @@ public class VerifiedFacts internal constructor(
     public val runtime: ArtifactVerification?,
     /** The platform endorsements that a config-based verification accepted. */
     public val platform: ArtifactVerification?,
-    /**
-     * SHA-256 of the public key of the enclave's TLS certificate, lowercase
-     * hex. Null for an enclave that endorses no TLS key; a connection cannot
-     * be bound to such an enclave over TLS.
-     */
-    public val tlsPublicKeyFingerprint: String?,
-    /**
-     * The X25519 key that request bodies are encrypted to, lowercase hex.
-     * Null for an enclave that endorses only a TLS key.
-     */
-    public val hpkePublicKey: String?,
     cryptoMaterial: List<CryptoMaterial>,
     /** No new request may be authorized at or after this instant. */
     public val freshnessExpiresAt: Instant,
 ) {
     /**
-     * Every key that the enclave endorses, including the two that
-     * [tlsPublicKeyFingerprint] and [hpkePublicKey] lift out.
+     * Every key that the enclave endorses, in the document's order,
+     * including the two that [tlsPublicKeyFingerprint] and [hpkePublicKey]
+     * look up.
      */
     public val cryptoMaterial: List<CryptoMaterial> = cryptoMaterial.immutableCopy()
+
+    /**
+     * SHA-256 of the public key of the enclave's TLS certificate, lowercase
+     * hex: the [cryptoMaterial] item `tls` in the format
+     * `https://tinfoil.sh/key/spki-fp-sha256/v1`. Null for an enclave that
+     * endorses no such item; a connection cannot be bound to such an enclave
+     * over TLS.
+     */
+    public val tlsPublicKeyFingerprint: String?
+        get() = keyData(Attestor.TLS_KEY_ID, Attestor.TLS_KEY_FORMAT)
+
+    /**
+     * The X25519 key that request bodies are encrypted to, lowercase hex:
+     * the [cryptoMaterial] item `hpke` in the format
+     * `https://tinfoil.sh/key/x25519-hpke/v1`. Null for an enclave that
+     * endorses no such item, such as one that endorses only a TLS key.
+     */
+    public val hpkePublicKey: String?
+        get() = keyData(Attestor.HPKE_KEY_ID, Attestor.HPKE_KEY_FORMAT)
+
+    /** The data of the item with exactly [id] and [format], or null if there is none. */
+    private fun keyData(id: String, format: String): String? =
+        cryptoMaterial.firstOrNull { it.id == id && it.format == format }?.data
 
     override fun equals(other: Any?): Boolean =
         this === other || (
@@ -76,22 +90,19 @@ public class VerifiedFacts internal constructor(
                 config == other.config &&
                 runtime == other.runtime &&
                 platform == other.platform &&
-                tlsPublicKeyFingerprint == other.tlsPublicKeyFingerprint &&
-                hpkePublicKey == other.hpkePublicKey &&
                 cryptoMaterial == other.cryptoMaterial &&
                 freshnessExpiresAt == other.freshnessExpiresAt
             )
 
     override fun hashCode(): Int = Objects.hash(
         configRepo, codeDigest, codeTag, codeMeasurement, enclaveMeasurement, config, runtime, platform,
-        tlsPublicKeyFingerprint, hpkePublicKey, cryptoMaterial, freshnessExpiresAt,
+        cryptoMaterial, freshnessExpiresAt,
     )
 
     override fun toString(): String =
         "VerifiedFacts(configRepo=$configRepo, codeDigest=$codeDigest, codeTag=$codeTag, " +
             "codeMeasurement=$codeMeasurement, enclaveMeasurement=$enclaveMeasurement, config=$config, " +
-            "runtime=$runtime, platform=$platform, tlsPublicKeyFingerprint=$tlsPublicKeyFingerprint, " +
-            "hpkePublicKey=$hpkePublicKey, cryptoMaterial=$cryptoMaterial, " +
+            "runtime=$runtime, platform=$platform, cryptoMaterial=$cryptoMaterial, " +
             "freshnessExpiresAt=$freshnessExpiresAt)"
 }
 
