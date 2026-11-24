@@ -242,6 +242,33 @@ A report is for showing and logging what happened. Decide what to do from
 the exception's category, never from a report; a decision about trust
 belongs in `verificationCheck`, which sees only verified facts.
 
+`toJson()` writes a report in the JSON form that every Tinfoil SDK writes,
+so that it can be passed on, for example to a browser, a log or another
+process, and read in the same way whichever SDK wrote it:
+
+```kotlin
+val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
+    onVerification = { _, attempt ->
+        val report = attempt.report ?: (attempt.error?.cause as? VerificationException)?.report
+        report?.let { println(it.toJson()) }
+    }
+}
+```
+
+The JSON has a `schema_version`, one step for each layer, and either
+`verified_facts` or `partial_facts`; members are snake_case, hex is
+lowercase, times are RFC 3339 in UTC, and a fact that was not established
+is left out. A measurement names its `platform` and its registers, as in
+`{"platform": "tdx", "rtmr1": "…", "rtmr2": "…"}`, and the TLS and HPKE
+keys appear only in `verified_facts.crypto_material`.
+
+The JSON authorizes nothing. This SDK has no API that reads it back into a
+report or into verified facts, and whoever holds it cannot tell whether a
+verifier wrote it. Never bind a connection to a key that was read from it,
+or treat it as proof that a verification took place; the client binds its
+connections only to the verified facts of a verification that it ran
+itself.
+
 ### Gateway (experimental)
 
 The gateway route is new, and its API may change or be removed in a later

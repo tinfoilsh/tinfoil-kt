@@ -1,5 +1,6 @@
 package sh.tinfoil
 
+import sh.tinfoil.internal.ReportJson
 import sh.tinfoil.internal.immutableCopy
 import java.util.Objects
 
@@ -41,6 +42,49 @@ public class VerificationReport internal constructor(
 
     /** The step that failed, or null for a verification that passed. */
     public val failedStep: Step? get() = steps.firstOrNull { it.status == StepStatus.FAILED }
+
+    /**
+     * The report in the JSON form that every Tinfoil SDK writes, so that it
+     * can be shown, logged or passed on, for example to a browser or to
+     * another process:
+     *
+     * ```json
+     * {
+     *   "schema_version": 1,
+     *   "steps": [
+     *     {"layer": "envelope", "status": "passed"},
+     *     {"layer": "provenance", "status": "passed"},
+     *     {"layer": "quote", "status": "failed", "message": "<detail>"},
+     *     {"layer": "policy", "status": "not_run"}
+     *   ],
+     *   "partial_facts": {"expected": {...}, "measured": {...}},
+     *   "metadata": {
+     *     "verified_at": "2026-11-24T16:00:00Z",
+     *     "verifier": {"name": "tinfoil-kt", "version": "<version>"}
+     *   }
+     * }
+     * ```
+     *
+     * Member names are snake_case, hex is lowercase, and times are RFC 3339
+     * in UTC, written with `Z`. Exactly one of `verified_facts` and
+     * `partial_facts` is present. A fact that the verification did not
+     * establish is left out, and no member is null or an empty string; a
+     * fact that was established but holds nothing stays, as in
+     * `"measured": {}`. A measurement names its `platform`, `sev-snp` with
+     * `launch` or `tdx` with `mrtd` and `rtmr0` to `rtmr3`, and a code
+     * measurement leaves out the registers that the release leaves to the
+     * platform. The TLS and HPKE keys appear only in
+     * `verified_facts.crypto_material`. A step's `message` is present only
+     * for a failed or a skipped step, and is for people to read.
+     *
+     * **The JSON authorizes nothing.** This SDK offers no way to read it back
+     * into a report or into verified facts, and whoever holds it cannot tell
+     * whether a verifier wrote it: anyone can write verified facts in JSON.
+     * Never bind a channel to a key that was read from it, or treat it as
+     * proof that a verification took place; a client binds its connections
+     * only to the [verifiedFacts] of a verification that it ran itself.
+     */
+    public fun toJson(): String = ReportJson.encode(this)
 
     override fun equals(other: Any?): Boolean =
         this === other || (

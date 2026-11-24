@@ -72,6 +72,16 @@ class DocumentationExamplesTest {
         return client
     }
 
+    private suspend fun reportsAsJson(): EnclaveHttpClient {
+        val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
+            onVerification = { _, attempt ->
+                val report = attempt.report ?: (attempt.error?.cause as? VerificationException)?.report
+                report?.let { println(it.toJson()) }
+            }
+        }
+        return client
+    }
+
     @Test
     fun theExamplesNameTheTransportThatTheyAskFor() {
         assertEquals(Transport.Ehbp("https://proxy.example.com/"), Transport.Ehbp(proxyUrl = "https://proxy.example.com/"))

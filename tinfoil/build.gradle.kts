@@ -293,6 +293,9 @@ android {
         // conformance build of the verifier library has, so they are not
         // sources of an ordinary build.
         sourceSets["androidTest"].kotlin.srcDir("src/androidTestConformance/kotlin")
+        // The golden files of the report's JSON form, which they check
+        // against the vectors that the files name.
+        sourceSets["androidTest"].assets.srcDir("testdata")
     }
 
     // The fakes and test servers that the tests of every module share. They
@@ -310,9 +313,11 @@ kotlin {
     }
 }
 
-// ExperimentalApiTest reads the committed API.
+// ExperimentalApiTest reads the committed API, and ReportJsonTest the golden
+// files of the report's JSON form.
 tasks.withType<Test>().configureEach {
     inputs.files("api/tinfoil.api").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("testdata").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 dependencies {

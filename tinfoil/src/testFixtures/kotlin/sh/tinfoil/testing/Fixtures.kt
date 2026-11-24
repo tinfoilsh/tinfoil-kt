@@ -152,8 +152,6 @@ public fun verification(
     config = null,
     runtime = null,
     platform = null,
-    tlsPublicKeyFingerprint = fingerprint,
-    hpkePublicKey = hpkePublicKey,
     cryptoMaterial = cryptoMaterial,
     freshnessExpiresAt = expiresAt,
 )
