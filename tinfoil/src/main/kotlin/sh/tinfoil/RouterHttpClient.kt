@@ -59,30 +59,37 @@ public class RouterHttpClient private constructor(
     public val transport: Transport get() = connection.transport
 
     /**
-     * The last successful verification, without checking it. It may have
-     * expired or been rejected since; use [ensureVerified] for one that is
-     * valid.
+     * Returns the outcome of the most recent attempt to verify the router
+     * that the client chose, without any I/O, as
+     * [EnclaveHttpClient.lastVerification] does: its report, or the
+     * [TinfoilException] that it failed with. The routers that
+     * `create` tried and passed over are not described here; see
+     * [RouterOptions.onVerification]. A report that it returns may have
+     * reached its freshness deadline or been withdrawn since; use
+     * [ensureVerified] for one that is valid now.
      */
-    public val current: Verification? get() = connection.current
+    public fun lastVerification(): VerificationAttempt? = connection.lastVerification
 
     /**
-     * Returns a verification of the router that is valid now, verifying
-     * first only if the last one has reached its freshness deadline, the
-     * router has rejected its key, or a verification that was to replace
-     * it has failed with an [AttestationException]. It behaves as
+     * Returns the report of a verification of the router that is valid
+     * now, verifying first only if the last one has reached its freshness
+     * deadline, the router has rejected its key, or a verification that was
+     * to replace it has failed with an [AttestationException]. It behaves as
      * [EnclaveHttpClient.ensureVerified] does, and is safe to call from the
      * main thread.
      *
      * @throws ConfigurationException if the client is closed.
      * @throws NetworkException if the attestation document cannot be fetched.
-     * @throws AttestationException if the router is not to be trusted.
+     * @throws AttestationException if the router is not to be trusted. When
+     *   the verifier rejected the document, its cause is a
+     *   [VerificationException] with the report.
      */
     @Throws(IOException::class, CancellationException::class)
-    public suspend fun ensureVerified(): Verification = connection.ensureVerified()
+    public suspend fun ensureVerified(): VerificationReport = connection.ensureVerified()
 
     /**
      * Verifies the same router again, even if the last verification is still
-     * valid, and returns the new verification. It behaves as
+     * valid, and returns the new verification's report. It behaves as
      * [EnclaveHttpClient.reverify] does: an [AttestationException]
      * withdraws the last verification, so that the next request verifies
      * the router again, and any other failure leaves a verification that is
@@ -90,7 +97,7 @@ public class RouterHttpClient private constructor(
      * chooses another one. It is safe to call from the main thread.
      */
     @Throws(IOException::class, CancellationException::class)
-    public suspend fun reverify(): Verification = connection.reverify()
+    public suspend fun reverify(): VerificationReport = connection.reverify()
 
     /**
      * Sends [request] to the router and returns the response as soon as its
@@ -268,7 +275,7 @@ public class RouterHttpClient private constructor(
             // any thread may call this.
             val transport = settings.transport
             val verificationCheck = settings.verificationCheck
-            val onVerificationResult = settings.onVerificationResult
+            val onVerification = settings.onVerification
             // Everything down to the fallback's connection is checked
             // before any I/O.
             val proxy = (transport as? Transport.Ehbp)?.proxyUrl?.also { Urls.routeUrl(it, "proxy URL") }
@@ -278,7 +285,7 @@ public class RouterHttpClient private constructor(
             val open = { host: String ->
                 EnclaveConnection.create(
                     host, RouterDiscovery.ROUTER_PIN, transport, settings.fetchAttestation, verifier, secret, verificationCheck,
-                    onVerificationResult, internals,
+                    onVerification, internals,
                     // The caller named no host, so a direct connection to
                     // the router is pinned in both transport modes.
                     proposed = true,

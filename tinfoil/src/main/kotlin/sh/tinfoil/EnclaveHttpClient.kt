@@ -16,9 +16,10 @@ import java.io.IOException
 /**
  * Decides whether an enclave whose attestation has verified may be used.
  *
- * It is called with each verification that passes the trust and the policy, before the
- * client uses the enclave's keys: when the client is created and every time
- * it verifies again. Return to accept the enclave. Throw to reject it: the
+ * It is called with the verified facts of each verification that passes the
+ * trust and the policy, before the client uses the enclave's keys: when the
+ * client is created and every time it verifies again. It is never called
+ * for a verification that fails, and never sees a report or partial facts. Return to accept the enclave. Throw to reject it: the
  * verification then fails with an [AttestationException] that keeps the
  * thrown exception as its cause, and is not tried again.
  *
@@ -30,11 +31,11 @@ import java.io.IOException
  */
 public fun interface VerificationCheck {
     /**
-     * @param verification What the enclave's attestation proved.
+     * @param facts What the enclave's attestation proved.
      * @throws Exception to reject the enclave.
      */
     @Throws(Exception::class)
-    public fun check(verification: Verification)
+    public fun check(facts: VerifiedFacts)
 }
 
 /**
@@ -92,17 +93,33 @@ public class EnclaveHttpClient private constructor(
     public val transport: Transport get() = connection.transport
 
     /**
-     * The last successful verification, without checking it. It may have
-     * expired or been rejected since; use [ensureVerified] for one that is
-     * valid.
+     * Returns the outcome of the most recent attempt to verify the enclave,
+     * without any I/O: [VerificationAttempt.Passed] with the report of an
+     * attempt that passed, or [VerificationAttempt.Failed] with the
+     * [TinfoilException] that the client reported for one that failed, the
+     * same as [EnclaveOptions.onVerification] was given. It is null before
+     * the first attempt has an outcome.
+     *
+     * Every attempt counts: the first verification, one that is tried
+     * again, and each that a refused key, a freshness deadline or
+     * [reverify] starts. A failure is never hidden behind an earlier
+     * success. When the verifier rejected the attestation document, the
+     * failure is an [AttestationException] whose cause is a
+     * [VerificationException], which carries the report with the step
+     * that failed and the partial facts.
+     *
+     * A report that it returns is not checked: it may have reached its
+     * freshness deadline or been withdrawn since. Use [ensureVerified] for
+     * one that is valid now.
      */
-    public val current: Verification? get() = connection.current
+    public fun lastVerification(): VerificationAttempt? = connection.lastVerification
 
     /**
-     * Returns a verification that is valid now, verifying first only if the
-     * last one has reached its freshness deadline, the enclave has rejected
-     * its key, or a verification that was to replace it has failed with an
-     * [AttestationException]. Returning means that requests can be sent.
+     * Returns the report of a verification that is valid now, verifying
+     * first only if the last one has reached its freshness deadline, the
+     * enclave has rejected its key, or a verification that was to replace
+     * it has failed with an [AttestationException]. Returning means that
+     * requests can be sent. The report's verified facts are set.
      *
      * Callers that need a verification while one is running share it, its
      * failure included. Cancelling the coroutine ends only this caller's
@@ -111,14 +128,16 @@ public class EnclaveHttpClient private constructor(
      *
      * @throws ConfigurationException if the client is closed.
      * @throws NetworkException if the attestation document cannot be fetched.
-     * @throws AttestationException if the enclave is not to be trusted.
+     * @throws AttestationException if the enclave is not to be trusted. When
+     *   the verifier rejected the document, its cause is a
+     *   [VerificationException] with the report.
      */
     @Throws(IOException::class, CancellationException::class)
-    public suspend fun ensureVerified(): Verification = connection.ensureVerified()
+    public suspend fun ensureVerified(): VerificationReport = connection.ensureVerified()
 
     /**
      * Verifies the enclave again, even if the last verification is still
-     * valid, and returns the new verification.
+     * valid, and returns the new verification's report.
      *
      * A failure is thrown here, and what happens to the last verification
      * depends on its kind:
@@ -141,7 +160,7 @@ public class EnclaveHttpClient private constructor(
      * call from the main thread.
      */
     @Throws(IOException::class, CancellationException::class)
-    public suspend fun reverify(): Verification = connection.reverify()
+    public suspend fun reverify(): VerificationReport = connection.reverify()
 
     /**
      * Sends [request] to the enclave and returns the response as soon as its
@@ -444,7 +463,7 @@ public class EnclaveHttpClient private constructor(
                     enclave, inputs.pin, settings.transport, settings.fetchAttestation,
                     // The client never adds or changes a request's cache secret.
                     verifier, null,
-                    settings.verificationCheck, settings.onVerificationResult, internals,
+                    settings.verificationCheck, settings.onVerification, internals,
                     refuseProxyOnEnclaveOrigin = true,
                 ),
                 trust,

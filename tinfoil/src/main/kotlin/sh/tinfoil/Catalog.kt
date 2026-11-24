@@ -87,8 +87,8 @@ public class ModelPin(
 }
 
 /**
- * The last successful verification of one replica that a [GatewayHttpClient]
- * has used.
+ * The last attempt to verify one replica that a [GatewayHttpClient] has
+ * tried, whether it passed or failed.
  *
  * Experimental: the gateway route is new, and this API may change or be
  * removed in a later release.
@@ -102,8 +102,16 @@ public class ReplicaVerification internal constructor(
     public val reference: String,
     /** The model whose [ModelPin] the replica was verified under, or null for a model that is not pinned. */
     public val pinnedModel: String?,
-    /** The verification. It may have expired or been rejected since. */
-    public val verification: Verification,
+    /**
+     * The outcome of the last attempt to verify the replica: its
+     * [VerificationReport] if it passed, which may have reached its
+     * freshness deadline or been withdrawn since; or the [TinfoilException]
+     * that it failed with, from which a [VerificationException] and its
+     * report are reachable as the cause when the verifier rejected the
+     * replica's document. An earlier success is not kept once a later
+     * attempt fails.
+     */
+    public val attempt: VerificationAttempt,
 ) {
     /**
      * The models that requests sent to the replica named, sorted. They are
@@ -115,12 +123,12 @@ public class ReplicaVerification internal constructor(
     override fun equals(other: Any?): Boolean =
         this === other || (
             other is ReplicaVerification && host == other.host && models == other.models &&
-                reference == other.reference && pinnedModel == other.pinnedModel && verification == other.verification
+                reference == other.reference && pinnedModel == other.pinnedModel && attempt == other.attempt
             )
 
-    override fun hashCode(): Int = Objects.hash(host, models, reference, pinnedModel, verification)
+    override fun hashCode(): Int = Objects.hash(host, models, reference, pinnedModel, attempt)
 
     override fun toString(): String =
         "ReplicaVerification(host=$host, models=$models, reference=$reference, pinnedModel=$pinnedModel, " +
-            "verification=$verification)"
+            "attempt=$attempt)"
 }

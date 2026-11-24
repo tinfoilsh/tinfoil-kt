@@ -13,7 +13,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -50,17 +52,19 @@ class EnclaveHttpClientLiveTest {
 
     @Test
     fun theRouterVerifiesAndAnswersOverPinnedConnections() = live {
-        val seen = CopyOnWriteArrayList<Verification>()
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val seen = CopyOnWriteArrayList<VerifiedFacts>()
+        val results = CopyOnWriteArrayList<VerificationAttempt>()
 
         EnclaveHttpClient.create(enclave = enclave, trust = trust) {
             verificationCheck = VerificationCheck { seen += it }
-            onVerificationResult = { results += it }
+            onVerification = { _, attempt -> results += attempt }
         }.use { client ->
-            val verified = assertNotNull(client.current, "a client is verified when it is returned")
+            val report = assertNotNull(client.lastVerification()?.report, "a client is verified when it is returned")
+            val verified = assertNotNull(report.verifiedFacts)
             assertSame(verified, seen.single())
-            assertSame(verified, awaitOne(results).getOrThrow())
-            assertSame(verified, client.ensureVerified(), "a valid verification is reused")
+            assertSame(report, awaitOne(results).report)
+            assertSame(report, client.ensureVerified(), "a valid verification is reused")
+            assertTrue(report.steps.all { it.status == StepStatus.PASSED || it.status == StepStatus.SKIPPED }, "$report")
 
             assertEquals("tinfoilsh/confidential-model-router", verified.configRepo)
             assertTrue(Regex("[0-9a-f]{64}").matches(verified.codeDigest), verified.codeDigest)
@@ -68,7 +72,7 @@ class EnclaveHttpClientLiveTest {
             assertTrue(verified.cryptoMaterial.any { it.id == "tls" && it.data == verified.tlsPublicKeyFingerprint })
             assertNotNull(verified.enclaveMeasurement)
             assertTrue(verified.freshnessExpiresAt.isAfter(Instant.now()), "${verified.freshnessExpiresAt}")
-            assertEquals("tinfoil-kt", verified.metadata.verifier.name)
+            assertEquals("tinfoil-kt", report.metadata.verifier.name)
 
             assertEquals("https://$enclave/", client.baseUrl.toString())
             assertEquals(enclave, client.enclave)
@@ -86,23 +90,33 @@ class EnclaveHttpClientLiveTest {
 
             val again = client.reverify()
             assertEquals(2, seen.size)
-            assertTrue(!again.metadata.verifiedAt.isBefore(verified.metadata.verifiedAt))
+            assertTrue(!again.metadata.verifiedAt.isBefore(report.metadata.verifiedAt))
             client.execute(models).use { assertEquals(200, it.code) }
         }
     }
 
     @Test
     fun anEnclaveThatRunsSomethingElseIsRefused() = live {
-        val results = CopyOnWriteArrayList<Result<Verification>>()
+        val results = CopyOnWriteArrayList<VerificationAttempt>()
 
         val error = assertFailsWith<AttestationException> {
             EnclaveHttpClient.create(enclave = enclave, trust = Trust.RepoPin("tinfoilsh/not-the-router")) {
-                onVerificationResult = { results += it }
+                onVerification = { _, attempt -> results += attempt }
             }
         }
 
         assertNotNull(error.layer, error.message)
-        assertSame(error, awaitOne(results).exceptionOrNull())
+        // The verifier's rejection, with its report, is the cause.
+        val rejected = assertIs<VerificationException>(error.cause)
+        assertEquals(error.layer, rejected.layer)
+        assertEquals(error.layer, rejected.report.failedStep?.layer)
+        assertNull(rejected.report.verifiedFacts)
+        assertNotNull(rejected.report.partialFacts)
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (results.size < 2 && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        assertSame(error, results.last().error)
     }
 
     @Test

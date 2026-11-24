@@ -21,8 +21,10 @@ import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
 import sh.tinfoil.Transport
 import sh.tinfoil.TransportMode
-import sh.tinfoil.Verification
+import sh.tinfoil.VerificationAttempt
 import sh.tinfoil.VerificationCheck
+import sh.tinfoil.VerificationReport
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.RecoverableResponse
 import sh.tinfoil.internal.transport.AttestedSender
 import sh.tinfoil.internal.transport.BoundTransport
@@ -70,7 +72,8 @@ internal class EnclaveConnection(
     private val proxyUrl: String?,
     private val attestor: Attestor,
     private val protocol: TransportProtocol,
-    private val onVerificationResult: ((Result<Verification>) -> Unit)?,
+    /** Told of every attempt to verify the enclave; see [observe]. */
+    private val onVerification: VerificationObserver?,
     /** The prompt-cache secret that requests are given, if any. */
     private val cacheSecret: UserCacheSecret? = null,
     private val clock: () -> Instant = Instant::now,
@@ -113,9 +116,13 @@ internal class EnclaveConnection(
     private var state: State? = null
     private var refresh: Refresh? = null
     private var closed = false
+    private var last: VerificationAttempt? = null
 
-    /** A verification and the transport that was made for its keys. */
-    private class State(val verification: Verification, val transport: BoundTransport) {
+    /**
+     * A verification and the transport that was made for its keys. [facts]
+     * are [report]'s verified facts.
+     */
+    private class State(val report: VerificationReport, val facts: VerifiedFacts, val transport: BoundTransport) {
         /**
          * Set once the enclave has refused these keys, or once a
          * verification that was to replace this one has been rejected.
@@ -131,29 +138,35 @@ internal class EnclaveConnection(
         var job: Job? = null
     }
 
-    /** The last successful verification, unchecked: it may have expired or been rejected. */
-    val current: Verification?
-        get() = synchronized(lock) { state?.verification }
+    /**
+     * The outcome of the most recent attempt to verify the enclave, once it
+     * is decided, or null before the first: the report of one that passed,
+     * unchecked, as it may have expired or been withdrawn since; or the
+     * exception of one that failed. An attempt that the client's close
+     * ended has no outcome, and leaves this as it was.
+     */
+    val lastVerification: VerificationAttempt?
+        get() = synchronized(lock) { last }
 
     val isClosed: Boolean
         get() = synchronized(lock) { closed }
 
-    /** A verification that is valid now, verifying first only when there is none. */
+    /** The report of a verification that is valid now, verifying first only when there is none. */
     @Throws(TinfoilException::class)
-    suspend fun ensureVerified(): Verification = verified(force = false).verification
+    suspend fun ensureVerified(): VerificationReport = verified(force = false).report
 
     /**
-     * A verification that is valid now, from a single attempt if the enclave
-     * has to be verified: a failure is not tried again, and is not reported
-     * to the observer. It is for an enclave that is one of several
-     * candidates, which the caller closes if it fails.
+     * The report of a verification that is valid now, from a single attempt
+     * if the enclave has to be verified: a failure is not tried again. It is
+     * for an enclave that is one of several candidates, which the caller
+     * closes if it fails.
      */
     @Throws(TinfoilException::class)
-    suspend fun verifyOnce(): Verification = verified(force = false, once = true).verification
+    suspend fun verifyOnce(): VerificationReport = verified(force = false, once = true).report
 
     /** Verifies again, even when the current verification is still valid. */
     @Throws(TinfoilException::class)
-    suspend fun reverify(): Verification = verified(force = true).verification
+    suspend fun reverify(): VerificationReport = verified(force = true).report
 
     /**
      * Finds out, without sending any of a request, whether the enclave's
@@ -301,7 +314,7 @@ internal class EnclaveConnection(
         return !body.isOneShot() && !body.isDuplex()
     }
 
-    private fun State.isValid(): Boolean = !withdrawn && clock().isBefore(verification.freshnessExpiresAt)
+    private fun State.isValid(): Boolean = !withdrawn && clock().isBefore(facts.freshnessExpiresAt)
 
     /**
      * A state that is valid now. Callers that need a verification while one
@@ -336,52 +349,73 @@ internal class EnclaveConnection(
         // A refresh serves every waiting caller, so it runs under no single
         // caller's job, and its outcome reaches the waiters as a value.
         starting.job = refreshScope.launch {
-            var outcome = Outcome(AttestationException("the verification did not complete"), report = null)
+            // The outcome of each attempt, in order, once it is decided. Only
+            // this coroutine touches it.
+            val attempts = ArrayList<VerificationAttempt>()
+            var failure: TinfoilException? = AttestationException("the verification did not complete")
             try {
-                outcome = runRefresh(once)
+                failure = runRefresh(once, attempts)
             } finally {
                 synchronized(lock) {
                     if (refresh === starting) {
                         refresh = null
                     }
                 }
-                starting.failure.complete(outcome.failure)
+                starting.failure.complete(failure)
+                // The observer is told only once this verification is over
+                // for everyone, and outside the lock: if it calls back into
+                // the client, it finds the published state or starts a
+                // verification of its own, and never waits for the one that
+                // is calling it.
+                attempts.forEach(::observe)
             }
-            // The observer is told only once this verification is over for
-            // everyone: if it calls back into the client, it finds the
-            // published state or starts a verification of its own, and never
-            // waits for the one that is calling it.
-            outcome.report?.let(::observe)
         }
         return starting
     }
 
-    /** How a verification ended, and what its observer is to be told, if anything. */
-    private class Outcome(val failure: TinfoilException?, val report: Result<Verification>?)
-
-    private fun failed(failure: TinfoilException, once: Boolean = false): Outcome =
-        // A verification that the client's close ended is not a failed one,
-        // so it is not reported as one; neither is a candidate's.
-        Outcome(failure, if (isClosed || once) null else Result.failure(failure))
-
     /**
-     * Verifies the enclave and publishes the result. A verification that
-     * fails with an [AttestationException] withdraws the one that it was to
-     * replace, even one that is still before its deadline: the enclave no
-     * longer passes, so nothing more is sent under keys that it once proved.
-     * Any other failure, such as a [NetworkException], leaves that one in use
-     * until its deadline.
+     * Verifies the enclave and publishes the result, adding the outcome of
+     * each attempt to [attempts], and returns why the enclave is not
+     * verified, or null if it is.
+     *
+     * A verification that fails with an [AttestationException] withdraws
+     * the one that it was to replace, even one that is still before its
+     * deadline: the enclave no longer passes, so nothing more is sent under
+     * keys that it once proved. Any other failure, such as a
+     * [NetworkException], leaves that one in use until its deadline.
      */
-    private suspend fun runRefresh(once: Boolean): Outcome {
+    private suspend fun runRefresh(once: Boolean, attempts: MutableList<VerificationAttempt>): TinfoilException? {
         // Refreshes run one at a time, so this is the state that the
         // refresh would replace.
         val replacing = synchronized(lock) { state }
-        val outcome = attestAndPublish(once)
-        if (outcome.failure is AttestationException && replacing != null) {
+        // An attempt that is tried again is the last verification until the
+        // next one is decided.
+        val failure = attestAndPublish(once) { retried -> recordFailure(retried)?.let(attempts::add) }
+        if (failure == null) {
+            // Published together with the state.
+            synchronized(lock) { last }?.let(attempts::add)
+            return null
+        }
+        if (failure is AttestationException && replacing != null) {
             withdraw(replacing)
         }
-        return outcome
+        recordFailure(failure)?.let(attempts::add)
+        return failure
     }
+
+    /**
+     * Makes [failure] the last verification and returns it as the outcome
+     * to report, or null if the client's close ended the attempt: that is
+     * not a failed verification, so it is neither recorded nor reported.
+     */
+    private fun recordFailure(failure: TinfoilException): VerificationAttempt? =
+        synchronized(lock) {
+            if (closed) {
+                null
+            } else {
+                VerificationAttempt.Failed(failure).also { last = it }
+            }
+        }
 
     /**
      * Stops [replacing] from carrying requests, unless a newer verification
@@ -400,28 +434,33 @@ internal class EnclaveConnection(
         replacing.transport.retire()
     }
 
-    private suspend fun attestAndPublish(once: Boolean): Outcome {
-        val verification = try {
-            if (once) attestor.attestOnce(enclave, pin) else attestor.attest(enclave, pin)
+    /**
+     * Verifies the enclave and, if it passes, publishes the new state and
+     * makes its report the last verification, together. Returns why the
+     * enclave is not verified, or null if it is. [retried] is given the
+     * failure of each attempt that is tried again.
+     */
+    private suspend fun attestAndPublish(once: Boolean, retried: (TinfoilException) -> Unit): TinfoilException? {
+        val report = try {
+            if (once) attestor.attestOnce(enclave, pin) else attestor.attest(enclave, pin, retried)
         } catch (e: CancellationException) {
             throw e
         } catch (e: TinfoilException) {
-            return failed(e, once)
+            return e
         } catch (e: Exception) {
             // Whatever went wrong, the enclave is not verified.
-            return failed(
-                AttestationException("verification failed: ${e.message ?: e.javaClass.simpleName}", cause = e),
-                once,
-            )
+            return AttestationException("verification failed: ${e.message ?: e.javaClass.simpleName}", cause = e)
         }
+        val facts = report.verifiedFacts
+            ?: return AttestationException("the verification of $enclave has no verified facts")
         val transport = try {
-            protocol.bind(verification)
+            protocol.bind(facts)
         } catch (e: TinfoilException) {
-            return failed(e, once)
+            return e
         }
         var replaced: BoundTransport? = null
         val failure = synchronized(lock) {
-            val next = State(verification, transport)
+            val next = State(report, facts, transport)
             when {
                 closed -> closedError()
                 // Making the transport or waiting for the lock can outlast
@@ -431,23 +470,28 @@ internal class EnclaveConnection(
                 else -> {
                     replaced = state?.transport
                     state = next
+                    last = VerificationAttempt.Passed(report)
                     null
                 }
             }
         }
         if (failure != null) {
             transport.retire()
-            return if (failure is AttestationException) failed(failure, once) else Outcome(failure, report = null)
+            return failure
         }
         // Idle connections of the replaced transport are tied to its keys.
         replaced?.retire()
-        return Outcome(null, Result.success(verification))
+        return null
     }
 
-    /** The observer only watches: whatever it throws changes nothing. */
-    private fun observe(result: Result<Verification>) {
+    /**
+     * Tells the observer of one attempt's outcome. It only watches:
+     * whatever it throws changes nothing, a [CancellationException]
+     * included, which is its own and not the verification's.
+     */
+    private fun observe(attempt: VerificationAttempt) {
         try {
-            onVerificationResult?.invoke(result)
+            onVerification?.invoke(enclave, attempt)
         } catch (_: Throwable) {
             // Deliberately ignored, an Error included: the verification is
             // over, and its observer's failure is not the client's.
@@ -473,7 +517,7 @@ internal class EnclaveConnection(
             verifier: AttestationVerifier,
             cacheSecret: UserCacheSecret?,
             verificationCheck: VerificationCheck?,
-            onVerificationResult: ((Result<Verification>) -> Unit)?,
+            onVerification: VerificationObserver?,
             internals: Internals,
             /**
              * Whether [enclave] was proposed by something that is not
@@ -531,7 +575,7 @@ internal class EnclaveConnection(
                         settings = internals.http,
                     )
                 },
-                onVerificationResult = onVerificationResult,
+                onVerification = onVerification,
                 cacheSecret = cacheSecret,
                 clock = internals.clock,
                 onClose = {
@@ -543,6 +587,12 @@ internal class EnclaveConnection(
         }
     }
 }
+
+/**
+ * What a client tells of each attempt to verify an enclave: the enclave's
+ * host, and the attempt's report or exception.
+ */
+internal typealias VerificationObserver = (host: String, attempt: VerificationAttempt) -> Unit
 
 /** What tests replace; the defaults are what production runs with. */
 internal class Internals(

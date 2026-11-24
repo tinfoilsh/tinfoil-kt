@@ -70,17 +70,18 @@ class GatewayLiveTest {
 
     @Test
     fun aReplicaIsVerifiedThroughTheGatewayAndAnswersASealedRequest() = live {
-        val results = java.util.concurrent.CopyOnWriteArrayList<Result<Verification>>()
-        GatewayHttpClient.create { onVerificationResult = { results += it } }.use { client ->
+        val results = java.util.concurrent.CopyOnWriteArrayList<VerificationAttempt>()
+        GatewayHttpClient.create { onVerification = { _, attempt -> results += attempt } }.use { client ->
             assertEquals(GatewayHttpClient.DEFAULT_URL, client.baseUrl.toString())
             val models = client.models()
             Log.i(TAG, "models: $models")
             assertTrue(models.isNotEmpty())
-            assertEquals(emptyList(), client.current, "creating a client verifies nothing")
+            assertEquals(emptyList(), client.lastVerification(), "creating a client verifies nothing")
             val model = models.first()
             val catalog = GatewayHttpClient.fetchCatalog(gateway)
 
-            val verification = client.ensureVerified(model)
+            val report = client.ensureVerified(model)
+            val verification = assertNotNull(report.verifiedFacts)
 
             Log.i(
                 TAG,
@@ -88,12 +89,12 @@ class GatewayLiveTest {
                     "fresh until ${verification.freshnessExpiresAt}",
             )
             assertTrue(Regex("[0-9a-f]{64}").matches(verification.hpkePublicKey.orEmpty()), "$verification")
-            val replica = client.current.single()
-            assertEquals(verification, replica.verification)
+            val replica = client.lastVerification().single()
+            assertEquals(report, replica.attempt.report)
             assertEquals(catalog[model]?.repo, replica.reference)
             assertTrue(replica.host in catalog[model]!!.hosts, replica.host)
             assertNull(replica.pinnedModel)
-            assertEquals(verification, client.ensureVerified(model), "a valid verification is reused")
+            assertEquals(report, client.ensureVerified(model), "a valid verification is reused")
 
             // A sealed chat request without an API key.
             client.executeRecoverable(chat(client, model)).use { recoverable ->
@@ -111,7 +112,7 @@ class GatewayLiveTest {
                 assertNotNull(response.request.header("X-Tinfoil-Cache-Prefix"))
                 assertTrue(response.code in 400..499, "HTTP ${response.code}: ${body.take(200)}")
             }
-            assertTrue(model in client.current.flatMap { it.models })
+            assertTrue(model in client.lastVerification().flatMap { it.models })
 
             // A request that names no model, and a model that is not served.
             assertFailsWith<ConfigurationException> {
@@ -119,7 +120,7 @@ class GatewayLiveTest {
             }
             assertFailsWith<ConfigurationException> { client.ensureVerified("no-such-model") }
         }
-        assertTrue(results.isNotEmpty() && results.all { it.isSuccess }, "$results")
+        assertTrue(results.isNotEmpty() && results.all { it.report != null }, "$results")
     }
 
     @Test
@@ -132,9 +133,9 @@ class GatewayLiveTest {
             pinnedModelsOnly = true
         }.use { client ->
             assertEquals(listOf(model), client.models())
-            val verification = client.ensureVerified(model)
-            assertEquals(entry.repo, verification.configRepo ?: entry.repo)
-            assertEquals(model, client.current.single().pinnedModel)
+            val verification = client.ensureVerified(model).verifiedFacts
+            assertEquals(entry.repo, verification?.configRepo ?: entry.repo)
+            assertEquals(model, client.lastVerification().single().pinnedModel)
             if (other != null) {
                 assertFailsWith<ConfigurationException> { client.ensureVerified(other) }
             }
@@ -143,14 +144,14 @@ class GatewayLiveTest {
         GatewayHttpClient.create { modelPins = mapOf(model to ModelPin("tinfoilsh/confidential-model-router")) }.use { client ->
             val error = assertFailsWith<AttestationException> { client.ensureVerified(model) }
             Log.i(TAG, "a pin to another repository: ${error.detail}")
-            assertEquals(emptyList(), client.current)
+            assertTrue(client.lastVerification().all { it.attempt.error != null }, "every replica that was tried failed")
         }
         // A pin to a release that the replicas do not run.
         GatewayHttpClient.create { modelPins = mapOf(model to ModelPin("${entry.repo}@v0.0.0-no-such-release")) }.use { client ->
             val error = assertFailsWith<TinfoilException> { client.ensureVerified(model) }
             Log.i(TAG, "a pin to a release that is not running: ${error.message}")
             assertTrue(error is AttestationException, "$error")
-            assertEquals(emptyList(), client.current)
+            assertTrue(client.lastVerification().all { it.attempt.error != null }, "every replica that was tried failed")
         }
     }
 

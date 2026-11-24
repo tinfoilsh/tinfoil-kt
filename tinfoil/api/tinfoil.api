@@ -111,6 +111,13 @@ public final class sh/tinfoil/ConfigurationException : sh/tinfoil/TinfoilExcepti
 	public fun isRetryable ()Z
 }
 
+public final class sh/tinfoil/CpuEvidence {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMeasurement ()Lsh/tinfoil/Measurement;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class sh/tinfoil/CryptoMaterial {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getData ()Ljava/lang/String;
@@ -128,10 +135,10 @@ public final class sh/tinfoil/EnclaveHttpClient : sh/tinfoil/AttestedHttpClient 
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun getBaseUrl ()Lokhttp3/HttpUrl;
-	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getTrust ()Lsh/tinfoil/Trust;
+	public final fun lastVerification ()Lsh/tinfoil/VerificationAttempt;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
 	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -143,15 +150,27 @@ public final class sh/tinfoil/EnclaveHttpClient$Companion {
 
 public final class sh/tinfoil/EnclaveOptions {
 	public final fun getFetchAttestation ()Lsh/tinfoil/AttestationFetcher;
-	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
+	public final fun getOnVerification ()Lkotlin/jvm/functions/Function2;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
 	public final fun setFetchAttestation (Lsh/tinfoil/AttestationFetcher;)V
-	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
+	public final fun setOnVerification (Lkotlin/jvm/functions/Function2;)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
 	public final fun setTransport (Lsh/tinfoil/Transport;)V
 	public final fun setVerificationCheck (Lsh/tinfoil/VerificationCheck;)V
+}
+
+public final class sh/tinfoil/ExpectedFacts {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArtifact ()Lsh/tinfoil/ArtifactVerification;
+	public final fun getCodeMeasurement ()Lsh/tinfoil/Measurement;
+	public final fun getConfig ()Lsh/tinfoil/ConfigVerification;
+	public final fun getConfigRepo ()Ljava/lang/String;
+	public final fun getMeasurement ()Lsh/tinfoil/Measurement;
+	public final fun getPlatform ()Lsh/tinfoil/ArtifactVerification;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface annotation class sh/tinfoil/ExperimentalTinfoilApi : java/lang/annotation/Annotation {
@@ -165,7 +184,7 @@ public final class sh/tinfoil/GatewayHttpClient : sh/tinfoil/AttestedHttpClient 
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun getBaseUrl ()Lokhttp3/HttpUrl;
-	public final fun getCurrent ()Ljava/util/List;
+	public final fun lastVerification ()Ljava/util/List;
 	public final fun models (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
 	public fun toString ()Ljava/lang/String;
@@ -181,7 +200,7 @@ public final class sh/tinfoil/GatewayHttpClient$Companion {
 public final class sh/tinfoil/GatewayOptions {
 	public final fun getCatalog ()Lkotlin/jvm/functions/Function0;
 	public final fun getModelPins ()Ljava/util/Map;
-	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
+	public final fun getOnVerification ()Lkotlin/jvm/functions/Function2;
 	public final fun getPinnedModelsOnly ()Z
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
 	public final fun getUrl ()Ljava/lang/String;
@@ -189,7 +208,7 @@ public final class sh/tinfoil/GatewayOptions {
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
 	public final fun setCatalog (Lkotlin/jvm/functions/Function0;)V
 	public final fun setModelPins (Ljava/util/Map;)V
-	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
+	public final fun setOnVerification (Lkotlin/jvm/functions/Function2;)V
 	public final fun setPinnedModelsOnly (Z)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
 	public final fun setUrl (Ljava/lang/String;)V
@@ -198,6 +217,15 @@ public final class sh/tinfoil/GatewayOptions {
 }
 
 public abstract interface annotation class sh/tinfoil/InternalTinfoilApi : java/lang/annotation/Annotation {
+}
+
+public final class sh/tinfoil/MeasuredFacts {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCpu ()Lsh/tinfoil/CpuEvidence;
+	public final fun getHpkePublicKeyFingerprint ()Ljava/lang/String;
+	public final fun getTlsPublicKeyFingerprint ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/Measurement {
@@ -222,6 +250,14 @@ public final class sh/tinfoil/ModelPin {
 public final class sh/tinfoil/NetworkException : sh/tinfoil/TinfoilException {
 	public final fun getStatus ()Ljava/lang/Integer;
 	public fun isRetryable ()Z
+}
+
+public final class sh/tinfoil/PartialFacts {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getExpected ()Lsh/tinfoil/ExpectedFacts;
+	public final fun getMeasured ()Lsh/tinfoil/MeasuredFacts;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/Policy {
@@ -270,11 +306,11 @@ public final class sh/tinfoil/ReferenceSource$Companion {
 
 public final class sh/tinfoil/ReplicaVerification {
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAttempt ()Lsh/tinfoil/VerificationAttempt;
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getModels ()Ljava/util/List;
 	public final fun getPinnedModel ()Ljava/lang/String;
 	public final fun getReference ()Ljava/lang/String;
-	public final fun getVerification ()Lsh/tinfoil/Verification;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -287,9 +323,9 @@ public final class sh/tinfoil/RouterHttpClient : sh/tinfoil/AttestedHttpClient {
 	public final fun execute (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun executeRecoverable (Lokhttp3/Request;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun getBaseUrl ()Lokhttp3/HttpUrl;
-	public final fun getCurrent ()Lsh/tinfoil/Verification;
 	public final fun getEnclave ()Ljava/lang/String;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
+	public final fun lastVerification ()Lsh/tinfoil/VerificationAttempt;
 	public fun newCall (Lokhttp3/Request;)Lokhttp3/Call;
 	public final fun reverify (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -315,14 +351,14 @@ public final class sh/tinfoil/RouterListRelay : sh/tinfoil/RouterListFetcher {
 public final class sh/tinfoil/RouterOptions {
 	public final fun getFetchAttestation ()Lsh/tinfoil/AttestationFetcher;
 	public final fun getFetchRouterList ()Lsh/tinfoil/RouterListFetcher;
-	public final fun getOnVerificationResult ()Lkotlin/jvm/functions/Function1;
+	public final fun getOnVerification ()Lkotlin/jvm/functions/Function2;
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
 	public final fun getTransport ()Lsh/tinfoil/Transport;
 	public final fun getUserCacheSecret ()Ljava/lang/String;
 	public final fun getVerificationCheck ()Lsh/tinfoil/VerificationCheck;
 	public final fun setFetchAttestation (Lsh/tinfoil/AttestationFetcher;)V
 	public final fun setFetchRouterList (Lsh/tinfoil/RouterListFetcher;)V
-	public final fun setOnVerificationResult (Lkotlin/jvm/functions/Function1;)V
+	public final fun setOnVerification (Lkotlin/jvm/functions/Function2;)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
 	public final fun setTransport (Lsh/tinfoil/Transport;)V
 	public final fun setUserCacheSecret (Ljava/lang/String;)V
@@ -348,6 +384,37 @@ public final class sh/tinfoil/SoftwareIdentity {
 	public final fun getVersion ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/Step {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getLayer-yUSo6bc ()Ljava/lang/String;
+	public final fun getMessage ()Ljava/lang/String;
+	public final fun getStatus-lVKfkRY ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/StepStatus {
+	public static final field Companion Lsh/tinfoil/StepStatus$Companion;
+	public static final synthetic fun box-impl (Ljava/lang/String;)Lsh/tinfoil/StepStatus;
+	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
+	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static fun hashCode-impl (Ljava/lang/String;)I
+	public fun toString ()Ljava/lang/String;
+	public static fun toString-impl (Ljava/lang/String;)Ljava/lang/String;
+	public final synthetic fun unbox-impl ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/StepStatus$Companion {
+	public final fun getFAILED-lVKfkRY ()Ljava/lang/String;
+	public final fun getNOT_RUN-lVKfkRY ()Ljava/lang/String;
+	public final fun getPASSED-lVKfkRY ()Ljava/lang/String;
+	public final fun getSKIPPED-lVKfkRY ()Ljava/lang/String;
 }
 
 public final class sh/tinfoil/Tinfoil {
@@ -456,27 +523,34 @@ public final class sh/tinfoil/Trust$SignedBy : sh/tinfoil/Trust {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class sh/tinfoil/Verification {
+public abstract class sh/tinfoil/VerificationAttempt {
+	public abstract fun getError ()Lsh/tinfoil/TinfoilException;
+	public abstract fun getReport ()Lsh/tinfoil/VerificationReport;
+}
+
+public final class sh/tinfoil/VerificationAttempt$Failed : sh/tinfoil/VerificationAttempt {
 	public fun equals (Ljava/lang/Object;)Z
-	public final fun getCodeDigest ()Ljava/lang/String;
-	public final fun getCodeMeasurement ()Lsh/tinfoil/Measurement;
-	public final fun getCodeTag ()Ljava/lang/String;
-	public final fun getConfig ()Lsh/tinfoil/ConfigVerification;
-	public final fun getConfigRepo ()Ljava/lang/String;
-	public final fun getCryptoMaterial ()Ljava/util/List;
-	public final fun getEnclaveMeasurement ()Lsh/tinfoil/Measurement;
-	public final fun getFreshnessExpiresAt ()Ljava/time/Instant;
-	public final fun getHpkePublicKey ()Ljava/lang/String;
-	public final fun getMetadata ()Lsh/tinfoil/VerificationMetadata;
-	public final fun getPlatform ()Lsh/tinfoil/ArtifactVerification;
-	public final fun getRuntime ()Lsh/tinfoil/ArtifactVerification;
-	public final fun getTlsPublicKeyFingerprint ()Ljava/lang/String;
+	public fun getError ()Lsh/tinfoil/TinfoilException;
+	public fun getReport ()Lsh/tinfoil/VerificationReport;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/VerificationAttempt$Passed : sh/tinfoil/VerificationAttempt {
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getError ()Lsh/tinfoil/TinfoilException;
+	public fun getReport ()Lsh/tinfoil/VerificationReport;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface class sh/tinfoil/VerificationCheck {
-	public abstract fun check (Lsh/tinfoil/Verification;)V
+	public abstract fun check (Lsh/tinfoil/VerifiedFacts;)V
+}
+
+public final class sh/tinfoil/VerificationException : java/lang/Exception {
+	public final fun getLayer-yUSo6bc ()Ljava/lang/String;
+	public final fun getReport ()Lsh/tinfoil/VerificationReport;
 }
 
 public final class sh/tinfoil/VerificationLayer {
@@ -505,6 +579,35 @@ public final class sh/tinfoil/VerificationMetadata {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getVerifiedAt ()Ljava/time/Instant;
 	public final fun getVerifier ()Lsh/tinfoil/SoftwareIdentity;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/VerificationReport {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailedStep ()Lsh/tinfoil/Step;
+	public final fun getMetadata ()Lsh/tinfoil/VerificationMetadata;
+	public final fun getPartialFacts ()Lsh/tinfoil/PartialFacts;
+	public final fun getSteps ()Ljava/util/List;
+	public final fun getVerifiedFacts ()Lsh/tinfoil/VerifiedFacts;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class sh/tinfoil/VerifiedFacts {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCodeDigest ()Ljava/lang/String;
+	public final fun getCodeMeasurement ()Lsh/tinfoil/Measurement;
+	public final fun getCodeTag ()Ljava/lang/String;
+	public final fun getConfig ()Lsh/tinfoil/ConfigVerification;
+	public final fun getConfigRepo ()Ljava/lang/String;
+	public final fun getCryptoMaterial ()Ljava/util/List;
+	public final fun getEnclaveMeasurement ()Lsh/tinfoil/Measurement;
+	public final fun getFreshnessExpiresAt ()Ljava/time/Instant;
+	public final fun getHpkePublicKey ()Ljava/lang/String;
+	public final fun getPlatform ()Lsh/tinfoil/ArtifactVerification;
+	public final fun getRuntime ()Lsh/tinfoil/ArtifactVerification;
+	public final fun getTlsPublicKeyFingerprint ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }

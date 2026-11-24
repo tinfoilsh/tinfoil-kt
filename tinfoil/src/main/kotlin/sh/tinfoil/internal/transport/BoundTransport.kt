@@ -6,7 +6,7 @@ import okhttp3.Request
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
-import sh.tinfoil.Verification
+import sh.tinfoil.VerifiedFacts
 import java.io.IOException
 
 /**
@@ -30,7 +30,7 @@ internal interface TransportProtocol {
      * that this protocol needs is an [AttestationException].
      */
     @Throws(AttestationException::class)
-    fun bind(verification: Verification): BoundTransport
+    fun bind(verification: VerifiedFacts): BoundTransport
 
     /**
      * Refuses new requests on every transport of this protocol, from now

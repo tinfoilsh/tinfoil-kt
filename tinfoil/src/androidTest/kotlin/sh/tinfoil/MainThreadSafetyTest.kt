@@ -34,6 +34,7 @@ import sh.tinfoil.internal.transport.LeafKeyPin
 import sh.tinfoil.internal.transport.TlsTrust
 import sh.tinfoil.internal.verification.AttestationVerifier
 import sh.tinfoil.testing.MainThread
+import sh.tinfoil.testing.passedReport
 import java.io.IOException
 import java.net.InetAddress
 import java.time.Instant
@@ -97,20 +98,21 @@ class MainThreadSafetyTest {
 
         override fun checkPinVerifiability(pin: Pin) = Unit
 
-        override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification = Verification(
-            configRepo = "tinfoilsh/example",
-            codeDigest = "ab".repeat(32),
-            codeTag = null,
-            codeMeasurement = null,
-            enclaveMeasurement = null,
-            config = null,
-            runtime = null,
-            platform = null,
-            tlsPublicKeyFingerprint = LeafKeyPin.fingerprint(leaf.certificate),
-            hpkePublicKey = "cd".repeat(32),
-            cryptoMaterial = emptyList(),
-            freshnessExpiresAt = Instant.now().plusSeconds(3600),
-            metadata = VerificationMetadata(SoftwareIdentity("test", "0"), Instant.now()),
+        override fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): VerificationReport = passedReport(
+            VerifiedFacts(
+                configRepo = "tinfoilsh/example",
+                codeDigest = "ab".repeat(32),
+                codeTag = null,
+                codeMeasurement = null,
+                enclaveMeasurement = null,
+                config = null,
+                runtime = null,
+                platform = null,
+                tlsPublicKeyFingerprint = LeafKeyPin.fingerprint(leaf.certificate),
+                hpkePublicKey = "cd".repeat(32),
+                cryptoMaterial = emptyList(),
+                freshnessExpiresAt = Instant.now().plusSeconds(3600),
+            ),
         )
     }
 

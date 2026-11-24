@@ -61,12 +61,16 @@ public class GatewayHttpClient private constructor(
     override val baseUrl: HttpUrl get() = router.baseUrl
 
     /**
-     * The last successful verification of each replica that the client has
-     * used and still keeps, without checking them: any may have expired or
-     * been rejected since. They are sorted by host. Use [ensureVerified]
-     * for a verification that is valid.
+     * Returns one entry for each replica that the client has tried to
+     * verify and still keeps, failed replicas included, sorted by host,
+     * without any I/O. Each holds that replica's last attempt: its report
+     * if it passed, or the exception that it failed with, as
+     * [EnclaveHttpClient.lastVerification] describes. A replica's earlier
+     * success is not kept once a later attempt for it fails. A report may
+     * have reached its freshness deadline or been withdrawn since; use
+     * [ensureVerified] for a verification that is valid now.
      */
-    public val current: List<ReplicaVerification> get() = router.current
+    public fun lastVerification(): List<ReplicaVerification> = router.lastVerification
 
     /**
      * The models that the client serves: those of the gateway's catalog
@@ -86,13 +90,13 @@ public class GatewayHttpClient private constructor(
     public suspend fun models(): List<String> = router.models()
 
     /**
-     * Returns a verification, valid now, of a replica that serves [model],
-     * verifying a replica first only if that is needed. Replicas are tried
-     * in an order that is fixed for the model, so calling this again
-     * returns the same replica's verification while it stays valid. A
-     * request for the model may still go to another replica, which is
-     * verified in the same way before anything is sealed to it. It is safe
-     * to call from the main thread.
+     * Returns the report of a verification, valid now, of a replica that
+     * serves [model], verifying a replica first only if that is needed.
+     * Replicas are tried in an order that is fixed for the model, so
+     * calling this again returns the same replica's report while it stays
+     * valid. A request for the model may still go to another replica, which
+     * is verified in the same way before anything is sealed to it. It is
+     * safe to call from the main thread.
      *
      * @throws ConfigurationException if the client is closed or does not
      *   serve [model]: it is not in the catalog, or it is not pinned and
@@ -104,7 +108,7 @@ public class GatewayHttpClient private constructor(
      *   than its pin does.
      */
     @Throws(IOException::class, CancellationException::class)
-    public suspend fun ensureVerified(model: String): Verification = router.ensureVerified(model)
+    public suspend fun ensureVerified(model: String): VerificationReport = router.ensureVerified(model)
 
     /**
      * Sends [request] through the gateway, sealed to a verified replica of
@@ -327,7 +331,7 @@ public class GatewayHttpClient private constructor(
         internal fun unverified(settings: GatewaySettings, internals: Internals): GatewayHttpClient = GatewayHttpClient(
             GatewayRouter.create(
                 settings.modelPins, settings.pinnedModelsOnly, settings.url, settings.policy,
-                settings.userCacheSecret, settings.verificationCheck, settings.onVerificationResult, settings.catalog,
+                settings.userCacheSecret, settings.verificationCheck, settings.onVerification, settings.catalog,
                 internals,
             ),
         )

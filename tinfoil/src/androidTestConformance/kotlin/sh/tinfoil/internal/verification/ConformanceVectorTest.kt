@@ -14,9 +14,12 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Measurement
 import sh.tinfoil.NetworkException
+import sh.tinfoil.StepStatus
 import sh.tinfoil.TinfoilException
-import sh.tinfoil.Verification
+import sh.tinfoil.VerificationException
 import sh.tinfoil.VerificationLayer
+import sh.tinfoil.VerificationReport
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.go.mobile.Mobile
 import java.time.Instant
 import java.util.Base64
@@ -28,10 +31,11 @@ import kotlin.test.fail
 
 /**
  * Runs every full-verify vector of the shared conformance suite through the
- * verifier library and this SDK's side of its boundary: the verification
- * payload decoded into a [Verification], and each error classified into a
+ * verifier library and this SDK's side of its boundary: the result payload
+ * decoded into a [VerificationReport], and each error classified into a
  * [TinfoilException]. The verdict, the rejection's layer and the verified
- * facts must be the ones that the vector expects.
+ * facts must be the ones that the vector expects, and the report of a
+ * rejection must hold what the specification requires of it.
  *
  * It is compiled only in the conformance build (`TINFOIL_CONFORMANCE=1`),
  * against a verifier library built with
@@ -151,7 +155,7 @@ class ConformanceVectorTest {
         check(at != 0L) { "every full-verify vector is frozen at a time" }
 
         val outcome: Any = try {
-            GoAttestationVerifier.verification {
+            GoAttestationVerifier.report {
                 verifier.dangerousTestOnlyVerifyAt(document, nonce, input.repo, input.project, at)
             }
         } catch (e: TinfoilException) {
@@ -181,39 +185,109 @@ class ConformanceVectorTest {
                 } else {
                     same("rejection code (${outcome.message})", expected.code, code)
                 }
+                checkRejectionReport(outcome, failures)
                 return Result(id, "rejected: $code", failures)
             }
-            is Verification -> {
-                // The suite's adapter refuses a document without both channel
-                // keys at the envelope; the library reports such a document
-                // as verified, with the keys absent.
-                if (outcome.tlsPublicKeyFingerprint == null || outcome.hpkePublicKey == null) {
-                    same("verdict of a document without both channel keys", false, expected.accepted)
-                    same("rejection code of a document without both channel keys", "ENVELOPE_REJECTED", expected.code)
-                    return Result(id, "verified without both channel keys: ENVELOPE_REJECTED", failures)
-                }
-                if (!expected.accepted) {
-                    failures += "accepted where ${expected.code} was expected"
+            is VerificationReport -> {
+                val facts = outcome.verifiedFacts
+                if (facts == null) {
+                    failures += "accepted without verified facts"
                     return Result(id, "accepted", failures)
                 }
-                expected.codeDigest?.let { same("code digest", it, outcome.codeDigest) }
-                expected.tlsPublicKeyFp?.let { same("TLS key fingerprint", it, outcome.tlsPublicKeyFingerprint) }
-                expected.hpkePublicKey?.let { same("HPKE key", it, outcome.hpkePublicKey) }
-                expected.codeMeasurement?.let { same("code measurement", Measurement(it.type, it.registers), outcome.codeMeasurement) }
-                expected.enclaveMeasurement?.let {
-                    same("enclave measurement", Measurement(it.type, it.registers), outcome.enclaveMeasurement)
-                }
-                // The times are the library's, read through this SDK's
-                // decoding: appraised at the vector's time, and still fresh.
+                checkAcceptanceReport(outcome, failures)
                 val appraisedAt = Instant.ofEpochSecond(at)
                 same("time of verification", appraisedAt, outcome.metadata.verifiedAt)
-                if (!appraisedAt.isBefore(outcome.freshnessExpiresAt)) {
-                    failures += "accepted at $appraisedAt with the freshness deadline ${outcome.freshnessExpiresAt}"
-                }
-                return Result(id, "accepted", failures)
+                return checkVerifiedFacts(id, expected, facts, appraisedAt, failures)
             }
             else -> error("unreachable")
         }
+    }
+
+    /**
+     * The report of a verification that passed: one step for each layer, in
+     * order, each passed or skipped, and no partial facts.
+     */
+    private fun checkAcceptanceReport(report: VerificationReport, failures: MutableList<String>) {
+        if (report.steps.map { it.layer } != LAYERS) {
+            failures += "report steps ${report.steps.map { it.layer }}, expected $LAYERS"
+        }
+        report.steps.filter { it.status != StepStatus.PASSED && it.status != StepStatus.SKIPPED }.forEach {
+            failures += "accepted with the ${it.layer} step ${it.status}"
+        }
+        if (report.partialFacts != null) {
+            failures += "accepted with partial facts"
+        }
+    }
+
+    /**
+     * The report that a rejection by the verifier carries: the step of the
+     * rejection's layer failed and no other did, there are partial facts and
+     * no verified facts, and a rejection at the quote or before has no CPU
+     * measurement. A rejection that the library reports without a result,
+     * a caller's mistake or a verification that expired before it returned,
+     * has no report.
+     */
+    private fun checkRejectionReport(error: TinfoilException, failures: MutableList<String>) {
+        val rejected = error.cause as? VerificationException ?: return
+        val report = rejected.report
+        if (error !is AttestationException || error.layer != rejected.layer) {
+            failures += "the verifier's rejection at ${rejected.layer} was reported as ${error.javaClass.simpleName}"
+        }
+        if (report.steps.map { it.layer } != LAYERS) {
+            failures += "report steps ${report.steps.map { it.layer }}, expected $LAYERS"
+        }
+        val failed = report.steps.filter { it.status == StepStatus.FAILED }.map { it.layer }
+        if (failed != listOf(rejected.layer)) {
+            failures += "failed steps $failed for a rejection at ${rejected.layer}"
+        }
+        if (report.verifiedFacts != null) {
+            failures += "a rejection's report has verified facts"
+        }
+        val partial = report.partialFacts
+        if (partial == null) {
+            failures += "a rejection's report has no partial facts"
+        } else if (LAYERS.indexOf(rejected.layer) <= LAYERS.indexOf(VerificationLayer.QUOTE) && partial.measured?.cpu != null) {
+            failures += "a rejection at ${rejected.layer} has a CPU measurement"
+        }
+    }
+
+    private fun checkVerifiedFacts(
+        id: String,
+        expected: Expected,
+        outcome: VerifiedFacts,
+        appraisedAt: Instant,
+        failures: MutableList<String>,
+    ): Result {
+        fun <T> same(what: String, want: T, got: T) {
+            if (want != got) {
+                failures += "$what: expected $want, got $got"
+            }
+        }
+        // The suite's adapter refuses a document without both channel
+        // keys at the envelope; the library reports such a document
+        // as verified, with the keys absent.
+        if (outcome.tlsPublicKeyFingerprint == null || outcome.hpkePublicKey == null) {
+            same("verdict of a document without both channel keys", false, expected.accepted)
+            same("rejection code of a document without both channel keys", "ENVELOPE_REJECTED", expected.code)
+            return Result(id, "verified without both channel keys: ENVELOPE_REJECTED", failures)
+        }
+        if (!expected.accepted) {
+            failures += "accepted where ${expected.code} was expected"
+            return Result(id, "accepted", failures)
+        }
+        expected.codeDigest?.let { same("code digest", it, outcome.codeDigest) }
+        expected.tlsPublicKeyFp?.let { same("TLS key fingerprint", it, outcome.tlsPublicKeyFingerprint) }
+        expected.hpkePublicKey?.let { same("HPKE key", it, outcome.hpkePublicKey) }
+        expected.codeMeasurement?.let { same("code measurement", Measurement(it.type, it.registers), outcome.codeMeasurement) }
+        expected.enclaveMeasurement?.let {
+            same("enclave measurement", Measurement(it.type, it.registers), outcome.enclaveMeasurement)
+        }
+        // The deadline is the library's, read through this SDK's
+        // decoding: still fresh at the vector's time.
+        if (!appraisedAt.isBefore(outcome.freshnessExpiresAt)) {
+            failures += "accepted at $appraisedAt with the freshness deadline ${outcome.freshnessExpiresAt}"
+        }
+        return Result(id, "accepted", failures)
     }
 
     /** The suite's rejection code for an exception, from its type and layer. */
@@ -245,5 +319,8 @@ class ConformanceVectorTest {
          * clock can hit, and this vector replays it.
          */
         val REJECTED_AT_EXPIRY = setOf("fr2-pos-at-max-age")
+
+        /** The verifier's layers, in order. */
+        val LAYERS = listOf(VerificationLayer.ENVELOPE, VerificationLayer.PROVENANCE, VerificationLayer.QUOTE, VerificationLayer.POLICY)
     }
 }

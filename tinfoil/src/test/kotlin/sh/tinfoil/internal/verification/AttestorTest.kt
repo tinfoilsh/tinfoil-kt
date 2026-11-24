@@ -10,7 +10,7 @@ import sh.tinfoil.CryptoMaterial
 import sh.tinfoil.NetworkException
 import sh.tinfoil.Pin
 import sh.tinfoil.TinfoilException
-import sh.tinfoil.Verification
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.VerificationCheck
 import sh.tinfoil.testing.FakeVerifier
 import sh.tinfoil.testing.TLS_KEY_FORMAT
@@ -36,7 +36,7 @@ class AttestorTest {
     /** What each fetch does, in order; the last one repeats. */
     private val fetches = ArrayDeque<() -> ByteArray>(listOf({ "document".toByteArray() }))
 
-    private fun good(): Verification = verification(fingerprint, clock().plusSeconds(60))
+    private fun good(): VerifiedFacts = verification(fingerprint, clock().plusSeconds(60))
 
     private fun attestor(check: VerificationCheck? = null) = Attestor(
         verifier = verifier,
@@ -59,7 +59,7 @@ class AttestorTest {
         val direct = attestor().attest("enclave.example", pin)
         attestor().attest("enclave.example:8443", pin)
 
-        assertEquals(fingerprint, direct.tlsPublicKeyFingerprint)
+        assertEquals(fingerprint, direct.verifiedFacts?.tlsPublicKeyFingerprint)
         assertEquals(listOf("enclave.example", "enclave.example:8443"), fetched.map { it.first })
         assertEquals(listOf("document", "document"), seen.map { it.first })
         assertEquals(fetched.map { it.second }, seen.map { it.second })
@@ -93,6 +93,32 @@ class AttestorTest {
     }
 
     @Test
+    fun theFailureOfAnAttemptThatIsTriedAgainIsReportedBeforeTheWait() = runTest {
+        val first = AttestationException("quote: first")
+        val rejections = ArrayDeque(listOf<() -> VerifiedFacts>({ throw first }, { good() }))
+        verifier.verify = { _, _, _ -> rejections.removeFirst()() }
+        val retried = mutableListOf<Pair<TinfoilException, Long>>()
+
+        val report = attestor().attest("enclave.example", pin) { retried += it to currentTime }
+
+        assertEquals(listOf<Pair<TinfoilException, Long>>(first to 0L), retried)
+        assertEquals(fingerprint, report.verifiedFacts?.tlsPublicKeyFingerprint)
+        assertEquals(1000, currentTime)
+    }
+
+    @Test
+    fun aFailureThatIsNotTriedAgainIsNotReportedAsRetried() = runTest {
+        val retried = mutableListOf<TinfoilException>()
+        verifier.verify = { _, _, _ -> throw ConfigurationException("the pin names no such project") }
+        assertFailsWith<ConfigurationException> { attestor().attest("enclave.example", pin) { retried += it } }
+        verifier.verify = { _, _, _ -> good() }
+        assertFailsWith<AttestationException> {
+            attestor { throw IllegalStateException("no") }.attest("enclave.example", pin) { retried += it }
+        }
+        assertEquals(emptyList(), retried)
+    }
+
+    @Test
     fun aPersistentNetworkFailureFailsAfterTwoAttempts() = runTest {
         fetches.clear()
         fetches.add { throw NetworkException("HTTP 503", status = 503) }
@@ -116,9 +142,9 @@ class AttestorTest {
 
     @Test
     fun theCheckSeesAVerifiedResultAndItsRejectionIsNotTriedAgain() = runTest {
-        val seen = mutableListOf<Verification>()
+        val seen = mutableListOf<VerifiedFacts>()
         val accepted = attestor { seen += it }.attest("enclave.example", pin)
-        assertSame(accepted, seen.single())
+        assertSame(accepted.verifiedFacts, seen.single())
 
         val reason = IllegalArgumentException("unexpected measurement")
         val error = assertFailsWith<AttestationException> {
@@ -184,7 +210,7 @@ class AttestorTest {
         val verified = attestor.attest("enclave.example", pin)
 
         assertEquals(2, fetched.size)
-        assertEquals(clock().plusSeconds(60), verified.freshnessExpiresAt)
+        assertEquals(clock().plusSeconds(60), verified.verifiedFacts?.freshnessExpiresAt)
     }
 
     @Test

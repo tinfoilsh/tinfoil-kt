@@ -56,6 +56,22 @@ class DocumentationExamplesTest {
         return client
     }
 
+    private suspend fun verificationReports(): EnclaveHttpClient {
+        val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
+            onVerification = { host, attempt ->
+                when (attempt) {
+                    is VerificationAttempt.Passed ->
+                        println("$host runs ${attempt.report.verifiedFacts?.codeDigest}")
+                    is VerificationAttempt.Failed -> {
+                        val report = (attempt.error.cause as? VerificationException)?.report
+                        println("$host failed at ${report?.failedStep?.layer}: ${attempt.error.detail}")
+                    }
+                }
+            }
+        }
+        return client
+    }
+
     @Test
     fun theExamplesNameTheTransportThatTheyAskFor() {
         assertEquals(Transport.Ehbp("https://proxy.example.com/"), Transport.Ehbp(proxyUrl = "https://proxy.example.com/"))

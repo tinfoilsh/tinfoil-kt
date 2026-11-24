@@ -23,7 +23,7 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.SessionRecoveryToken
 import sh.tinfoil.TransportMode
-import sh.tinfoil.Verification
+import sh.tinfoil.VerifiedFacts
 import sh.tinfoil.internal.Background
 import sh.tinfoil.ehbp.client.Transport
 import sh.tinfoil.ehbp.client.newTransportWithIdentity
@@ -109,7 +109,7 @@ internal class EhbpSealing(
 
     override fun checkRequest(request: Request) = checkRequest(request, cleartext)
 
-    override fun bind(verification: Verification): EhbpTransport =
+    override fun bind(verification: VerifiedFacts): EhbpTransport =
         EhbpTransport(
             identityOf(verification.hpkePublicKey),
             if (pinned) LeafKeyPin.of(verification.tlsPublicKeyFingerprint) else null,

@@ -3,7 +3,8 @@ package sh.tinfoil.internal.verification
 import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.Pin
-import sh.tinfoil.Verification
+import sh.tinfoil.VerificationException
+import sh.tinfoil.VerificationReport
 
 /**
  * What makes every trust decision about an attestation document. It performs
@@ -41,10 +42,13 @@ internal interface AttestationVerifier {
 
     /**
      * Appraises [document], fetched with [nonce], against [pin], and returns
-     * what it proved. A document that must not be trusted is an
-     * [AttestationException], including one whose result is already past its
-     * freshness deadline; an unusable argument is a [ConfigurationException].
+     * the report of a verification that passed, whose verified facts are
+     * set. A document that must not be trusted is an [AttestationException],
+     * including one whose result is already past its freshness deadline;
+     * when the verifier rejected it, its cause is a [VerificationException]
+     * that carries the report. An unusable argument is a
+     * [ConfigurationException].
      */
     @Throws(ConfigurationException::class, AttestationException::class)
-    fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): Verification
+    fun verify(document: ByteArray, nonce: ByteArray, pin: Pin): VerificationReport
 }

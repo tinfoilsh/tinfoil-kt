@@ -66,27 +66,38 @@ public class EnclaveOptions internal constructor() {
     public var policy: Policy = Policy()
 
     /**
-     * Called with each verification that passes the trust argument and
-     * [policy], before the enclave's keys are used; it throws to reject the enclave. It must not
-     * call back into the client.
+     * Called with the verified facts of each verification that passes the
+     * trust argument and [policy], before the enclave's keys are used; it
+     * throws to reject the enclave. It is not called for a verification
+     * that fails. It must not call back into the client.
      */
     public var verificationCheck: VerificationCheck? = null
 
     /**
-     * Called with the outcome of every verification that the client runs,
-     * in `create` and later: the verification, or the [TinfoilException]
-     * that it failed with. It only observes, so anything that it throws is
-     * ignored. It is called once the verification is over, on a thread of
-     * the client's: requests that waited for the verification, and `create`
-     * itself, may already have gone on by then. It may call back into the
-     * client, and may be called from several threads.
+     * Called once for every attempt to verify the enclave, in `create` and
+     * later, whether it passes or fails: with the enclave's host, and the
+     * attempt's outcome, as [EnclaveHttpClient.lastVerification] returns
+     * it: its [VerificationReport], or the [TinfoilException] that it
+     * failed with. An attempt that is tried again is reported too, and so
+     * is each verification that a refused key, a freshness deadline or
+     * [EnclaveHttpClient.reverify] starts; a verification that concurrent
+     * callers share is one attempt. An attempt that
+     * [EnclaveHttpClient.close] ends is not reported.
+     *
+     * It only observes: it cannot change the outcome, and anything that it
+     * throws is ignored. It is called once the verification is over, on a
+     * thread of the client's and outside the client's locks, so it may call
+     * back into the client; requests that waited for the verification, and
+     * `create` itself, may already have gone on by then. It may be called
+     * from several threads. Keep it fast: it holds a thread of the client's
+     * verifications while it runs.
      */
-    public var onVerificationResult: ((Result<Verification>) -> Unit)? = null
+    public var onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
 
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transport, fetchAttestation, null, policy, null, verificationCheck, onVerificationResult,
+        transport, fetchAttestation, null, policy, null, verificationCheck, onVerification,
     )
 }
 
@@ -174,28 +185,37 @@ public class RouterOptions internal constructor() {
     public var userCacheSecret: String? = null
 
     /**
-     * Called with each verification that passes [policy], before the
-     * router's keys are used: for each router that is tried in `create`,
-     * and whenever the client verifies again. It throws to reject the
-     * router; in `create`, the next router is then tried. It must not call
-     * back into the client.
+     * Called with the verified facts of each verification that passes
+     * [policy], before the router's keys are used: for each router that is
+     * tried in `create`, and whenever the client verifies again. It throws
+     * to reject the router; in `create`, the next router is then tried. It
+     * is not called for a verification that fails. It must not call back
+     * into the client.
      */
     public var verificationCheck: VerificationCheck? = null
 
     /**
-     * Called with the outcome of every verification of the router that the
-     * client uses, in `create` and later: the verification, or the
-     * [TinfoilException] that it failed with. The routers that were tried
-     * and passed over are not reported. It only observes, so anything that
-     * it throws is ignored. It is called once the verification is over, on
-     * a thread of the client's, and may be called from several threads.
+     * Called once for every attempt to verify a router, whether it passes
+     * or fails: with the router's host, and the attempt's outcome: its
+     * [VerificationReport], or the [TinfoilException] that it failed with.
+     * In `create` it is called for each router that is tried, the ones
+     * that are passed over and the fallback included, each with its own
+     * host; afterwards, for each attempt to verify the router that the
+     * client chose, as [EnclaveOptions.onVerification] describes.
+     * [RouterHttpClient.lastVerification] describes the chosen router.
+     *
+     * It only observes: it cannot change the outcome, and anything that it
+     * throws is ignored. It is called once the verification is over, on a
+     * thread of the client's and outside the client's locks, so it may call
+     * back into the client. It may be called from several threads. Keep it
+     * fast: it holds a thread of the client's verifications while it runs.
      */
-    public var onVerificationResult: ((Result<Verification>) -> Unit)? = null
+    public var onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
 
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): RouteSettings = RouteSettings(
-        transport, fetchAttestation, fetchRouterList, policy, userCacheSecret, verificationCheck, onVerificationResult,
+        transport, fetchAttestation, fetchRouterList, policy, userCacheSecret, verificationCheck, onVerification,
     )
 }
 
@@ -275,22 +295,28 @@ public class GatewayOptions internal constructor() {
     public var userCacheSecret: String? = null
 
     /**
-     * Called with each replica's verification that passes its trust policy,
-     * for pinned models and others, before the replica's key is used, and
-     * whenever a replica is verified again. It throws to reject the
-     * replica, and the next replica of the model is then tried. It must not
-     * call back into the client.
+     * Called with the verified facts of each replica's verification that
+     * passes its trust policy, for pinned models and others, before the
+     * replica's key is used, and whenever a replica is verified again. It
+     * throws to reject the replica, and the next replica of the model is
+     * then tried. It is not called for a verification that fails. It must
+     * not call back into the client.
      */
     public var verificationCheck: VerificationCheck? = null
 
     /**
-     * Called with the outcome of every verification of a replica: the
-     * verification, or the [TinfoilException] that it failed with. It only
-     * observes, so anything that it throws is ignored. It is called once
-     * the verification is over, on a thread of the client's, and may be
-     * called from several threads.
+     * Called once for every attempt to verify a replica, whether it passes
+     * or fails: with the replica's host, and the attempt's outcome: its
+     * [VerificationReport], or the [TinfoilException] that it failed with,
+     * as [EnclaveOptions.onVerification] describes for one enclave.
+     *
+     * It only observes: it cannot change the outcome, and anything that it
+     * throws is ignored. It is called once the verification is over, on a
+     * thread of the client's and outside the client's locks, so it may call
+     * back into the client. It may be called from several threads. Keep it
+     * fast: it holds a thread of the client's verifications while it runs.
      */
-    public var onVerificationResult: ((Result<Verification>) -> Unit)? = null
+    public var onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null
 
     /**
      * Called for every request, and by [GatewayHttpClient.models] and
@@ -310,7 +336,7 @@ public class GatewayOptions internal constructor() {
     @JvmSynthetic
     internal fun snapshot(): GatewaySettings = GatewaySettings(
         LinkedHashMap(modelPins), pinnedModelsOnly, url, policy, userCacheSecret, verificationCheck,
-        onVerificationResult, catalog,
+        onVerification, catalog,
     )
 }
 
