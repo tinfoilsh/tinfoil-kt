@@ -59,31 +59,31 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 
 /**
- * Which models a gateway client serves, and what the replicas of each are
- * verified against.
+ * Which models a gateway client serves, which are the models that it has
+ * pins for and no others, and what the replicas of each are verified
+ * against.
  *
- * The constructor checks the pins, and throws a [ConfigurationException] for
- * any that no verification could succeed with. It performs no I/O.
+ * The constructor checks the pins, and throws a [ConfigurationException] if
+ * there are none, or for any that no verification could succeed with. It
+ * performs no I/O.
  */
 internal class GatewayPolicy(
     pins: Map<String, ModelPin>,
-    private val pinnedOnly: Boolean,
-    /** The policy for the models that are not pinned, and for the pins that have none of their own. */
+    /** The policy for the pins that have none of their own. */
     policy: Policy,
     /** What builds a verifier from a config trust and a policy. */
     newVerifier: (VerifierOptions.ConfigTrust?, VerifierOptions.Policy) -> AttestationVerifier,
 ) {
     private class Pinned(val repo: String, val verifier: AttestationVerifier)
 
-    /** The verifier for the models that are not pinned, and for the pins that have no policy of their own. */
-    private val verifier: AttestationVerifier = newVerifier(null, VerifierInputs.policy(policy))
-
     private val pins: Map<String, Pinned>
 
     init {
-        if (pinnedOnly && pins.isEmpty()) {
-            throw ConfigurationException("pinned-only mode requires at least one model pin")
+        if (pins.isEmpty()) {
+            throw ConfigurationException("a gateway client requires at least one model pin")
         }
+        // Built, and so checked, even if every pin has a policy of its own.
+        val verifier = newVerifier(null, VerifierInputs.policy(policy))
         val checked = HashMap<String, Pinned>()
         for ((model, pin) in pins) {
             if (model.isBlank() || !pin.repo.startsWith(GatewayCatalog.TRUSTED_OWNER)) {
@@ -104,7 +104,7 @@ internal class GatewayPolicy(
     }
 
     /** Where a model's replicas are, and what they are verified as. */
-    class Route(val hosts: List<String>, private val reference: String, private val pinnedModel: String?) {
+    class Route(val hosts: List<String>, private val reference: String, private val pinnedModel: String) {
         fun on(host: String): ReplicaKey = ReplicaKey(host, reference, pinnedModel)
     }
 
@@ -112,35 +112,23 @@ internal class GatewayPolicy(
      * The replicas of [model] in [catalog], and what they are to be verified
      * against.
      *
-     * A pinned model is verified against its pin, and the catalog must name
-     * the pin's repository for it. Any other model is verified against the
-     * repository that the catalog names, which [GatewayCatalog.isTrusted]
-     * holds to a repository of Tinfoil's without a tag or a digest: for
-     * such a model, the client trusts Tinfoil to say which of its
-     * repositories serves which model name.
+     * The model is verified against its pin, and the catalog must name the
+     * pin's repository for it.
      *
      * @throws ConfigurationException if the client does not serve [model]:
-     *   it is not pinned and only pinned models are served, or the catalog
-     *   has no usable entry for it.
+     *   it is not pinned, or the catalog has no usable entry for it.
      * @throws AttestationException if the catalog names another repository
-     *   for a pinned model than its pin does.
+     *   for the model than its pin does.
      */
     @Throws(TinfoilException::class)
     fun resolve(model: String, catalog: Catalog): Route {
-        requireNamed(model)
-        val pin = pins[model]
-        if (pinnedOnly && pin == null) {
-            throw ConfigurationException("model ${quote(model)} is not pinned")
-        }
+        val pin = served(model)
         val entry = catalog[model]
         if (entry == null || !GatewayCatalog.isTrusted(entry)) {
             throw ConfigurationException(
                 "model ${quote(model)} has no valid bare ${GatewayCatalog.TRUSTED_OWNER} repository with replicas " +
                     "in the gateway catalog",
             )
-        }
-        if (pin == null) {
-            return Route(entry.hosts, entry.repo, pinnedModel = null)
         }
         val repo = pin.repo.substringBefore('@')
         if (entry.repo != repo) {
@@ -151,8 +139,24 @@ internal class GatewayPolicy(
         return Route(entry.hosts, pin.repo, pinnedModel = model)
     }
 
-    /** The trust policy that [replica] is verified under. */
-    fun verifierFor(replica: ReplicaKey): AttestationVerifier = replica.pinnedModel?.let { pins[it]?.verifier } ?: verifier
+    /**
+     * Throws for a request that names no model, or one that is not pinned.
+     * Nothing is looked up for either, so that the catalog, which is not
+     * trusted, never gets to say which replicas serve them.
+     */
+    @Throws(ConfigurationException::class)
+    fun requireServed(model: String) {
+        served(model)
+    }
+
+    private fun served(model: String): Pinned {
+        requireNamed(model)
+        return pins[model] ?: throw ConfigurationException("model ${quote(model)} is not pinned")
+    }
+
+    /** The trust policy that [replica] is verified under: that of its pin. */
+    fun verifierFor(replica: ReplicaKey): AttestationVerifier =
+        checkNotNull(pins[replica.pinnedModel]) { "a replica of a model that is not pinned" }.verifier
 
     internal companion object {
         /**
@@ -182,10 +186,11 @@ internal class GatewayPolicy(
 
 /**
  * A replica as it is verified: where it is, what it is verified against,
- * and the pinned model whose policy applies, if any. One host can be
- * verified as several.
+ * and the pinned model whose policy applies. One host can be verified as
+ * several, so that two pins that share a host and a reference are verified
+ * independently, each under its own pin's policy.
  */
-internal data class ReplicaKey(val host: String, val reference: String, val pinnedModel: String?)
+internal data class ReplicaKey(val host: String, val reference: String, val pinnedModel: String)
 
 /**
  * Sends each request through the gateway, sealed to a verified replica of
@@ -275,7 +280,7 @@ internal class GatewayRouter private constructor(
     @Throws(TinfoilException::class, CancellationException::class)
     suspend fun ensureVerified(model: String): VerificationReport {
         checkOpen()
-        GatewayPolicy.requireNamed(model)
+        policy.requireServed(model)
         val route = policy.resolve(model, catalogNow())
         val (leased, report) = firstVerified(route, rank(route.hosts, model, first = null), model)
         release(leased.second)
@@ -293,7 +298,7 @@ internal class GatewayRouter private constructor(
                     ReplicaVerification(key.host, replica.models.sorted(), key.reference, key.pinnedModel, it)
                 }
             }
-            .sortedWith(compareBy({ it.host }, { it.reference }, { it.pinnedModel.orEmpty() }))
+            .sortedWith(compareBy({ it.host }, { it.reference }, { it.pinnedModel }))
 
     /**
      * Sends [request] sealed to a verified replica of the model that it
@@ -334,7 +339,7 @@ internal class GatewayRouter private constructor(
         checkOpen()
         val model = prepared.model
         // Before the catalog is read, which could otherwise serve it.
-        GatewayPolicy.requireNamed(model)
+        policy.requireServed(model)
         val route = policy.resolve(model, catalogNow())
         val prefix = prepared.cachePrefix
         val before = synchronized(lock) { rerouted[prefix] }
@@ -627,7 +632,6 @@ internal class GatewayRouter private constructor(
         @Throws(TinfoilException::class)
         fun create(
             modelPins: Map<String, ModelPin>,
-            pinnedModelsOnly: Boolean,
             url: String?,
             policy: Policy,
             userCacheSecret: String?,
@@ -646,7 +650,7 @@ internal class GatewayRouter private constructor(
             Urls.requireRelay(relay)
             val relayAtOrigin = AttestationRelay("https://$relay")
             // The caller's map is read once, here.
-            val gatewayPolicy = GatewayPolicy(HashMap(modelPins), pinnedModelsOnly, policy, internals.newVerifier)
+            val gatewayPolicy = GatewayPolicy(HashMap(modelPins), policy, internals.newVerifier)
             val secret = UserCacheSecret.resolve(userCacheSecret, internals.processSecret)
             val open = { replica: ReplicaKey ->
                 EnclaveConnection.create(

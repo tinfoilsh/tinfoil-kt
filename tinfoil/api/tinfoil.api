@@ -201,7 +201,6 @@ public final class sh/tinfoil/GatewayOptions {
 	public final fun getCatalog ()Lkotlin/jvm/functions/Function0;
 	public final fun getModelPins ()Ljava/util/Map;
 	public final fun getOnVerification ()Lkotlin/jvm/functions/Function2;
-	public final fun getPinnedModelsOnly ()Z
 	public final fun getPolicy ()Lsh/tinfoil/Policy;
 	public final fun getUrl ()Ljava/lang/String;
 	public final fun getUserCacheSecret ()Ljava/lang/String;
@@ -209,7 +208,6 @@ public final class sh/tinfoil/GatewayOptions {
 	public final fun setCatalog (Lkotlin/jvm/functions/Function0;)V
 	public final fun setModelPins (Ljava/util/Map;)V
 	public final fun setOnVerification (Lkotlin/jvm/functions/Function2;)V
-	public final fun setPinnedModelsOnly (Z)V
 	public final fun setPolicy (Lsh/tinfoil/Policy;)V
 	public final fun setUrl (Ljava/lang/String;)V
 	public final fun setUserCacheSecret (Ljava/lang/String;)V

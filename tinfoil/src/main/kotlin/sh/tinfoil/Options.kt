@@ -226,7 +226,6 @@ public class RouterOptions internal constructor() {
  * ```
  * val client = GatewayHttpClient.create {
  *     modelPins = mapOf("a-model" to ModelPin("tinfoilsh/a-model"))
- *     pinnedModelsOnly = true
  * }
  * ```
  *
@@ -250,15 +249,13 @@ public class GatewayOptions internal constructor() {
     /**
      * The repository that each of these models must run, by the model's
      * name as requests give it, and optionally a trust policy for the
-     * model. None by default. The map is copied when the block returns.
+     * model. The client serves these models and no others: a request for
+     * any other model fails with a [ConfigurationException] without
+     * contacting a replica. It must name at least one model, or `create`
+     * throws a [ConfigurationException]; it is empty by default. The map
+     * is copied when the block returns.
      */
     public var modelPins: Map<String, ModelPin> = emptyMap()
-
-    /**
-     * Whether to serve only the models in [modelPins], which must then name
-     * at least one. False by default.
-     */
-    public var pinnedModelsOnly: Boolean = false
 
     /**
      * The gateway's URL, which requests are sent to. Null selects Tinfoil's
@@ -271,10 +268,11 @@ public class GatewayOptions internal constructor() {
     public var url: String? = null
 
     /**
-     * The checks that apply to the replicas of the models that are not
-     * pinned, and of the pins without a policy of their own, on top of the
-     * repository that each is verified against. The default keeps every
-     * default; see [Policy].
+     * The checks that apply to the replicas of the pins without a policy of
+     * their own, on top of the repository that each is verified against. A
+     * pin's own policy replaces this one entirely. It is checked by
+     * `create` even if every pin has a policy of its own. The default
+     * keeps every default; see [Policy].
      */
     public var policy: Policy = Policy()
 
@@ -296,10 +294,9 @@ public class GatewayOptions internal constructor() {
 
     /**
      * Called with the verified facts of each replica's verification that
-     * passes its trust policy, for pinned models and others, before the
-     * replica's key is used, and whenever a replica is verified again. It
-     * throws to reject the replica, and the next replica of the model is
-     * then tried. It is not called for a verification that fails. It must
+     * passes its trust policy, before the replica's key is used, and
+     * whenever a replica is verified again. It throws to reject the
+     * replica, and the next replica of the model is then tried. It is not called for a verification that fails. It must
      * not call back into the client.
      */
     public var verificationCheck: VerificationCheck? = null
@@ -335,7 +332,7 @@ public class GatewayOptions internal constructor() {
     /** The options as they are now, copied. */
     @JvmSynthetic
     internal fun snapshot(): GatewaySettings = GatewaySettings(
-        LinkedHashMap(modelPins), pinnedModelsOnly, url, policy, userCacheSecret, verificationCheck,
+        LinkedHashMap(modelPins), url, policy, userCacheSecret, verificationCheck,
         onVerification, catalog,
     )
 }

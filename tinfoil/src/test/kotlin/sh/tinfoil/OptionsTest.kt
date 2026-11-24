@@ -69,6 +69,7 @@ class OptionsTest {
     }
 
     private fun GatewayOptions.forTheTestGateway() {
+        modelPins = TestGateway.PINS
         url = gateway.baseUrl
     }
 
@@ -164,7 +165,6 @@ class OptionsTest {
         }
         for (settings in listOf(gatewaySettings { })) {
             assertEquals(emptyMap(), settings.modelPins)
-            assertEquals(false, settings.pinnedModelsOnly)
             assertNull(settings.url)
             assertEquals(Policy(), settings.policy)
             assertNull(settings.userCacheSecret)

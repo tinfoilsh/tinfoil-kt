@@ -15,6 +15,7 @@ import org.junit.Before
 import org.junit.runner.RunWith
 import sh.tinfoil.ExperimentalTinfoilApi
 import sh.tinfoil.GatewayHttpClient
+import sh.tinfoil.ModelPin
 import sh.tinfoil.tinfoilException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -56,8 +57,8 @@ class GatewayOpenAIClientLiveTest {
 
     @Test
     fun theOpenAiSdkReachesAReplicaThroughTheGateway() = live {
-        val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        val http = GatewayHttpClient.create()
+        val (model, entry) = GatewayHttpClient.fetchCatalog(gateway).entries.entries.first()
+        val http = GatewayHttpClient.create { modelPins = mapOf(model to ModelPin(entry.repo)) }
         Client.create(http, NOT_A_KEY) { openAI { maxRetries(0) } }.use { client ->
             val params = ChatCompletionCreateParams.builder().model(model).addUserMessage("hello").maxCompletionTokens(8).build()
             val error = assertFailsWith<OpenAIServiceException> { client.openAI.chat().completions().create(params) }
@@ -72,8 +73,8 @@ class GatewayOpenAIClientLiveTest {
     @Test
     fun aChatIsCompletedAndStreamedThroughTheGateway() = live {
         val key = apiKey()
-        val model = GatewayHttpClient.fetchCatalog(gateway).entries.keys.first()
-        val http = GatewayHttpClient.create()
+        val (model, entry) = GatewayHttpClient.fetchCatalog(gateway).entries.entries.first()
+        val http = GatewayHttpClient.create { modelPins = mapOf(model to ModelPin(entry.repo)) }
         Client.create(http, key).use { client ->
             val params = ChatCompletionCreateParams.builder().model(model)
                 .addUserMessage("Reply with the single word: ready").maxCompletionTokens(64).build()

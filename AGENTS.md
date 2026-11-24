@@ -129,12 +129,13 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   accept is sent unchanged; on the
   gateway route, a JSON body that is not strictly one JSON value is refused.
 - The gateway and its catalog are untrusted: they only propose replicas.
-  Each replica is verified against its model's pin, or for a model without
-  one against the catalog's repository, which must be a bare `tinfoilsh/`
-  name, before a body is sealed to it, and a body is sealed only to the key
-  of that verification. Nothing read from the gateway may relax a check or
-  choose a tag or a digest, and none of it is parsed with code that recurses
-  on its input. The client routes on the same model that the server will
+  A client serves only the models that it has pins for, and refuses any
+  other before the catalog is read. Each replica is verified against its
+  model's pin, whose repository the catalog must name as a bare
+  `tinfoilsh/` name, before a body is sealed to it, and a body is sealed
+  only to the key of that verification. Nothing read from the gateway may
+  relax a check or choose a tag or a digest, and none of it is parsed with
+  code that recurses on its input. The client routes on the same model that the server will
   read: a body or an upload in which two parsers could find different
   models is refused, not interpreted, and a request that names no model is
   refused before the catalog is read. The client's cache secret never

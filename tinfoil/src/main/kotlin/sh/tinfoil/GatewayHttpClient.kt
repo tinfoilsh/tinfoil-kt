@@ -35,14 +35,12 @@ import java.io.IOException
  * the model may read. Protocol upgrades, such as WebSockets, and `CONNECT`
  * are refused, because sealing cannot protect them.
  *
- * What a replica is verified against depends on the model. A model with a
- * [ModelPin] is verified against that pin, under the pin's trust policy. Any
- * other model is verified against the repository that the gateway's catalog
- * names for it, which must be one of Tinfoil's, `tinfoilsh/<name>`: for such
- * a model the client is assured that the request is sealed to an enclave
- * that runs a release of one of Tinfoil's repositories, and trusts Tinfoil
- * for which of them serves the model. Pin the models for which that is not
- * enough, and set `pinnedModelsOnly` to serve no other.
+ * The client serves only the models that it has a [ModelPin] for, and
+ * needs at least one. A model's replicas are verified against its pin,
+ * under the pin's trust policy, and the gateway's catalog must name the
+ * pin's repository for the model. A request for any other model, one that
+ * the catalog lists included, fails with a [ConfigurationException] before
+ * any replica is contacted.
  *
  * Send requests with [execute], or hand the client, which is an OkHttp
  * [Call.Factory], to a library that is built on OkHttp.
@@ -74,9 +72,9 @@ public class GatewayHttpClient private constructor(
 
     /**
      * The models that the client serves: those of the gateway's catalog
-     * that the client's pins and `pinnedModelsOnly` allow, sorted. No
-     * replica is verified for this, so a model that is listed can still
-     * fail to verify.
+     * that the client has pins for, whose repository the catalog names,
+     * sorted. No replica is verified for this, so a model that is listed
+     * can still fail to verify.
      *
      * The catalog is fetched again if the last fetch is more than 10
      * seconds old; a fetch that fails keeps the last catalog, so only the
@@ -99,13 +97,13 @@ public class GatewayHttpClient private constructor(
      * safe to call from the main thread.
      *
      * @throws ConfigurationException if the client is closed or does not
-     *   serve [model]: it is not in the catalog, or it is not pinned and
-     *   only pinned models are served.
+     *   serve [model]: it is not pinned, which is checked before the
+     *   catalog is read, or it is not in the catalog.
      * @throws NetworkException if no replica's attestation document can be
      *   fetched.
      * @throws AttestationException if no replica of the model is to be
-     *   trusted, or the catalog names another repository for a pinned model
-     *   than its pin does.
+     *   trusted, or the catalog names another repository for the model than
+     *   its pin does.
      */
     @Throws(IOException::class, CancellationException::class)
     public suspend fun ensureVerified(model: String): VerificationReport = router.ensureVerified(model)
@@ -206,8 +204,8 @@ public class GatewayHttpClient private constructor(
      *   fetched, or the gateway keeps routing the request away from the
      *   replica that it was sealed to.
      * @throws AttestationException if no replica of the model is to be
-     *   trusted, the catalog names another repository for a pinned model
-     *   than its pin does, or the replica does not hold the verified key.
+     *   trusted, the catalog names another repository for the model than
+     *   its pin does, or the replica does not hold the verified key.
      * @throws IOException for any other failure to exchange the request,
      *   as the HTTP client reports it.
      */
@@ -272,7 +270,6 @@ public class GatewayHttpClient private constructor(
          * ```
          * val client = GatewayHttpClient.create {
          *     modelPins = mapOf("a-model" to ModelPin("tinfoilsh/a-model"))
-         *     pinnedModelsOnly = true
          * }
          * ```
          *
@@ -330,7 +327,7 @@ public class GatewayHttpClient private constructor(
         @JvmSynthetic
         internal fun unverified(settings: GatewaySettings, internals: Internals): GatewayHttpClient = GatewayHttpClient(
             GatewayRouter.create(
-                settings.modelPins, settings.pinnedModelsOnly, settings.url, settings.policy,
+                settings.modelPins, settings.url, settings.policy,
                 settings.userCacheSecret, settings.verificationCheck, settings.onVerification, settings.catalog,
                 internals,
             ),
