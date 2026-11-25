@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // What every module of this SDK that becomes an artifact has in common: an
@@ -67,6 +69,17 @@ android {
         abortOnError = true
         // Versions are pinned and bumped deliberately, in their own changes.
         disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "NewerVersionAvailable")
+    }
+}
+
+// A failing test prints its whole stack trace, causes included, so that a
+// failure that does not happen again can still be diagnosed from the log.
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events(TestLogEvent.FAILED)
+        exceptionFormat = TestExceptionFormat.FULL
+        showCauses = true
+        showStackTraces = true
     }
 }
 
