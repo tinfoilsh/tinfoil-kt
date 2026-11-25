@@ -83,6 +83,15 @@ tasks.withType<Test>().configureEach {
     }
 }
 
+// The unit tests wait on sockets and clocks more than they compute, so test
+// classes run in several JVMs at once, one for every two processors. A JVM's
+// state, such as the process's user cache secret, is its own; the tests share
+// no files, and their servers listen on ports that the system chooses.
+tasks.withType<Test>().configureEach {
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+    maxHeapSize = "1g"
+}
+
 kotlin {
     explicitApi()
     compilerOptions {
