@@ -648,20 +648,43 @@ and still is.
 
 The SDK is two Android library modules: `tinfoil`, the verifier and the
 attested HTTP clients, and `tinfoil-openai`, the OpenAI clients over them.
-Building them needs JDK 17, the Android SDK
-(`ANDROID_HOME`), and the attestation verifier library, `TinfoilGo.aar`, which
-is built from [tinfoil-go](https://github.com/tinfoilsh/tinfoil-go) at the
-commit in `tinfoil-go.properties`:
+Building them needs JDK 17 and the Android SDK (`ANDROID_HOME`):
 
 ```bash
-# in a tinfoil-go checkout at that commit
+./gradlew assembleRelease lintRelease testDebugUnitTest apiCheck
+./gradlew connectedDebugAndroidTest   # needs a running emulator or a device
+```
+
+The attestation verifier library, `TinfoilGo.aar`, is the one that a
+[tinfoil-go](https://github.com/tinfoilsh/tinfoil-go) release publishes.
+`tinfoil-go.properties` pins the release by its tag (`version`) and the
+library by its SHA-256 (`sha256`). The build downloads the library from the
+release and refuses it unless its SHA-256 is the pinned one; it never builds
+the library, and never reads the checksum from the release. To move to
+another release, run
+
+```bash
+./update_verifier.sh v0.17.0
+```
+
+which downloads that release's library, checks it against the checksum that
+the release publishes, and writes the tag and the library's SHA-256 together.
+Build and test against it, and commit `tinfoil-go.properties` in a change of
+its own.
+
+To work against a tinfoil-go that is not released, build the library from a
+tinfoil-go checkout and name it with `TINFOIL_GO_AAR` (or the Gradle property
+`tinfoilGoAar`); a relative path is resolved against this repository's root.
+That library replaces the pinned release, is not checked against the pin, and
+the build says so:
+
+```bash
+# in a tinfoil-go checkout
 bash scripts/setup-mobile.sh
 bash scripts/build-mobile-android.sh /path/to/TinfoilGo.aar
 
 # in this repository
-export TINFOIL_GO_AAR=/path/to/TinfoilGo.aar
-./gradlew assembleRelease lintRelease testDebugUnitTest apiCheck
-./gradlew connectedDebugAndroidTest   # needs a running emulator or a device
+TINFOIL_GO_AAR=/path/to/TinfoilGo.aar ./gradlew testDebugUnitTest
 ```
 
 A task that is named without a module runs in both. Name the module to run
@@ -713,11 +736,15 @@ with what the vector expects. The vectors are those of the commit in
 `tinfoil-conformance.properties`, which also records how many there are.
 
 A vector brings its own trust anchors and its own time, so these tests need a
-verifier library with two test-only entry points that accept them. It is
-built from the same tinfoil-go commit with `MOBILE_BUILD_TAGS`:
+verifier library with two test-only entry points that accept them. No release
+publishes that library: it is built from the tag of the pinned release with
+`MOBILE_BUILD_TAGS`, and named with `TINFOIL_GO_AAR`, without which the
+conformance build fails:
 
 ```bash
-# in a tinfoil-go checkout at the commit in tinfoil-go.properties
+# in a tinfoil-go checkout at the tag in tinfoil-go.properties
+git checkout "$(sed -n 's/^version=//p' /path/to/tinfoil-kt/tinfoil-go.properties)"
+bash scripts/setup-mobile.sh
 MOBILE_BUILD_TAGS=tinfoil_conformance \
   bash scripts/build-mobile-android.sh /path/to/TinfoilGo-conformance.aar
 
@@ -741,10 +768,11 @@ under the tag `TinfoilConformance`.
 **A verifier library built with `tinfoil_conformance` must never ship**: its
 test-only entry points replace the trust anchors and the clock. The build
 enforces this in both directions. Without `TINFOIL_CONFORMANCE=1`, every
-build fails when `TINFOIL_GO_AAR` names a library that has those entry
-points. With it, the build fails when the library lacks them, and refuses
-every task, in either module, that packages the SDK, belongs to the release
-variant or publishes; only the instrumented tests run.
+build fails when its library, the pinned release's or the one that
+`TINFOIL_GO_AAR` names, has those entry points. With it, the build fails
+when the library lacks them, and refuses every task, in either module, that
+packages the SDK, belongs to the release variant or publishes; only the
+instrumented tests run.
 
 The SDK's version is `version` in `gradle.properties`, for both modules, and
 `Tinfoil.VERSION` is generated from it.
