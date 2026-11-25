@@ -83,8 +83,9 @@ internal interface BoundTransport {
     /**
      * Stops keeping connections for later requests, because a newer
      * verification has replaced this one or the client has closed. Requests
-     * in flight finish, unless the protocol's close cancels them. It closes
-     * sockets, so it is for a background thread.
+     * in flight finish, unless the protocol's close cancels them, and the
+     * connections are closed once no response that they carried is still
+     * being read. It closes sockets, so it is for a background thread.
      */
     fun retire()
 }
