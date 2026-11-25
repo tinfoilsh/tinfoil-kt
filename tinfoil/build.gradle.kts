@@ -121,7 +121,7 @@ val isConformanceBuild: Boolean = extra["tinfoilConformanceBuild"] as Boolean
 if (isConformanceBuild && tinfoilGoOverride == null) {
     throw GradleException(
         "TINFOIL_CONFORMANCE=1 needs TINFOIL_GO_AAR to name a verifier library built with " +
-            "MOBILE_BUILD_TAGS=tinfoil_conformance, which no release publishes; see the README",
+            "MOBILE_BUILD_TAGS=tinfoil_conformance, which no release publishes; see CONTRIBUTING.md",
     )
 }
 

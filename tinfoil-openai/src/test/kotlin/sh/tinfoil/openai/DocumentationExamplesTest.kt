@@ -18,9 +18,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * The README's examples of this module, kept here so that they compile against the API as
- * it is. They are not run: each would verify a production enclave. Change
- * the README and this file together.
+ * The examples of this module in the README and in `docs/`, kept here so that they compile
+ * against the API as it is. They are not run: each would verify a production enclave.
+ * Change the documentation and this file together.
  */
 @Suppress("unused")
 class DocumentationExamplesTest {
@@ -35,6 +35,18 @@ class DocumentationExamplesTest {
         println(completion.choices().first().message().content().orElse(""))
 
         client.close()
+    }
+
+    private suspend fun quickStartEnclave(apiKey: String) {
+        val enclave = EnclaveHttpClient.create(
+            enclave = "inference.tinfoil.sh",
+            trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
+        )
+        val client = Client.create(enclave, apiKey)
+        println(enclave.currentVerification()?.verifiedFacts?.codeDigest)
+
+        client.close()
+        enclave.close()
     }
 
     private suspend fun streaming(client: Client, params: ChatCompletionCreateParams) {

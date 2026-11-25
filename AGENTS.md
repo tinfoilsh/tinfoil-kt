@@ -31,16 +31,19 @@ version. A class's package names its artifact.
   downloads it and refuses it unless its SHA-256 is the pinned one. Change
   the pin only with `update_verifier.sh`, in a change of its own, and never
   make the build fall back to building the library, to another source, or to
-  a library that it has not checked; see the README.
+  a library that it has not checked; see
+  [CONTRIBUTING.md](CONTRIBUTING.md#development).
 - `gradle/verification-metadata.xml`: the SHA-256 of the released EHBP
   client, which JitPack serves. `settings.gradle.kts` lets JitPack serve
   that one module and nothing else. Never widen that filter, and change the
   checksums only together with the version in `gradle/libs.versions.toml`,
-  after comparing the jar with a build of the release tag; see the README.
+  after comparing the jar with a build of the release tag; see
+  [The EHBP client](CONTRIBUTING.md#the-ehbp-client).
 - `tinfoil-conformance.properties`: the tinfoil-conformance commit whose
   full-verify vectors the conformance tests run, and their number.
 - `tinfoil/src/androidTestConformance`: the conformance tests, compiled only
-  with `TINFOIL_CONFORMANCE=1`; see the README.
+  with `TINFOIL_CONFORMANCE=1`; see
+  [Conformance tests](CONTRIBUTING.md#conformance-tests).
 
 ## The verifier is not written here
 
@@ -54,7 +57,7 @@ to what is verified belongs in tinfoil-go.
 The build downloads the pinned release of the verifier library itself.
 `TINFOIL_GO_AAR` replaces it with a local `TinfoilGo.aar`, which is not
 checked against the pin, to work against an unreleased tinfoil-go. The
-conformance build needs one too. See the README.
+conformance build needs one too. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 A task that is named without a module runs in both modules; `:tinfoil:` or
 `:tinfoil-openai:` before it runs it in one.
@@ -217,5 +220,6 @@ A task that is named without a module runs in both modules; `:tinfoil:` or
   `tinfoilApiKey`, passed on the command line as
   `-Pandroid.testInstrumentationRunnerArguments.tinfoilApiKey="$TINFOIL_API_KEY"`.
   Never write a credential into a file, and never log one.
-- The examples in the README are compiled, in the `DocumentationExamplesTest`
-  of the module whose API they use. Change both together.
+- The examples in the README and in `docs/` are compiled, in the
+  `DocumentationExamplesTest` of the module whose API they use. Change both
+  together.

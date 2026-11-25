@@ -2,12 +2,15 @@
 
 A Kotlin client for verifiably private AI inference with [Tinfoil](https://tinfoil.sh).
 
-This SDK is under development and is not yet ready for use.
+This SDK is in pre-release: no version is published yet, and the API may still
+change before the first release. Until then, build it from source as
+[CONTRIBUTING.md](CONTRIBUTING.md#development) describes.
 
 ## Install
 
 The SDK is two artifacts, with the same version. They are **not yet
-published**, and their coordinates may still change:
+published**, and their coordinates may still change. Once a release is out,
+an app depends on them like this:
 
 ```kotlin
 dependencies {
@@ -23,7 +26,7 @@ dependencies {
   through the [OpenAI Java SDK](https://github.com/openai/openai-java):
   `Client`, which is built on top of an attested HTTP client of
   `tinfoil`, in the package `sh.tinfoil.openai`. It depends on
-  `tinfoil`, and on the OpenAI SDK, which is large; see [App size](#app-size).
+  `tinfoil`, and on the OpenAI SDK, which is large; see [App size](docs/app-size.md).
 - `sh.tinfoil:tinfoil` is the attestation verifier and the attested HTTP
   clients, `EnclaveHttpClient`, `RouterHttpClient` and `GatewayHttpClient`,
   in the package `sh.tinfoil`. Use it alone when the app makes its own HTTP
@@ -51,7 +54,7 @@ dependencyResolutionManagement {
 }
 ```
 
-## Usage
+## Quick start
 
 `Client` is an OpenAI client for inference on Tinfoil's recommended route.
 Creating one verifies the service that it will talk to; from then on, every
@@ -75,74 +78,14 @@ println(completion.choices().first().message().content().orElse(""))
 client.close()
 ```
 
-`client.openAI` is the client of the official
-[OpenAI Java SDK](https://github.com/openai/openai-java), with blocking
-calls, and `client.openAIAsync` is the same client with calls that return a
-`CompletableFuture`, which a coroutine awaits with `await()`. Use them as
-that SDK documents. The API key is passed in: no credential, URL or option
-is taken from the environment or from system properties. (The OpenAI SDK
-reads the variable `OPENAI_LOG` when its options are made, which this SDK
-overrides with logging off, and it describes the platform in its
-`X-Stainless-*` request headers, from the system properties `os.name`,
-`os.arch`, `os.version` and `java.version`.)
+`client.openAI` and `client.openAIAsync` are the client of the official
+[OpenAI Java SDK](https://github.com/openai/openai-java), with blocking calls
+and with calls that return a `CompletableFuture`; see
+[The OpenAI client](docs/openai-client.md) for streaming, options and what
+it reads from the environment.
 
-A streamed response becomes a `Flow` with `asFlow()`. Events arrive as the
-service sends them, and cancelling the collection cancels the request:
-
-```kotlin
-import sh.tinfoil.openai.asFlow
-
-client.openAIAsync.chat().completions().createStreaming(params).asFlow().collect { chunk ->
-    chunk.choices().forEach { choice -> choice.delta().content().ifPresent(::print) }
-}
-```
-
-Other options of the OpenAI client are set on its own options builder, in
-`openAI { }`:
-
-```kotlin
-val client = Client.create(apiKey) {
-    openAI {
-        maxRetries(1)
-        timeout(Duration.ofMinutes(2))
-    }
-}
-```
-
-An HTTP client or a base URL that is set there is replaced, and so is one
-that the OpenAI SDK reads from `OPENAI_BASE_URL`: the OpenAI client reaches
-the network only through this SDK. The one way around that is
-the OpenAI SDK's `withOptions`, on the client or on one of its services: a
-client that it returns with another HTTP client sends its requests, and the
-API key, without any of this SDK's protection.
-
-### Choosing the route
-
-`Client.create(apiKey)` says nothing about how requests reach the models, so
-that the route can change. To choose the route, create one of the attested
-HTTP clients of the `tinfoil` artifact and put an OpenAI client over it:
-
-- `RouterHttpClient` sends to one of Tinfoil's routers, which it chooses and
-  verifies when it is created;
-- `EnclaveHttpClient` sends to an enclave that you name, verified under the
-  trust that you name for it (see [What is trusted](#what-is-trusted));
-- `GatewayHttpClient` sends through Tinfoil's gateway (see
-  [Gateway](#gateway-experimental)).
-
-```kotlin
-import sh.tinfoil.RouterHttpClient
-import sh.tinfoil.Transport
-import sh.tinfoil.openai.Client
-import sh.tinfoil.openai.TinfoilEvent
-
-val router = RouterHttpClient.create {
-    transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
-    userCacheSecret = cacheSecret
-}
-val client = Client.create(router, apiKey) {
-    tinfoilEvents = setOf(TinfoilEvent.WEB_SEARCH)
-}
-```
+To name the enclave and who vouches for its config, create an
+`EnclaveHttpClient` with a `Trust` and put the OpenAI client over it:
 
 ```kotlin
 import sh.tinfoil.EnclaveHttpClient
@@ -152,635 +95,73 @@ val enclave = EnclaveHttpClient.create(
     enclave = "inference.tinfoil.sh",
     trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
 )
-val client = Client.create(enclave, apiKey) {
-    apiPath = "/v1/"
-}
+val client = Client.create(enclave, apiKey)
 println(enclave.currentVerification()?.verifiedFacts?.codeDigest)
-```
-
-Creating the OpenAI client does no network I/O: the HTTP client verified
-its service when it was created, and verifies it again by itself. Requests
-go to `apiPath`, `/v1/` by default, under the HTTP client's `baseUrl`: the
-enclave's origin, `https://<enclave>/`, the proxy URL of `Transport.Ehbp`,
-whose path is where the proxy is mounted, or the gateway's URL, which is
-its origin, `https://inference-gateway.tinfoil.sh/` by default, or the URL
-that it is mounted under, never the API path. An `apiPath` must be an
-absolute path, and an empty one is refused: leave it unset for `/v1/`. The
-OpenAI client does not own the HTTP client: close each, and one
-HTTP client can serve several OpenAI clients, each with its own API key.
-`Client.create(apiKey)` makes its own router client, and closes it with
-itself.
-
-### What is trusted
-
-An enclave that you name is verified under a trust argument, which names
-who vouches for the config that it runs. It is one of the variants of
-`Trust`:
-
-| Variant | Accepts |
-|---|---|
-| `Trust.RepoPin(repo)` | v2 collateral for a GitHub repository, `owner/name[@tag][@sha256:digest]` |
-| `Trust.ProjectPin(project, registryIds)` | v3 collateral for a config registry project, `org/project[@revision][@sha256:digest]`, endorsed by the public registry (`registryIds = null`) or by exactly the registries listed; an empty list is refused |
-| `Trust.SignedBy(keys, project)` | v3 configs whose endorsements your keys sign, optionally only those of one project |
-| `Trust.AuthorizedBy(authorize)` | v3 configs that your `ConfigAuthorizer` approves |
-| `Trust.EmbeddedConfig(bytes, name)` | v3 collateral for exactly the JSON config bytes that you supply |
-| `Trust.EitherPin(repo, project)` | either of the first two, for the migration from v2 to v3 collateral |
-
-The router's trust is fixed to its repository, and the gateway's to the
-repository of each model. Every client also takes a `policy`, which is plain
-data: register pins, the freshness bound, and who vouches for the runtime
-and platform artifacts, Tinfoil's endorsements or your own:
-
-```kotlin
-val client = EnclaveHttpClient.create("enclave.example.com", Trust.ProjectPin("org/project")) {
-    policy = Policy(
-        freshnessMaxAge = 1.days,
-        artifacts = ArtifactTrust.EndorsedArtifacts(freshnessKeys = listOf(freshnessKeyPem)),
-    )
-}
-```
-
-A client checks its trust argument and its policy before any network I/O,
-and refuses one that no verification could pass with a
-`ConfigurationException`.
-
-### Verification reports
-
-Every verification that a client runs is an attempt, and each attempt that
-reached the verifier has a `VerificationReport`: one step for each layer of
-the verifier (`envelope`, `provenance`, `quote`, `policy`), each `passed`,
-`failed`, `skipped` or `not_run`, and the facts that it established. A
-report that passed has `verifiedFacts`, which hold the keys that the client
-binds its connections to. When the verifier rejects a document, the client
-throws an `AttestationException` whose cause is a `VerificationException`,
-and its report has the step that failed and `partialFacts`: the expected
-and measured values that the steps before the failure established, side by
-side. The key fingerprints in partial facts are the document's claim alone,
-never verified. A failed fetch is a `NetworkException`, and has no report.
-
-The clients keep the verification that their requests are sent under apart
-from the attempts that produced it:
-
-| Call | I/O | Returns |
-|---|---|---|
-| `ensureVerified()` | Only if needed | The report of a verification that is valid now, verifying first if the last one has expired or been withdrawn |
-| `reverify()` | Always | The report of a new verification, or its exception |
-| `currentVerification()` | None | The report of the verification that requests are sent under now: fresh and not withdrawn. Null before the first success, after an `AttestationException` withdrew it, and once it has expired |
-| `lastVerificationAttempt()` | None | The most recent attempt: its report if it passed, its exception if it failed |
-| `onVerificationAttempt` option | Push | Each attempt once its outcome is decided, failed attempts included |
-
-The two functions differ after a `reverify()` that fails for a reason other
-than attestation, such as a `NetworkException`: `lastVerificationAttempt()`
-returns the failure, while `currentVerification()` still returns the
-earlier report, which requests are still sent under until it expires. A
-`reverify()` that fails with an `AttestationException` withdraws the
-verification, so `currentVerification()` returns null and the next request
-verifies again.
-
-- Health and readiness checks call `ensureVerified()`. It returns at once
-  while the verification is valid, and verifies when it is not. Clients do
-  not verify again in the background, so `currentVerification()` is null
-  between the expiry of a verification and the next request; that is not
-  a failure.
-- Status displays show `currentVerification()` for the verification in
-  use, and `lastVerificationAttempt()` for the outcome of the latest
-  attempt, which may be a failure.
-- Live status and logging use `onVerificationAttempt`, which is told of
-  every attempt, with the host that it verified, including the retries
-  that `lastVerificationAttempt()` has already moved past:
-
-```kotlin
-import sh.tinfoil.VerificationAttempt
-import sh.tinfoil.VerificationException
-
-val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
-    onVerificationAttempt = { host, attempt ->
-        when (attempt) {
-            is VerificationAttempt.Passed ->
-                println("$host runs ${attempt.report.verifiedFacts?.codeDigest}")
-            is VerificationAttempt.Failed -> {
-                val report = (attempt.error.cause as? VerificationException)?.report
-                println("$host failed at ${report?.failedStep?.layer}: ${attempt.error.detail}")
-            }
-        }
-    }
-}
-```
-
-A report is for showing and logging what happened. Decide what to do from
-the exception's category, never from a report; a decision about trust
-belongs in `verificationCheck`, which sees only verified facts.
-
-`toJson()` writes a report in the JSON form that every Tinfoil SDK writes,
-so that it can be passed on, for example to a browser, a log or another
-process, and read in the same way whichever SDK wrote it:
-
-```kotlin
-val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
-    onVerificationAttempt = { _, attempt ->
-        val report = attempt.report ?: (attempt.error?.cause as? VerificationException)?.report
-        report?.let { println(it.toJson()) }
-    }
-}
-```
-
-The JSON has a `schema_version`, one step for each layer, and either
-`verified_facts` or `partial_facts`; members are snake_case, hex is
-lowercase, times are RFC 3339 in UTC, and a fact that was not established
-is left out. A measurement names its `platform` and its registers, as in
-`{"platform": "tdx", "rtmr1": "…", "rtmr2": "…"}`, and the TLS and HPKE
-keys appear only in `verified_facts.crypto_material`. Every report that a
-client hands out names the host that the client contacted for the document
-in `metadata.host` (for a router client the router, for a gateway client
-the replica), so that a proxy that passes a report on need not add it. The
-host is what the client connected to, not an attested fact.
-
-The JSON authorizes nothing. This SDK has no API that reads it back into a
-report or into verified facts, and whoever holds it cannot tell whether a
-verifier wrote it. Never bind a connection to a key that was read from it,
-or treat it as proof that a verification took place; the client binds its
-connections only to the verified facts of a verification that it ran
-itself.
-
-### Gateway (experimental)
-
-The gateway route is new, and its API may change or be removed in a later
-release. Its classes are marked `@ExperimentalTinfoilApi`, and using them is
-a compile error until the code opts in.
-
-Tinfoil's gateway forwards each request to an enclave that serves the model
-that the request names: a replica of that model. The gateway is not trusted
-with what a request says. `GatewayHttpClient` picks a replica, verifies its
-attestation, and seals the request's body to the key that the attestation
-endorses, so the gateway forwards a body that it cannot read. It does read
-everything else: the URL, the headers, the API key among them, and the name
-of the model.
-
-```kotlin
-import sh.tinfoil.ExperimentalTinfoilApi
-import sh.tinfoil.GatewayHttpClient
-import sh.tinfoil.ModelPin
-import sh.tinfoil.openai.Client
-
-@OptIn(ExperimentalTinfoilApi::class)
-suspend fun gateway(apiKey: String): Client {
-    val gateway = GatewayHttpClient.create {
-        modelPins = mapOf("deepseek-v4-1-flash" to ModelPin("tinfoilsh/confidential-deepseek-v4-1-flash"))
-    }
-    val client = Client.create(gateway, apiKey)
-    println(gateway.models())
-    return client
-}
-```
-
-A gateway client serves only the models that its `modelPins` name, so it
-requires at least one pin, and a request for any other model fails with a
-`ConfigurationException` before any replica is contacted. A model's replicas
-are verified against its pin's repository, and against one release of it if
-the pin has a tag or a digest; the gateway's catalog must name that
-repository for the model. A pin without a policy of its own takes the
-client's `policy`.
-
-The gateway client verifies each model's replicas separately, so its
-`ensureVerified(model)` and `reverify(model)` take the model. `reverify`
-verifies again the replica that `ensureVerified` would return for it. When
-that replica fails with an `AttestationException`, its verification is
-withdrawn and `reverify` moves on to the next replica, as `ensureVerified`
-then does; any other failure keeps the replica's verification while it is
-valid, and is thrown. `replicas()` returns an entry for each replica that
-the client has tried to verify, with its host, the models requested through
-it, its `current` verification, which follows the rule of
-`currentVerification()` for that replica, and its `lastAttempt`.
-
-A request has to name its model, so the calls of the OpenAI SDK that name
-none, such as listing models, are refused; `GatewayHttpClient.models()` lists what
-the client serves. A JSON body that names `model`, `user_cache_secret` or
-`cache_salt` twice, or in another case, such as `Model`, is refused too,
-since a server could read another member than the client did.
-`userCacheSecret` scopes the prompt cache as it does for the other clients,
-but on the chat, completions and responses requests the secret never leaves
-the device: the client replaces it in the body with a salt that it derives
-from it.
-`GatewayHttpClient` is the HTTP client itself, and describes all of this.
-
-### Errors
-
-Creating a client throws this SDK's exceptions, which are `IOException`s:
-an `AttestationException` when the enclave is not to be trusted, a
-`NetworkException` when it cannot be reached to be verified, and a
-`ConfigurationException` for an invalid argument. A retry loop that retries
-any `IOException` should first read `isRetryable`, which is true only for a
-`NetworkException`: an attestation failure must not be retried blindly.
-When the verifier rejected the attestation document, the cause of the
-`AttestationException` is a `VerificationException`, which names the layer
-that rejected it and carries the report (see
-[Verification reports](#verification-reports)). Any other attestation
-failure, such as a rejection by `verificationCheck`, says what failed in
-its `detail`; a rejection that the verifier reports without a report leads
-its `detail` with the layer, as in `quote: <detail>`.
-
-The OpenAI SDK throws unchecked exceptions, all of them `OpenAIException`s.
-An error status from the API is one of its subclasses, such as
-`UnauthorizedException`. A failure of this SDK during a request, such as an
-enclave that no longer verifies, is the cause of the exception that the
-OpenAI SDK's call throws, and `tinfoilException` finds it:
-
-```kotlin
-import com.openai.errors.OpenAIException
-import com.openai.errors.OpenAIServiceException
-import sh.tinfoil.AttestationException
-import sh.tinfoil.tinfoilException
-
-try {
-    client.openAI.chat().completions().create(params)
-} catch (e: OpenAIException) {
-    val failure = e.tinfoilException
-    when {
-        failure is AttestationException -> println("The enclave is not to be trusted: ${failure.detail}")
-        failure != null -> println("The request could not be sent: ${failure.detail}")
-        e is OpenAIServiceException -> println("The API answered with ${e.statusCode()}")
-        else -> println("The request failed: ${e.message}")
-    }
-}
-```
-
-The OpenAI SDK sends a request again after a failure of the network and
-after some error statuses, twice by default (`maxRetries`). It does not send
-one again after an `AttestationException` or a `ConfigurationException`.
-Each of its attempts can itself send the request more than once, when an
-enclave has changed its key and is verified again, so how often one call can
-send a request depends on the route. With the default options it is up to 6
-times over a router or an enclave client: 3 attempts of up to 2 sends. Over
-a gateway client it is up to 24 times:
-3 attempts of up to 8 sends, because the gateway can also route a request to
-another replica up to 3 times. A request whose body the OpenAI SDK can write
-only once, such as an upload that it streams, is sent once.
-
-### Without the OpenAI SDK
-
-The HTTP clients of the `tinfoil` artifact are what the OpenAI clients send
-through, and work without them. Each is an OkHttp `Call.Factory` that sends
-a request only to the service that it verified:
-
-```kotlin
-import okhttp3.Request
-import sh.tinfoil.EnclaveHttpClient
-import sh.tinfoil.Trust
-
-val client = EnclaveHttpClient.create(
-    enclave = "inference.tinfoil.sh",
-    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
-)
-
-val request = Request.Builder()
-    .url(client.baseUrl.resolve("v1/models")!!)
-    .header("Authorization", "Bearer $apiKey")
-    .build()
-client.execute(request).use { response -> println(response.body!!.string()) }
 
 client.close()
+enclave.close()
 ```
 
-### App size
+The OpenAI client does not own the HTTP client: close each.
 
-Build release variants with R8 (`isMinifyEnabled = true`). What the SDK then
-adds to an app is mostly these three things:
+## Choosing a route
 
-- **The OpenAI SDK, with `tinfoil-openai` only.** It adds about 15 MB of dex
-  code to a minified app, about 4.4 MB of the APK, whether or not the app
-  uses all of it: the keep rules that the OpenAI SDK ships pin its classes,
-  and Jackson and `kotlin-reflect` with them, so R8 cannot remove what is
-  not used. An app that depends on `tinfoil` alone carries none of it.
-- **The native verifier library, with either artifact.** It is about 20 MB
-  for each ABI, about 7 MB compressed, and is built for `arm64-v8a`,
-  `armeabi-v7a` and `x86_64`. There is no library for 32-bit `x86`. An app
-  bundle delivers one ABI to a device; an APK that is built for all of them
-  carries all three.
-- **Bouncy Castle's resources, with either artifact.** Bouncy Castle, which
-  seals bodies with `Transport.Ehbp`, ships about 1.2 MB of data files for
-  an algorithm that this SDK does not use. R8 does not remove resources, but
-  the app's build can leave them out:
+`Client.create(apiKey)` takes Tinfoil's recommended route, and does not say
+which, so that the route can change. To choose it, create one of the
+attested HTTP clients and pass it to `Client.create`:
 
-  ```kotlin
-  android {
-      packaging {
-          resources {
-              excludes += "org/bouncycastle/pqc/crypto/picnic/**"
-          }
-      }
-  }
-  ```
+| Route | HTTP client | Sends to |
+|---|---|---|
+| Router | `RouterHttpClient` | One of Tinfoil's routers, which it chooses and verifies when it is created |
+| Enclave | `EnclaveHttpClient` | An enclave that you name, verified under the `Trust` that you name for it |
+| Gateway (experimental) | `GatewayHttpClient` | A verified replica of each model that you pin, through Tinfoil's gateway, which reads everything but the body |
 
-The SDK's own classes are small, and the artifacts carry the keep rules that
-they need.
+See [Routes](docs/routes.md) for the options of each route, the gateway's
+experimental API, and the HTTP clients without the OpenAI SDK.
 
-## Transports
+## What is verified
 
-A client protects its requests with the keys that the enclave's attestation
-endorses, in one of two ways, which its `transport` option selects.
+- No request leaves before the service that it goes to is verified: an
+  enclave under the `Trust` that you name, a router against its repository,
+  or, on the gateway route, a replica against its model's pin. Every
+  request, the API key included, goes only to a verified service, through
+  the gateway on that route. See
+  [What is trusted](docs/verification.md#what-is-trusted).
+- With `Transport.Tls`, the default, every connection is pinned to the
+  attested TLS key. With `Transport.Ehbp`, only bodies are sealed, and
+  connections are validated as any HTTPS connection is: a proxy reads, and
+  can change, the method, the URL and the headers, the API key among them,
+  and can cut a sealed response short without an error. See
+  [Transports](docs/transports.md) for everything that this mode does not
+  protect.
+- The gateway is not trusted with what a request says, but it reads the URL,
+  the headers, the API key among them, and the name of the model. See
+  [Gateway](docs/routes.md#gateway-experimental).
+- An `AttestationException` means that the service is not to be trusted:
+  `isRetryable` is true only for a `NetworkException`, and an attestation
+  failure must not be retried blindly. See [Errors](docs/verification.md#errors).
+- The OpenAI client reaches the network only through this SDK, except
+  through the OpenAI SDK's `withOptions`: a client that it returns with
+  another HTTP client sends its requests, and the API key, without any of
+  this SDK's protection. See [The OpenAI client](docs/openai-client.md).
+- A verification report, and its JSON, are for showing and logging what
+  happened, and authorize nothing. See
+  [Verification reports](docs/verification.md#verification-reports).
 
-`Transport.Tls`, the default, pins every connection to the attested TLS
-key. It protects the whole request and response, and needs a direct
-connection to the enclave, so it takes no URL.
+## Documentation
 
-`Transport.Ehbp` seals request and response bodies to the attested HPKE key
-with [EHBP](https://docs.tinfoil.sh/resources/ehbp), so that they stay
-private through a proxy, its `proxyUrl`, or on a direct connection when that
-is null:
-
-```kotlin
-val client = EnclaveHttpClient.create(
-    enclave = "inference.tinfoil.sh",
-    trust = Trust.RepoPin("tinfoilsh/confidential-model-router"),
-) {
-    transport = Transport.Ehbp(proxyUrl = "https://proxy.example.com/")
-}
-```
-
-The proxy URL's path is where the proxy is mounted: request paths, and the
-OpenAI clients' `v1/`, join under it whether or not it ends with `/`. A proxy
-on the enclave's own origin is refused; leave `proxyUrl` null to connect
-directly.
-
-What this mode does not protect:
-
-- **Only bodies are sealed.** The method, the URL and the headers of every
-  request, an API key among them, are not: the proxy reads them and can
-  change them. The proxy must therefore use HTTPS; `http://` is accepted only
-  for `localhost` or a loopback IP address. A proxy on this machine is
-  reached directly, whatever HTTP proxy the system is configured with.
-- **A request without a body is not sealed, and neither is its response.**
-  The same goes for a body that is empty: one that declares a length of
-  zero, or one of undeclared length that writes nothing.
-- Connections are validated as any HTTPS connection is, and are not pinned to
-  the enclave's key: whoever holds a valid certificate for the host that you
-  named, the proxy's or the enclave's own, reads what is not sealed. The
-  router clients are the exception, because you do not name the router's
-  host: without a proxy, their connections are pinned to the router's
-  attested key in this mode too. With a proxy, which makes the connection to
-  the router itself, the router that discovery chose is named to the proxy.
-  An attestation document is not tied to the host that serves it, so the
-  source of the router list, Tinfoil's or yours, is then trusted not to name
-  a host that would pass on another router's attestation: such a host would
-  receive the request headers, the API key among them, though not the
-  sealed bodies.
-- A response with an error status of 400 or above may come from the proxy and
-  not from the enclave. A response that the enclave did not seal is
-  authenticated by nothing.
-- **A sealed response can be cut short without an error.** Every piece of a
-  sealed body is authenticated, and a body that ends inside a piece fails the
-  read. A body that ends between two pieces does not: the protocol does not
-  mark the last piece, so a proxy can end a response early. What you read is
-  the enclave's, but only its content shows that it is complete, such as the
-  `[DONE]` event at the end of a stream, or JSON that parses.
-- Protocol upgrades, such as WebSockets, and `CONNECT` are refused.
-- A response that is marked as sealed has to show it: the read of its body
-  fails unless a piece of it authenticates. An empty response that the
-  enclave sealed is read as empty, except with an error status of 400 or
-  above, where it is refused: the sealing library does not tell it there
-  from one that only claims to be sealed.
-
-Requests to a proxy carry `X-Tinfoil-Enclave-Url: https://<enclave>`, which
-tells the proxy where to forward them. See `EnclaveHttpClient.execute` for
-the full rules.
-
-### Relays
-
-By default, a client fetches each attestation document directly from the
-enclave, and the router client fetches its list of candidate routers from
-`https://atc.tinfoil.sh/routers`. The `fetchAttestation` option of the
-enclave and router clients, and the `fetchRouterList` option of the router
-client, change how they are obtained, so that, together with a proxy, a
-client reaches only your own origin: for a device that should not reveal
-its address to enclaves, or a network that allows one destination.
-
-```kotlin
-val client = RouterHttpClient.create {
-    transport = Transport.Ehbp(proxyUrl = "https://app.example/tinfoil/proxy")
-    fetchAttestation = AttestationRelay("https://app.example/tinfoil")
-    fetchRouterList = RouterListRelay("https://app.example/tinfoil")
-}
-```
-
-`AttestationRelay(url)` sends
-`GET <url>/.well-known/tinfoil-attestation?nonce=<hex>&enclave=<host>`, which
-the relay forwards to `https://<host>/.well-known/tinfoil-attestation?nonce=<hex>`,
-returning the body unchanged. `RouterListRelay(url)` sends `GET <url>/routers`,
-which the relay forwards to `https://atc.tinfoil.sh/routers`. A relay should
-forward only to the enclave hosts that the application expects, so that it
-is not an open proxy. A relay URL follows the rules of a proxy URL, and is
-checked when the relay is made. Any other function can take either place:
-`fetchAttestation = AttestationFetcher { host, nonce -> ... }`.
-
-Neither option changes what is trusted. Every document is verified as a
-fetched one is, and the list only proposes routers: discovery always runs,
-tries a shuffled copy of the list, verifies each router that it tries, and
-falls back to `inference.tinfoil.sh`. A fetcher's failure is a
-`NetworkException` that keeps it as its cause, unless it is already one of
-this SDK's exceptions, and a router list that cannot be obtained counts as
-empty.
-
-### Session recovery
-
-With `Transport.Ehbp`, `executeRecoverable` returns a response together
-with its session recovery token, which can open that one response again
-later, without the client that sent the request. Use it for a response that
-the server keeps and that can be fetched again after an interruption:
-
-```kotlin
-client.executeRecoverable(request).use { recoverable ->
-    recoverable.recoveryToken?.let { store(it.toJson()) }   // before reading the body
-    read(recoverable.response.body!!.source())
-}
-
-// Later, with the sealed response fetched again from where it is kept:
-val plaintext = SessionRecoveryToken.fromJson(stored).decryptResponse(sealedResponse)
-```
-
-A token is secret key material for its response. Keep it in protected
-storage, never log it, and delete it once the response has been read.
-
-## Migrating from earlier versions
-
-This release reshapes how clients are configured, as in the other Tinfoil
-SDKs. The changes are breaking:
-
-| Before | Now |
-|---|---|
-| `EnclaveHttpClient.create(enclave, Pin(repo = "org/repo"))` | `EnclaveHttpClient.create(enclave, Trust.RepoPin("org/repo"))` |
-| `Pin(project = "org/project")` | `Trust.ProjectPin("org/project")`, with `registryIds` for registries other than the public one (an empty list is refused) |
-| `Pin(repo = ..., project = ...)` | `Trust.EitherPin(repo, project)` |
-| `Pin.NONE` with `Verifier(configAuthorizer = ...)` | `Trust.AuthorizedBy(authorizer)` |
-| `Pin.NONE` with `Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(bytes)))` | `Trust.EmbeddedConfig(bytes, name)`; a config named by its digest and runtime has no replacement |
-| `Verifier(configSigningKeysPem = keys)` | `Trust.SignedBy(keys, project)` |
-| `verifier = Verifier(pinnedRegisters = ..., freshnessMaxAge = ...)` | `policy = Policy(pinnedRegisters = ..., freshnessMaxAge = ...)`; a zero age selects the default |
-| `Verifier(freshnessSigningKeysPem = keys)` | `Policy(artifacts = ArtifactTrust.EndorsedArtifacts(keys))` |
-| `EmbeddedReferences(runtime = ..., platform = ...)` | `Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime, platform))` |
-| `ModelPin(repo, verifier)` | `ModelPin(repo, policy)` |
-| `GatewayOptions.baseUrl`, `GatewayHttpClient.DEFAULT_BASE_URL` | `GatewayOptions.url`, `GatewayHttpClient.DEFAULT_URL` |
-| a gateway URL that carries the API path, as `https://inference-gateway.tinfoil.sh/v1/`, with the catalog and the attestation relay at its origin | the gateway's origin, `https://inference-gateway.tinfoil.sh/`, or the URL that it is mounted under, with the catalog and the relay joined under it; the OpenAI client adds `apiPath`, `/v1/` by default, which it now takes with a gateway client too |
-| `GatewayOptions.pinnedModelsOnly = true` | none: a gateway client serves only the models in `modelPins` |
-| a gateway client without `modelPins`, or a request for a model without a pin, which was verified against the catalog's repository | refused with a `ConfigurationException`: pin every model that the client is to serve |
-| `ReplicaVerification.pinnedModel: String?` | `ReplicaVerification.pinnedModel: String` |
-| `client.current` | `client.currentVerification()`, a `VerificationReport`, for the verification in use; `client.lastVerificationAttempt()` for the latest attempt |
-| `onVerificationResult = { result -> ... }` | `onVerificationAttempt = { host, attempt -> ... }`, called for failed attempts too |
-| `GatewayHttpClient.current`, with `ReplicaVerification.verification` | `GatewayHttpClient.replicas()`, with `ReplicaVerification.current` and `ReplicaVerification.lastAttempt` |
-| `Verifier.PUBLIC_REGISTRY_ID` | `Trust.PUBLIC_REGISTRY_ID` |
-| `client.pin` | `client.trust` on the enclave client; none on the router client |
-| `transportMode = TransportMode.EHBP` | `transport = Transport.Ehbp()` |
-| `transportMode = TransportMode.EHBP` and `baseUrl = "https://proxy.example/v1/"` | `transport = Transport.Ehbp(proxyUrl = "https://proxy.example/")`; the OpenAI client adds `/v1/` |
-| `baseUrl` as a path on the enclave's own origin | none: requests name their own paths, and the OpenAI client takes `apiPath` |
-| `client.transportMode` | `client.transport` |
-| `attestationRelay = "relay.example"` | `fetchAttestation = AttestationRelay("https://relay.example")`; discovery now runs with it |
-| a proxy or a relay that skipped router discovery | discovery always runs; see [Relays](#relays) |
-| `userCacheSecret` on `EnclaveHttpClient` | none: set `user_cache_secret` in each request body that needs one |
-| an empty `userCacheSecret`, which was refused | selects the process's random secret |
-| `EnclaveOpenAIClient.create(enclave, pin, apiKey) { ... }` | `Client.create(EnclaveHttpClient.create(enclave, trust) { ... }, apiKey) { ... }` |
-| `RouterOpenAIClient.create(apiKey) { ... }` | `Client.create(RouterHttpClient.create { ... }, apiKey) { ... }` |
-| `GatewayOpenAIClient.create(apiKey) { ... }` | `Client.create(GatewayHttpClient.create { ... }, apiKey) { ... }` |
-| `Client.httpClient: Call.Factory` | `Client.httpClient: AttestedHttpClient` |
-
-An OpenAI client that is made over an HTTP client of yours does not close
-it: close both. A base URL that is set in `openAI { }` was replaced before,
-and still is.
-
-## Development
-
-The SDK is two Android library modules: `tinfoil`, the verifier and the
-attested HTTP clients, and `tinfoil-openai`, the OpenAI clients over them.
-Building them needs JDK 17 and the Android SDK (`ANDROID_HOME`):
-
-```bash
-./gradlew assembleRelease lintRelease testDebugUnitTest apiCheck
-./gradlew connectedDebugAndroidTest   # needs a running emulator or a device
-```
-
-The attestation verifier library, `TinfoilGo.aar`, is the one that a
-[tinfoil-go](https://github.com/tinfoilsh/tinfoil-go) release publishes.
-`tinfoil-go.properties` pins the release by its tag (`version`) and the
-library by its SHA-256 (`sha256`). The build downloads the library from the
-release and refuses it unless its SHA-256 is the pinned one; it never builds
-the library, and never reads the checksum from the release. To move to
-another release, run
-
-```bash
-./update_verifier.sh v0.17.0
-```
-
-which downloads that release's library, checks it against the checksum that
-the release publishes, and writes the tag and the library's SHA-256 together.
-Build and test against it, and commit `tinfoil-go.properties` in a change of
-its own.
-
-To work against a tinfoil-go that is not released, build the library from a
-tinfoil-go checkout and name it with `TINFOIL_GO_AAR` (or the Gradle property
-`tinfoilGoAar`); a relative path is resolved against this repository's root.
-That library replaces the pinned release, is not checked against the pin, and
-the build says so:
-
-```bash
-# in a tinfoil-go checkout
-bash scripts/setup-mobile.sh
-bash scripts/build-mobile-android.sh /path/to/TinfoilGo.aar
-
-# in this repository
-TINFOIL_GO_AAR=/path/to/TinfoilGo.aar ./gradlew testDebugUnitTest
-```
-
-A task that is named without a module runs in both. Name the module to run
-it in one, as in `./gradlew :tinfoil:testDebugUnitTest` or
-`./gradlew :tinfoil-openai:connectedDebugAndroidTest`. `tinfoil` does not
-depend on the OpenAI SDK, and its build fails if a dependency ever brings
-that in.
-
-The EHBP client, which seals request bodies with `Transport.Ehbp`, is the
-released artifact `com.github.tinfoilsh:encrypted-http-body-protocol`, which
-JitPack builds from the release tag of
-[encrypted-http-body-protocol](https://github.com/tinfoilsh/encrypted-http-body-protocol).
-JitPack builds an artifact for any GitHub repository that it is asked for,
-so `settings.gradle.kts` uses it for this one module only, and
-`gradle/verification-metadata.xml` pins the SHA-256 of the files that it
-serves: a build fails if they ever change. To move to another release, change
-the version in `gradle/libs.versions.toml` and the checksums together, after
-comparing JitPack's jar with a build of the tag. Every other dependency is
-trusted as its repository serves it for now.
-
-The verifier library is native code for Android, so the tests that reach it
-are instrumented tests; the unit tests run on the JVM without it.
-
-The instrumented tests that verify Tinfoil's production enclaves reach the
-network, so they are skipped unless they are asked for:
-
-```bash
-./gradlew connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true
-```
-
-The live tests that complete a chat also need an API key. It is passed on
-the command line, from the environment, and those tests are skipped without
-it. Never write it into a file:
-
-```bash
-./gradlew connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.tinfoilIntegration=true \
-  -Pandroid.testInstrumentationRunnerArguments.tinfoilApiKey="$TINFOIL_API_KEY"
-```
-
-### Conformance tests
-
-`ConformanceVectorTest` runs the full-verify vectors of the
-[conformance suite](https://github.com/tinfoilsh/tinfoil-conformance) through
-the verifier library and through this SDK's decoding and error
-classification, and compares each verdict, rejection layer and verified fact
-with what the vector expects. The vectors are those of the commit in
-`tinfoil-conformance.properties`, which also records how many there are.
-
-A vector brings its own trust anchors and its own time, so these tests need a
-verifier library with two test-only entry points that accept them. No release
-publishes that library: it is built from the tag of the pinned release with
-`MOBILE_BUILD_TAGS`, and named with `TINFOIL_GO_AAR`, without which the
-conformance build fails:
-
-```bash
-# in a tinfoil-go checkout at the tag in tinfoil-go.properties
-git checkout "$(sed -n 's/^version=//p' /path/to/tinfoil-kt/tinfoil-go.properties)"
-bash scripts/setup-mobile.sh
-MOBILE_BUILD_TAGS=tinfoil_conformance \
-  bash scripts/build-mobile-android.sh /path/to/TinfoilGo-conformance.aar
-
-# the vectors
-git clone https://github.com/tinfoilsh/tinfoil-conformance ../tinfoil-conformance
-git -C ../tinfoil-conformance checkout "$(sed -n 's/^commit=//p' tinfoil-conformance.properties)"
-
-# in this repository, with a running emulator or a device
-TINFOIL_CONFORMANCE=1 \
-TINFOIL_GO_AAR=/path/to/TinfoilGo-conformance.aar \
-TINFOIL_CONFORMANCE_VECTORS=../tinfoil-conformance/vectors \
-./gradlew :tinfoil:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=sh.tinfoil.internal.verification.ConformanceVectorTest
-```
-
-The build packages the full-verify vectors into the test APK, and fails when
-a JSON file in the vectors directory does not parse or when their number is
-not the pinned one. The tests reach no network, and log each vector's outcome
-under the tag `TinfoilConformance`.
-
-**A verifier library built with `tinfoil_conformance` must never ship**: its
-test-only entry points replace the trust anchors and the clock. The build
-enforces this in both directions. Without `TINFOIL_CONFORMANCE=1`, every
-build fails when its library, the pinned release's or the one that
-`TINFOIL_GO_AAR` names, has those entry points. With it, the build fails
-when the library lacks them, and refuses every task, in either module, that
-packages the SDK, belongs to the release variant or publishes; only the
-instrumented tests run.
-
-The SDK's version is `version` in `gradle.properties`, for both modules, and
-`Tinfoil.VERSION` is generated from it.
-
-The public API of each module is pinned, in `tinfoil/api/tinfoil.api` and
-`tinfoil-openai/api/tinfoil-openai.api`, and `apiCheck` fails when the code
-and those files disagree. After a deliberate change to the API, run
-`./gradlew apiDump` and commit the result.
+- [The OpenAI client](docs/openai-client.md): its options, streaming, and
+  what it reads from the environment.
+- [Routes](docs/routes.md): choosing the route, the experimental gateway,
+  and the HTTP clients without the OpenAI SDK.
+- [Verification](docs/verification.md): what is trusted, verification
+  reports, and errors.
+- [Transports](docs/transports.md): TLS and EHBP, relays, and session
+  recovery.
+- [App size](docs/app-size.md): what the SDK adds to an app, and how to keep
+  it small.
+- [Contributing](CONTRIBUTING.md): building, testing, the pinned verifier
+  library, and the conformance tests.
 
 ## Reporting Vulnerabilities
 
