@@ -29,7 +29,7 @@ internal object ConfigAuthorizerFixture {
             .toByteArray()
 
     /** The config in the document, which pins [runtime] by its digest. */
-    val config: ByteArray = "cvm-version: 0.15.0@sha256:${sha256Hex(runtime)}\n".toByteArray()
+    val config: ByteArray = """{"cvm-version":"0.15.0@sha256:${sha256Hex(runtime)}"}""".toByteArray()
 
     /** The nonce that the document answers. */
     val nonce: ByteArray = ByteArray(32)

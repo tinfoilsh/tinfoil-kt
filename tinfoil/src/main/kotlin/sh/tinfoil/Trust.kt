@@ -107,9 +107,9 @@ public sealed interface Trust {
     /**
      * Trusts `attestation-collaterals/v3` for exactly the config [bytes]
      * that the caller supplies, which must come from trusted client
-     * configuration and must not be empty. [name] optionally associates
-     * them with a `/org/project/revision` identity; null or empty names
-     * none. This variant has no pin, because a pin would only compare the
+     * configuration, must be a JSON config and must not be empty. [name]
+     * optionally associates them with a `/org/project/revision` identity;
+     * null or empty names none. This variant has no pin, because a pin would only compare the
      * caller's input against the caller's input.
      */
     public class EmbeddedConfig(

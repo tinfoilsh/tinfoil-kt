@@ -1,5 +1,14 @@
 import groovy.json.JsonException
 import groovy.json.JsonSlurper
+import java.io.IOException
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.time.Duration
 import java.util.Properties
 import java.util.zip.ZipFile
 
@@ -10,12 +19,111 @@ plugins {
 // version of the version catalog, so it is applied by name.
 apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
 
-// The Go verifier library, TinfoilGo.aar, is built from tinfoil-go with its
-// scripts/build-mobile-android.sh. TINFOIL_GO_AAR, or the tinfoilGoAar Gradle
-// property, names it; a relative path is resolved against the repository root.
-val tinfoilGoAar: Provider<RegularFile> = providers.environmentVariable("TINFOIL_GO_AAR")
+// The Go verifier library, TinfoilGo.aar, is the one that a tinfoil-go release
+// publishes. tinfoil-go.properties pins the release by its tag and the
+// library's SHA-256, and the build downloads the library and refuses it unless
+// its SHA-256 is the pinned one. The checksum is never read from the release.
+abstract class DownloadTinfoilGo : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val pin: RegularFileProperty
+
+    @get:OutputFile
+    abstract val aar: RegularFileProperty
+
+    @TaskAction
+    fun download() {
+        val pinFile = pin.get().asFile
+        val pinned = Properties().apply { pinFile.inputStream().use(::load) }
+        val version = pinned.getProperty("version")?.takeIf { VERSION.matches(it) }
+            ?: throw GradleException("${pinFile.name} names no tinfoil-go release version, such as v0.17.0")
+        val expected = pinned.getProperty("sha256")?.takeIf { SHA256.matches(it) }
+            ?: throw GradleException("${pinFile.name} names no SHA-256 of TinfoilGo.aar, as 64 lowercase hex digits")
+        val url = URI("https://github.com/tinfoilsh/tinfoil-go/releases/download/$version/TinfoilGo.aar")
+
+        val target = aar.get().asFile
+        target.delete()
+        target.parentFile.mkdirs()
+        val partial = File(target.parentFile, "${target.name}.partial")
+        partial.delete()
+        // Redirect.NORMAL follows GitHub's redirect to its download host and
+        // never follows one from HTTPS to HTTP. GitHub's download host can
+        // refuse a stream of an HTTP/2 connection, so HTTP/1.1 is used.
+        val client = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(30))
+            .build()
+        val request = HttpRequest.newBuilder(url).timeout(Duration.ofMinutes(5)).GET().build()
+        val response = try {
+            client.send(request, HttpResponse.BodyHandlers.ofInputStream())
+        } catch (e: IOException) {
+            throw GradleException("Could not download the verifier library from $url: ${e.message}", e)
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        response.body().use { body ->
+            if (response.statusCode() != 200) {
+                throw GradleException("Could not download the verifier library from $url: HTTP ${response.statusCode()}")
+            }
+            partial.outputStream().use { out ->
+                val buffer = ByteArray(1 shl 16)
+                var total = 0L
+                while (true) {
+                    val read = body.read(buffer)
+                    if (read < 0) break
+                    total += read
+                    if (total > MAX_SIZE) {
+                        partial.delete()
+                        throw GradleException("The verifier library at $url is larger than $MAX_SIZE bytes")
+                    }
+                    digest.update(buffer, 0, read)
+                    out.write(buffer, 0, read)
+                }
+            }
+        }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        if (actual != expected) {
+            partial.delete()
+            throw GradleException(
+                "The verifier library at $url has SHA-256 $actual, and ${pinFile.name} pins $expected. " +
+                    "It is refused. Re-pin only with update_verifier.sh, after checking the release.",
+            )
+        }
+        Files.move(partial.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+    }
+
+    private companion object {
+        val VERSION = Regex("v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?")
+        val SHA256 = Regex("[0-9a-f]{64}")
+        const val MAX_SIZE = 256L * 1024 * 1024
+    }
+}
+
+val downloadTinfoilGo by tasks.registering(DownloadTinfoilGo::class) {
+    pin.set(rootProject.layout.projectDirectory.file("tinfoil-go.properties"))
+    aar.set(layout.buildDirectory.file("tinfoil-go-release/TinfoilGo.aar"))
+}
+
+// TINFOIL_GO_AAR, or the tinfoilGoAar Gradle property, replaces the pinned
+// release with a local TinfoilGo.aar, such as one that is built from an
+// unreleased tinfoil-go with its scripts/build-mobile-android.sh, or the
+// conformance build's library. A relative path is resolved against the
+// repository root. That library is not checked against the pin.
+val tinfoilGoOverride: File? = providers.environmentVariable("TINFOIL_GO_AAR")
     .orElse(providers.gradleProperty("tinfoilGoAar"))
-    .map { rootProject.layout.projectDirectory.file(it) }
+    .orNull
+    ?.takeIf { it.isNotEmpty() }
+    ?.let { rootProject.layout.projectDirectory.file(it).asFile }
+
+// Whether this is the conformance build, which the convention plugin reads
+// from TINFOIL_CONFORMANCE and refuses to package.
+val isConformanceBuild: Boolean = extra["tinfoilConformanceBuild"] as Boolean
+if (isConformanceBuild && tinfoilGoOverride == null) {
+    throw GradleException(
+        "TINFOIL_CONFORMANCE=1 needs TINFOIL_GO_AAR to name a verifier library built with " +
+            "MOBILE_BUILD_TAGS=tinfoil_conformance, which no release publishes; see the README",
+    )
+}
 
 // An Android library cannot depend on a local AAR and still be packaged as
 // one, so the Go library is unpacked and its parts are bundled into this
@@ -23,29 +131,23 @@ val tinfoilGoAar: Provider<RegularFile> = providers.environmentVariable("TINFOIL
 // libraries, and its keep rules as consumer rules. Consumers then depend on
 // one artifact.
 val unpackTinfoilGo by tasks.registering(Sync::class) {
-    val aar = tinfoilGoAar.orNull?.asFile
-    doFirst {
-        if (aar == null) {
-            throw GradleException(
-                "Set TINFOIL_GO_AAR to a TinfoilGo.aar built with tinfoil-go's scripts/build-mobile-android.sh",
-            )
+    val override = tinfoilGoOverride
+    if (override != null) {
+        from(zipTree(override)) {
+            include("classes.jar", "jni/**", "proguard.txt")
         }
-        if (!aar.isFile) {
-            throw GradleException("TINFOIL_GO_AAR names no file: $aar")
-        }
-    }
-    if (aar != null) {
-        from(zipTree(aar)) {
+    } else {
+        dependsOn(downloadTinfoilGo)
+        from(zipTree(downloadTinfoilGo.flatMap { it.aar })) {
             include("classes.jar", "jni/**", "proguard.txt")
         }
     }
     into(layout.buildDirectory.dir("tinfoil-go"))
 }
+if (tinfoilGoOverride != null) {
+    logger.warn("Using the verifier library that TINFOIL_GO_AAR names, $tinfoilGoOverride, instead of the pinned release")
+}
 val tinfoilGoDir = layout.buildDirectory.dir("tinfoil-go").get().asFile
-
-// Whether this is the conformance build, which the convention plugin reads
-// from TINFOIL_CONFORMANCE and refuses to package.
-val isConformanceBuild: Boolean = extra["tinfoilConformanceBuild"] as Boolean
 
 // Fails the build when the unpacked verifier library is not the kind that
 // this build is for: a test-only entry point outside the conformance build,
@@ -83,10 +185,10 @@ abstract class CheckVerifierLibraryEntryPoints : DefaultTask() {
         if (!conformanceBuild.get()) {
             if (carriers.isNotEmpty()) {
                 throw GradleException(
-                    "TINFOIL_GO_AAR names a verifier library with test-only entry points, which replace the trust " +
-                        "anchors and must never ship (found in ${carriers.joinToString()}). Build the library " +
-                        "without MOBILE_BUILD_TAGS; only the conformance tests, with TINFOIL_CONFORMANCE=1, use one " +
-                        "that has them.",
+                    "The verifier library has test-only entry points, which replace the trust anchors and " +
+                        "must never ship (found in ${carriers.joinToString()}). If TINFOIL_GO_AAR names it, build " +
+                        "it without MOBILE_BUILD_TAGS; only the conformance tests, with TINFOIL_CONFORMANCE=1, use " +
+                        "one that has them.",
                 )
             }
             return

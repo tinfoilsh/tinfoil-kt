@@ -123,7 +123,7 @@ class VerifierBindingTest {
         assertRefused("must not be empty") {
             verifier(policy = Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(platform = ByteArray(0))))
         }
-        assertRefused("cvm-version") { verifier(Trust.EmbeddedConfig("not: a config".toByteArray())) }
+        assertRefused("cvm-version") { verifier(Trust.EmbeddedConfig("""{"not":"a config"}""".toByteArray())) }
         assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement("bogus", listOf("aa")))) }
         assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement(tdx, listOf("aa")))) }
         assertRefused("pinned registers") { verifier(policy = Policy(pinnedRegisters = Measurement(snp, listOf("not hex")))) }
