@@ -25,7 +25,7 @@ internal class RouteSettings(
     val policy: Policy = Policy(),
     val userCacheSecret: String? = null,
     val verificationCheck: VerificationCheck? = null,
-    val onVerification: VerificationObserver? = null,
+    val onVerificationAttempt: VerificationObserver? = null,
 )
 
 /** The options of a client for the gateway. */
@@ -35,6 +35,6 @@ internal class GatewaySettings(
     val policy: Policy = Policy(),
     val userCacheSecret: String? = null,
     val verificationCheck: VerificationCheck? = null,
-    val onVerification: VerificationObserver? = null,
+    val onVerificationAttempt: VerificationObserver? = null,
     val catalog: (() -> Catalog)? = null,
 )

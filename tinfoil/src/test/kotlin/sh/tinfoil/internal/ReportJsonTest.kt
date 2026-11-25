@@ -117,6 +117,7 @@ class ReportJsonTest {
                 metadata["verifier"],
                 file.name,
             )
+            assertFalse("host" in metadata, "${file.name}: the verifier library names no host")
             assertEncoding(written, file.name)
         }
     }
@@ -202,6 +203,20 @@ class ReportJsonTest {
                 """{"layer":"quote","status":"passed"},{"layer":"policy","status":"passed"}]"""),
             written["steps"],
         )
+    }
+
+    @Test
+    fun theHostThatAClientContactedFollowsTheVerifier() {
+        val report = passed(facts()).withHost("enclave.example:8443")
+        assertEquals(
+            Json.parseToJsonElement(
+                """{"verified_at":"2026-09-26T12:00:00.000000005Z","verifier":{"name":"tinfoil-kt","version":"1.2.0"},""" +
+                    """"host":"enclave.example:8443"}""",
+            ),
+            json(report)["metadata"],
+        )
+        assertEquals(listOf("verified_at", "verifier", "host"), json(report).getValue("metadata").jsonObject.keys.toList())
+        assertEquals(ReportJson.SCHEMA_VERSION, json(report).getValue("schema_version").jsonPrimitive.content.toInt())
     }
 
     @Test

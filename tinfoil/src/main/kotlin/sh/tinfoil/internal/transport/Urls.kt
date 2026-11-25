@@ -149,19 +149,6 @@ internal object Urls {
     }
 
     /**
-     * A relay: a host with an optional port, held to the rules for an
-     * enclave.
-     */
-    @Throws(ConfigurationException::class)
-    fun requireRelay(relay: String) {
-        try {
-            enclaveUrl(relay)
-        } catch (_: ConfigurationException) {
-            throw ConfigurationException("invalid attestation relay: want a host with an optional port, not a URL")
-        }
-    }
-
-    /**
      * Whether [url] is exactly what [authority] spelled: its host in the
      * form that the URL holds it, and its port or none. The URL parser is
      * lenient, the verifier reads the enclave's host for itself, and the

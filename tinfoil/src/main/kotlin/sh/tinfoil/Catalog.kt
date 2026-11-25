@@ -87,8 +87,9 @@ public class ModelPin(
 }
 
 /**
- * The last attempt to verify one replica that a [GatewayHttpClient] has
- * tried, whether it passed or failed.
+ * A replica that a [GatewayHttpClient] has tried to verify: the
+ * verification that its requests are sent under now, if any, and its last
+ * attempt at verification, whether it passed or failed.
  *
  * Experimental: the gateway route is new, and this API may change or be
  * removed in a later release.
@@ -103,15 +104,23 @@ public class ReplicaVerification internal constructor(
     /** The model whose [ModelPin] the replica was verified under. */
     public val pinnedModel: String,
     /**
+     * The report of the replica's verification that requests are sent
+     * under now, as [EnclaveHttpClient.currentVerification] describes for
+     * one enclave: set while that verification is before its freshness
+     * deadline and has not been withdrawn, and null otherwise.
+     */
+    public val current: VerificationReport?,
+    /**
      * The outcome of the last attempt to verify the replica: its
      * [VerificationReport] if it passed, which may have reached its
      * freshness deadline or been withdrawn since; or the [TinfoilException]
      * that it failed with, from which a [VerificationException] and its
      * report are reachable as the cause when the verifier rejected the
-     * replica's document. An earlier success is not kept once a later
-     * attempt fails.
+     * replica's document. An earlier success is not kept here once a later
+     * attempt fails, though [current] keeps it while a failure that is not
+     * an [AttestationException] leaves it valid.
      */
-    public val attempt: VerificationAttempt,
+    public val lastAttempt: VerificationAttempt,
 ) {
     /**
      * The models that requests sent to the replica named, sorted. They are
@@ -123,12 +132,13 @@ public class ReplicaVerification internal constructor(
     override fun equals(other: Any?): Boolean =
         this === other || (
             other is ReplicaVerification && host == other.host && models == other.models &&
-                reference == other.reference && pinnedModel == other.pinnedModel && attempt == other.attempt
+                reference == other.reference && pinnedModel == other.pinnedModel && current == other.current &&
+                lastAttempt == other.lastAttempt
             )
 
-    override fun hashCode(): Int = Objects.hash(host, models, reference, pinnedModel, attempt)
+    override fun hashCode(): Int = Objects.hash(host, models, reference, pinnedModel, current, lastAttempt)
 
     override fun toString(): String =
         "ReplicaVerification(host=$host, models=$models, reference=$reference, pinnedModel=$pinnedModel, " +
-            "attempt=$attempt)"
+            "current=$current, lastAttempt=$lastAttempt)"
 }

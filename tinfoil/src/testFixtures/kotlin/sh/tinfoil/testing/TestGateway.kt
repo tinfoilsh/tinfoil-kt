@@ -34,13 +34,23 @@ import kotlin.time.TestTimeSource
  * requests with, by the replica that a request says it is sealed to, as a
  * real replica would. A verifier endorses whatever the test says.
  */
-public class TestGateway : AutoCloseable {
+public class TestGateway(
+    /**
+     * Where the gateway is mounted on its server: `/` for its root, or a
+     * path that ends with `/`. Its catalog and attestation relay are served
+     * under it, and nothing is served outside it.
+     */
+    public val mount: String = "/",
+) : AutoCloseable {
     public val authority: TestAuthority = TestAuthority()
     public val clock: TestClock = TestClock()
     public val timeSource: TestTimeSource = TestTimeSource()
     public val server: MockWebServer = httpsServer(authority.issue())
     public val host: String = "localhost:${server.port}"
-    public val baseUrl: String = "https://$host/v1/"
+    public val baseUrl: String = "https://$host$mount"
+
+    /** The URL of every request that reached the server, in order. */
+    public val requestUrls: CopyOnWriteArrayList<String> = CopyOnWriteArrayList<String>()
 
     /** The catalog that the gateway serves. */
     @Volatile
@@ -98,12 +108,14 @@ public class TestGateway : AutoCloseable {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val url = request.requestUrl!!
+                requestUrls += url.toString()
                 return when {
-                    url.encodedPath == "/catalog" -> {
+                    !url.encodedPath.startsWith(mount) -> MockResponse().setResponseCode(404)
+                    url.encodedPath == "${mount}catalog" -> {
                         catalogFetches.incrementAndGet()
                         catalog()
                     }
-                    url.encodedPath == "/.well-known/tinfoil-attestation" -> {
+                    url.encodedPath == "${mount}.well-known/tinfoil-attestation" -> {
                         val replica = url.queryParameter("enclave").orEmpty()
                         attestationFetches += replica
                         attestation(replica)
@@ -183,7 +195,7 @@ public class TestGateway : AutoCloseable {
         policy: Policy = Policy(),
         userCacheSecret: String? = "test-secret",
         verificationCheck: VerificationCheck? = null,
-        onVerification: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
+        onVerificationAttempt: ((host: String, attempt: VerificationAttempt) -> Unit)? = null,
         catalog: (() -> Catalog)? = null,
         note: ((String) -> Unit)? = null,
     ): GatewayHttpClient = GatewayHttpClient.create(internals(note)) {
@@ -192,7 +204,7 @@ public class TestGateway : AutoCloseable {
         this.policy = policy
         this.userCacheSecret = userCacheSecret
         this.verificationCheck = verificationCheck
-        this.onVerification = onVerification
+        this.onVerificationAttempt = onVerificationAttempt
         this.catalog = catalog
     }.also { clients += it }
 

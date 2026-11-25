@@ -93,12 +93,35 @@ public class EnclaveHttpClient private constructor(
     public val transport: Transport get() = connection.transport
 
     /**
+     * Returns the report of the verification that the client's requests are
+     * sent under now, without any I/O: the latest verification that passed,
+     * while it is before its freshness deadline and has not been withdrawn.
+     * It is null before the first verification passes, once the
+     * verification has reached its freshness deadline, after the enclave
+     * refused its key, and after a verification that was to replace it
+     * failed with an [AttestationException], such as a [reverify] that the
+     * verifier rejected, until a later verification passes. A [reverify]
+     * that fails in any other way, such as with a [NetworkException],
+     * leaves it as it was while it is fresh, though
+     * [lastVerificationAttempt] then returns the failure.
+     *
+     * The client does not verify again in the background, so once the
+     * verification has reached its freshness deadline this returns null
+     * until the next request or [ensureVerified] verifies the enclave
+     * again; that is not a failure. What it returns holds when it is
+     * called: the verification can reach its deadline right afterwards. Use
+     * [ensureVerified] to find out whether requests can be sent, verifying
+     * when that is needed.
+     */
+    public fun currentVerification(): VerificationReport? = connection.currentVerification
+
+    /**
      * Returns the outcome of the most recent attempt to verify the enclave,
      * without any I/O: [VerificationAttempt.Passed] with the report of an
      * attempt that passed, or [VerificationAttempt.Failed] with the
      * [TinfoilException] that the client reported for one that failed, the
-     * same as [EnclaveOptions.onVerification] was given. It is null before
-     * the first attempt has an outcome.
+     * same as [EnclaveOptions.onVerificationAttempt] was given. It is null
+     * before the first attempt has an outcome.
      *
      * Every attempt counts: the first verification, one that is tried
      * again, and each that a refused key, a freshness deadline or
@@ -109,10 +132,10 @@ public class EnclaveHttpClient private constructor(
      * that failed and the partial facts.
      *
      * A report that it returns is not checked: it may have reached its
-     * freshness deadline or been withdrawn since. Use [ensureVerified] for
-     * one that is valid now.
+     * freshness deadline or been withdrawn since. [currentVerification]
+     * returns the verification that requests are sent under now.
      */
-    public fun lastVerification(): VerificationAttempt? = connection.lastVerification
+    public fun lastVerificationAttempt(): VerificationAttempt? = connection.lastVerificationAttempt
 
     /**
      * Returns the report of a verification that is valid now, verifying
@@ -463,7 +486,7 @@ public class EnclaveHttpClient private constructor(
                     enclave, inputs.pin, settings.transport, settings.fetchAttestation,
                     // The client never adds or changes a request's cache secret.
                     verifier, null,
-                    settings.verificationCheck, settings.onVerification, internals,
+                    settings.verificationCheck, settings.onVerificationAttempt, internals,
                     refuseProxyOnEnclaveOrigin = true,
                 ),
                 trust,

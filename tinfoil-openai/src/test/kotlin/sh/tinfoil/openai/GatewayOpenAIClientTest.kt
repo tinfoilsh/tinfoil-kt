@@ -75,6 +75,36 @@ class GatewayOpenAIClientTest {
         chunks.flatMap { it.choices() }.mapNotNull { it.delta().content().orElse(null) }
 
     @Test
+    fun aGatewayThatIsMountedUnderAPathIsReachedUnderItWithOrWithoutATrailingSlash() = test {
+        for (url in listOf("tinfoil", "tinfoil/")) {
+            TestGateway(mount = "/tinfoil/").use { mounted ->
+                mounted.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
+                mounted.answer = { it.reply(completionJson("mounted")) }
+                val http = mounted.connections().gateway {
+                    modelPins = mapOf("a-model" to ModelPin("tinfoilsh/a-model"))
+                    this.url = "https://${mounted.host}/$url"
+                }.also(mounted::track)
+                val client = Client.create(http, KEY).also(mounted::track)
+
+                assertEquals("https://${mounted.host}/tinfoil/", http.baseUrl.toString())
+                assertEquals("https://${mounted.host}/tinfoil/v1/", client.baseUrl.toString())
+                client.openAI.chat().completions().create(params())
+
+                assertEquals(
+                    listOf(
+                        "https://${mounted.host}/tinfoil/catalog",
+                        "https://${mounted.host}/tinfoil/.well-known/tinfoil-attestation",
+                        "https://${mounted.host}/tinfoil/v1/chat/completions",
+                    ),
+                    mounted.requestUrls.map { it.substringBefore('?') },
+                    url,
+                )
+                assertTrue(mounted.received.single().sealed)
+            }
+        }
+    }
+
+    @Test
     fun aChatCompletionIsSealedToAVerifiedReplicaOfItsModel() = test {
         gateway.serve("a-model" to ("tinfoilsh/a-model" to listOf("a.example")))
         gateway.answer = { it.reply(completionJson("sealed answer")) }
@@ -87,7 +117,7 @@ class GatewayOpenAIClientTest {
         assertEquals(listOf("a.example" to "tinfoilsh/a-model"), gateway.verifiedRepos)
         val received = gateway.received.single()
         assertTrue(received.sealed)
-        // The gateway's base URL is used as it is.
+        // The API path joins under the gateway's URL, its origin here.
         assertEquals("/v1/chat/completions", received.request.path)
         assertEquals("a-model", received.request.getHeader("X-Tinfoil-Model"))
         assertEquals("a.example", received.request.getHeader("X-Tinfoil-Seal"))
@@ -98,7 +128,7 @@ class GatewayOpenAIClientTest {
         assertTrue(text.contains(prompt) && Regex(""","cache_salt":"[A-Za-z0-9_-]{43}"}$""").containsMatchIn(text), text)
         assertFalse(text.contains("user_cache_secret"))
         assertEquals(64, received.request.getHeader("X-Tinfoil-Cache-Prefix")!!.length)
-        assertEquals("Client(baseUrl=${gateway.baseUrl})", client.toString())
+        assertEquals("Client(baseUrl=${gateway.baseUrl}v1/)", client.toString())
     }
 
     @Test

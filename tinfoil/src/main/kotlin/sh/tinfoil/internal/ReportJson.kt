@@ -66,6 +66,7 @@ internal object ReportJson {
     private fun form(metadata: VerificationMetadata): MetadataForm = MetadataForm(
         verifiedAt = time(metadata.verifiedAt),
         verifier = VerifierForm(metadata.verifier.name, metadata.verifier.version),
+        host = metadata.host.nullIfEmpty(),
     )
 
     private fun form(facts: VerifiedFacts): VerifiedFactsForm = VerifiedFactsForm(
@@ -182,10 +183,16 @@ internal object ReportJson {
     @Serializable
     class StepForm(val layer: String, val status: String, val message: String? = null)
 
+    /**
+     * A report's metadata. The verifier library's report never names a
+     * host, and the host of one that it did name would be ignored: a
+     * client names the host that it contacted itself.
+     */
     @Serializable
     class MetadataForm(
         @SerialName("verified_at") val verifiedAt: String,
         val verifier: VerifierForm? = null,
+        val host: String? = null,
     )
 
     @Serializable
