@@ -2,12 +2,15 @@
 
 A Kotlin client for verifiably private AI inference with [Tinfoil](https://tinfoil.sh).
 
-This SDK is under development and is not yet ready for use.
+This SDK is in pre-release: no version is published yet, and the API may still
+change before the first release. Until then, build it from source as
+[Development](#development) describes.
 
 ## Install
 
 The SDK is two artifacts, with the same version. They are **not yet
-published**, and their coordinates may still change:
+published**, and their coordinates may still change. Once a release is out,
+an app depends on them like this:
 
 ```kotlin
 dependencies {
@@ -599,50 +602,6 @@ val plaintext = SessionRecoveryToken.fromJson(stored).decryptResponse(sealedResp
 
 A token is secret key material for its response. Keep it in protected
 storage, never log it, and delete it once the response has been read.
-
-## Migrating from earlier versions
-
-This release reshapes how clients are configured, as in the other Tinfoil
-SDKs. The changes are breaking:
-
-| Before | Now |
-|---|---|
-| `EnclaveHttpClient.create(enclave, Pin(repo = "org/repo"))` | `EnclaveHttpClient.create(enclave, Trust.RepoPin("org/repo"))` |
-| `Pin(project = "org/project")` | `Trust.ProjectPin("org/project")`, with `registryIds` for registries other than the public one (an empty list is refused) |
-| `Pin(repo = ..., project = ...)` | `Trust.EitherPin(repo, project)` |
-| `Pin.NONE` with `Verifier(configAuthorizer = ...)` | `Trust.AuthorizedBy(authorizer)` |
-| `Pin.NONE` with `Verifier(embeddedReferences = EmbeddedReferences(config = EmbeddedConfig.Bytes(bytes)))` | `Trust.EmbeddedConfig(bytes, name)`; a config named by its digest and runtime has no replacement |
-| `Verifier(configSigningKeysPem = keys)` | `Trust.SignedBy(keys, project)` |
-| `verifier = Verifier(pinnedRegisters = ..., freshnessMaxAge = ...)` | `policy = Policy(pinnedRegisters = ..., freshnessMaxAge = ...)`; a zero age selects the default |
-| `Verifier(freshnessSigningKeysPem = keys)` | `Policy(artifacts = ArtifactTrust.EndorsedArtifacts(keys))` |
-| `EmbeddedReferences(runtime = ..., platform = ...)` | `Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime, platform))` |
-| `ModelPin(repo, verifier)` | `ModelPin(repo, policy)` |
-| `GatewayOptions.baseUrl`, `GatewayHttpClient.DEFAULT_BASE_URL` | `GatewayOptions.url`, `GatewayHttpClient.DEFAULT_URL` |
-| a gateway URL that carries the API path, as `https://inference-gateway.tinfoil.sh/v1/`, with the catalog and the attestation relay at its origin | the gateway's origin, `https://inference-gateway.tinfoil.sh/`, or the URL that it is mounted under, with the catalog and the relay joined under it; the OpenAI client adds `apiPath`, `/v1/` by default, which it now takes with a gateway client too |
-| `GatewayOptions.pinnedModelsOnly = true` | none: a gateway client serves only the models in `modelPins` |
-| a gateway client without `modelPins`, or a request for a model without a pin, which was verified against the catalog's repository | refused with a `ConfigurationException`: pin every model that the client is to serve |
-| `ReplicaVerification.pinnedModel: String?` | `ReplicaVerification.pinnedModel: String` |
-| `client.current` | `client.currentVerification()`, a `VerificationReport`, for the verification in use; `client.lastVerificationAttempt()` for the latest attempt |
-| `onVerificationResult = { result -> ... }` | `onVerificationAttempt = { host, attempt -> ... }`, called for failed attempts too |
-| `GatewayHttpClient.current`, with `ReplicaVerification.verification` | `GatewayHttpClient.replicas()`, with `ReplicaVerification.current` and `ReplicaVerification.lastAttempt` |
-| `Verifier.PUBLIC_REGISTRY_ID` | `Trust.PUBLIC_REGISTRY_ID` |
-| `client.pin` | `client.trust` on the enclave client; none on the router client |
-| `transportMode = TransportMode.EHBP` | `transport = Transport.Ehbp()` |
-| `transportMode = TransportMode.EHBP` and `baseUrl = "https://proxy.example/v1/"` | `transport = Transport.Ehbp(proxyUrl = "https://proxy.example/")`; the OpenAI client adds `/v1/` |
-| `baseUrl` as a path on the enclave's own origin | none: requests name their own paths, and the OpenAI client takes `apiPath` |
-| `client.transportMode` | `client.transport` |
-| `attestationRelay = "relay.example"` | `fetchAttestation = AttestationRelay("https://relay.example")`; discovery now runs with it |
-| a proxy or a relay that skipped router discovery | discovery always runs; see [Relays](#relays) |
-| `userCacheSecret` on `EnclaveHttpClient` | none: set `user_cache_secret` in each request body that needs one |
-| an empty `userCacheSecret`, which was refused | selects the process's random secret |
-| `EnclaveOpenAIClient.create(enclave, pin, apiKey) { ... }` | `Client.create(EnclaveHttpClient.create(enclave, trust) { ... }, apiKey) { ... }` |
-| `RouterOpenAIClient.create(apiKey) { ... }` | `Client.create(RouterHttpClient.create { ... }, apiKey) { ... }` |
-| `GatewayOpenAIClient.create(apiKey) { ... }` | `Client.create(GatewayHttpClient.create { ... }, apiKey) { ... }` |
-| `Client.httpClient: Call.Factory` | `Client.httpClient: AttestedHttpClient` |
-
-An OpenAI client that is made over an HTTP client of yours does not close
-it: close both. A base URL that is set in `openAI { }` was replaced before,
-and still is.
 
 ## Development
 
