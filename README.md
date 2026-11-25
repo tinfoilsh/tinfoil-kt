@@ -183,7 +183,7 @@ who vouches for the config that it runs. It is one of the variants of
 | `Trust.ProjectPin(project, registryIds)` | v3 collateral for a config registry project, `org/project[@revision][@sha256:digest]`, endorsed by the public registry (`registryIds = null`) or by exactly the registries listed; an empty list is refused |
 | `Trust.SignedBy(keys, project)` | v3 configs whose endorsements your keys sign, optionally only those of one project |
 | `Trust.AuthorizedBy(authorize)` | v3 configs that your `ConfigAuthorizer` approves |
-| `Trust.EmbeddedConfig(bytes, name)` | v3 collateral for exactly the config bytes that you supply |
+| `Trust.EmbeddedConfig(bytes, name)` | v3 collateral for exactly the JSON config bytes that you supply |
 | `Trust.EitherPin(repo, project)` | either of the first two, for the migration from v2 to v3 collateral |
 
 The router's trust is fixed to its repository, and the gateway's to the
