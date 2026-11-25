@@ -136,6 +136,32 @@ class PinnedTlsTest {
     }
 
     @Test
+    fun aRetiredTransportLetsAResponseBeReadToTheEndOfItsStream() = runBlocking<Unit> {
+        val server = server()
+        val transport = bind(certificate.fingerprint)
+        // Over HTTP/2 the HTTP client is done with a call once the declared
+        // bytes have arrived; the end of the stream follows a second later.
+        server.enqueue(MockResponse().setBody("x".repeat(1024)).throttleBody(1024, 1, TimeUnit.SECONDS))
+
+        val response = transport.newCall(server.get()).await()
+        transport.retire()
+
+        response.use {
+            val body = it.body!!.source()
+            assertEquals(1024, body.readByteString(1024).size)
+            // Closing the connection now would fail the read of the end of
+            // the stream, although the whole body has arrived. Connections
+            // are closed on a background thread, so this waits for a close
+            // that must not happen: the wait can let one go unseen, but
+            // cannot fail a transport that keeps the connection.
+            Thread.sleep(500)
+            assertEquals(1, transport.connectionCount, "the connection is kept until the response has been read")
+            assertTrue(body.exhausted())
+        }
+        awaitUntil { transport.connectionCount == 0 }
+    }
+
+    @Test
     fun closingEndsTheCallsOfEveryTransportRetiredOnesIncluded() = runBlocking<Unit> {
         val server = server()
         val protocol = PinnedTls(HttpSettings(authority.trust)).also { protocols += it }

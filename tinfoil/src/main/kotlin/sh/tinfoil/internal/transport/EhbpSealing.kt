@@ -3,7 +3,6 @@ package sh.tinfoil.internal.transport
 import okhttp3.Authenticator
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.ConnectionPool
 import okhttp3.ConnectionSpec
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
@@ -24,7 +23,6 @@ import sh.tinfoil.ConfigurationException
 import sh.tinfoil.SessionRecoveryToken
 import sh.tinfoil.TransportMode
 import sh.tinfoil.VerifiedFacts
-import sh.tinfoil.internal.Background
 import sh.tinfoil.ehbp.client.Transport
 import sh.tinfoil.ehbp.client.newTransportWithIdentity
 import sh.tinfoil.ehbp.identity.Identity
@@ -221,14 +219,11 @@ internal class EhbpTransport(
     private val calls: ActiveCalls,
     settings: HttpSettings,
 ) : BoundTransport {
-    private val pool = ConnectionPool()
-
-    @Volatile
-    private var retired = false
+    private val connections = RetiringPool(calls)
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .dispatcher(dispatcher)
-        .connectionPool(pool)
+        .connectionPool(connections.pool)
         // One or the other, never a choice: cleartext only for a base URL
         // on a loopback host, and then nothing else.
         .connectionSpecs(listOf(if (cleartext) ConnectionSpec.CLEARTEXT else ConnectionSpec.MODERN_TLS))
@@ -255,7 +250,7 @@ internal class EhbpTransport(
         .build()
 
     /** How many connections are open, in use or kept for later. */
-    val connectionCount: Int get() = pool.connectionCount()
+    val connectionCount: Int get() = connections.connectionCount
 
     override fun newCall(request: Request): Call {
         val call = EhbpCall(request)
@@ -279,6 +274,7 @@ internal class EhbpTransport(
         try {
             client.probePin(url) { call ->
                 calls.add(call)
+                connections.opened(call)
                 probing = call
             }
         } finally {
@@ -286,18 +282,11 @@ internal class EhbpTransport(
         }
     }
 
-    override fun retire() {
-        retired = true
-        pool.evictAll()
-    }
+    override fun retire() = connections.retire()
 
     private fun finished(call: Call) {
         calls.remove(call)
-        if (retired || calls.isClosed) {
-            // A call ends on the thread that closes its response, which is
-            // the caller's, and sockets are not closed there.
-            Background.run { pool.evictAll() }
-        }
+        connections.ended(call)
     }
 
     /**
@@ -366,6 +355,7 @@ internal class EhbpTransport(
 
         private fun start() {
             check(executed.compareAndSet(false, true)) { "Already Executed" }
+            connections.opened(this)
         }
 
         /** When the call's time runs out, from its timeout and its deadline as they are when it starts. */
@@ -452,7 +442,7 @@ internal class EhbpTransport(
                 // is this request's. It has none for a response that is not
                 // sealed.
                 answered = sealing
-                return returned
+                return connections.endingWithBody(returned, this)
             } catch (e: Throwable) {
                 response?.closeQuietly()
                 finished(this)
@@ -490,9 +480,13 @@ internal class EhbpTransport(
             }
         }
 
-        /** Forgets the call once its exchange is over, the response body included. */
+        /**
+         * Forgets the call once the HTTP call that carries it is over. It
+         * has ended if that failed; otherwise it ends when its response
+         * body does, which can be after the HTTP call is over.
+         */
         private inner class Tracker : EventListener() {
-            override fun callEnd(call: Call) = finished(this@EhbpCall)
+            override fun callEnd(call: Call) = calls.remove(this@EhbpCall)
 
             override fun callFailed(call: Call, ioe: IOException) = finished(this@EhbpCall)
         }

@@ -2,7 +2,6 @@ package sh.tinfoil.internal.transport
 
 import okhttp3.Authenticator
 import okhttp3.Call
-import okhttp3.ConnectionPool
 import okhttp3.ConnectionSpec
 import okhttp3.CookieJar
 import okhttp3.Dispatcher
@@ -17,7 +16,6 @@ import sh.tinfoil.AttestationException
 import sh.tinfoil.ConfigurationException
 import sh.tinfoil.TransportMode
 import sh.tinfoil.VerifiedFacts
-import sh.tinfoil.internal.Background
 import java.io.IOException
 import java.net.ProtocolException
 import java.net.Proxy
@@ -196,18 +194,16 @@ internal class PinnedTlsTransport(
     private val calls: ActiveCalls,
     settings: HttpSettings,
 ) : BoundTransport {
-    private val pool = ConnectionPool()
-
-    @Volatile
-    private var retired = false
+    private val connections = RetiringPool(calls)
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .dispatcher(dispatcher)
-        .connectionPool(pool)
+        .connectionPool(connections.pool)
         // No cleartext, whatever the request's scheme.
         .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS))
         .pinnedTo(pin)
         .eventListener(CallTracker())
+        .addInterceptor { chain -> connections.endingWithBody(chain.proceed(chain.request()), chain.call()) }
         // A response is the enclave's or nothing: a redirect or an
         // authentication challenge is handed to the caller, never acted on.
         .followRedirects(false)
@@ -227,7 +223,7 @@ internal class PinnedTlsTransport(
         .build()
 
     /** How many connections are open, in use or kept for later. */
-    val connectionCount: Int get() = pool.connectionCount()
+    val connectionCount: Int get() = connections.connectionCount
 
     override fun newCall(request: Request): Call {
         val call = client.newCall(request)
@@ -240,24 +236,21 @@ internal class PinnedTlsTransport(
     // The call is tracked like any other, so closing the client ends it.
     override suspend fun probe(url: HttpUrl) = client.probePin(url, calls::add)
 
-    override fun retire() {
-        retired = true
-        pool.evictAll()
-    }
+    override fun retire() = connections.retire()
 
-    /** Forgets finished calls, and closes the connections that they free once none are kept. */
+    /**
+     * Forgets finished calls. A call that fails has ended; one that
+     * succeeds ends when its response body does, which can be after the
+     * HTTP client has finished with it.
+     */
     private inner class CallTracker : EventListener() {
-        override fun callEnd(call: Call) = finished(call)
+        override fun callStart(call: Call) = connections.opened(call)
 
-        override fun callFailed(call: Call, ioe: IOException) = finished(call)
+        override fun callEnd(call: Call) = calls.remove(call)
 
-        private fun finished(call: Call) {
+        override fun callFailed(call: Call, ioe: IOException) {
             calls.remove(call)
-            if (retired || calls.isClosed) {
-                // A call ends on the thread that closes its response, which
-                // is the caller's, and sockets are not closed there.
-                Background.run { pool.evictAll() }
-            }
+            connections.ended(call)
         }
     }
 
