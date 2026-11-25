@@ -26,8 +26,12 @@ version. A class's package names its artifact.
   never published.
 - `build-logic/`: the convention plugin `tinfoil.android-library`, which
   holds what the two modules' builds have in common.
-- `tinfoil-go.properties`: the tinfoil-go commit that the attestation verifier
-  library is built from.
+- `tinfoil-go.properties`: the tinfoil-go release whose `TinfoilGo.aar` is
+  the attestation verifier library, and that library's SHA-256. The build
+  downloads it and refuses it unless its SHA-256 is the pinned one. Change
+  the pin only with `update_verifier.sh`, in a change of its own, and never
+  make the build fall back to building the library, to another source, or to
+  a library that it has not checked; see the README.
 - `gradle/verification-metadata.xml`: the SHA-256 of the released EHBP
   client, which JitPack serves. `settings.gradle.kts` lets JitPack serve
   that one module and nothing else. Never widen that filter, and change the
@@ -47,7 +51,10 @@ to what is verified belongs in tinfoil-go.
 
 ## Building and testing
 
-`TINFOIL_GO_AAR` must name a `TinfoilGo.aar`; see the README.
+The build downloads the pinned release of the verifier library itself.
+`TINFOIL_GO_AAR` replaces it with a local `TinfoilGo.aar`, which is not
+checked against the pin, to work against an unreleased tinfoil-go. The
+conformance build needs one too. See the README.
 
 A task that is named without a module runs in both modules; `:tinfoil:` or
 `:tinfoil-openai:` before it runs it in one.

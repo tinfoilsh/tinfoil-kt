@@ -17,57 +17,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      TINFOIL_GO_AAR: ${{ github.workspace }}/build/tinfoil-go/TinfoilGo.aar
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - name: Find the pinned tinfoil-go commit
-        id: pinned
-        run: |
-          commit="$(sed -n 's/^commit=\([0-9a-f]\{40\}\)$/\1/p' tinfoil-go.properties)"
-          if [[ -z "$commit" ]]; then
-            echo "::error::tinfoil-go.properties names no full commit"
-            exit 1
-          fi
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-
-      # The verifier library is built from source at the pinned commit, and
-      # kept between runs under that commit.
-      - name: Restore the verifier library
-        id: verifier
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/tinfoil-go/TinfoilGo.aar
-          key: tinfoil-go-aar-${{ steps.pinned.outputs.commit }}
-
-      - name: Check out tinfoil-go
-        if: steps.verifier.outputs.cache-hit != 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: tinfoilsh/tinfoil-go
-          ref: ${{ steps.pinned.outputs.commit }}
-          path: build/tinfoil-go/source
-          persist-credentials: false
-
-      - name: Set up Go
-        if: steps.verifier.outputs.cache-hit != 'true'
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: build/tinfoil-go/source/go.mod
-          cache: false
-
-      - name: Build the verifier library
-        if: steps.verifier.outputs.cache-hit != 'true'
-        working-directory: build/tinfoil-go/source
-        run: |
-          version="$(tr -d '[:space:]' < scripts/android-ndk-version.txt)"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$version"
-          bash scripts/setup-mobile.sh
-          bash scripts/build-mobile-android.sh "$TINFOIL_GO_AAR"
 
       - name: Set up Java
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -81,7 +35,9 @@ jobs:
           # Pull requests read the cache and never write it.
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      # In both modules, tinfoil and tinfoil-openai.
+      # In both modules, tinfoil and tinfoil-openai. The build downloads the
+      # verifier library of the tinfoil-go release in tinfoil-go.properties,
+      # and fails unless its SHA-256 is the pinned one.
       - name: Build, lint, run the unit tests and check the public API
         run: ./gradlew --console=plain assembleRelease lintRelease testDebugUnitTest apiCheck
 
@@ -90,7 +46,8 @@ jobs:
       # (./gradlew connectedDebugAndroidTest).
       #
       # So are the conformance tests, which also need a verifier library built
-      # with MOBILE_BUILD_TAGS=tinfoil_conformance and the vectors of
+      # with MOBILE_BUILD_TAGS=tinfoil_conformance, which no release publishes,
+      # from the pinned release's tag, and the vectors of
       # tinfoilsh/tinfoil-conformance at the commit in
       # tinfoil-conformance.properties. With an emulator, they belong in a job
       # of their own, with TINFOIL_CONFORMANCE=1: that build refuses to

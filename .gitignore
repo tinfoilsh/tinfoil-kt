@@ -6,5 +6,5 @@ local.properties
 *.iml
 .DS_Store
 .env
-# The Go verifier library is built from tinfoil-go, never committed.
+# The Go verifier library is downloaded from a tinfoil-go release, never committed.
 *.aar

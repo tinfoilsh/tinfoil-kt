@@ -14,7 +14,8 @@ import kotlin.test.assertNull
 class ConfigAuthorizationTest {
     private fun b64(text: String): String = Base64.getEncoder().encodeToString(text.toByteArray())
 
-    private val plain = """{"config":"${b64("cvm-version: x")}"}"""
+    private val config = """{"cvm-version":"x"}"""
+    private val plain = """{"config":"${b64(config)}"}"""
 
     /** Records what it was asked, and throws [failure] if there is one. */
     private class Recorder(private val failure: Throwable? = null) : ConfigAuthorizer {
@@ -29,7 +30,7 @@ class ConfigAuthorizationTest {
     @Test
     fun decodesAPlainConfig() {
         val endorsement = ConfigAuthorization.decodeEndorsement(plain)
-        assertEquals(ConfigEndorsement("cvm-version: x".toByteArray()), endorsement)
+        assertEquals(ConfigEndorsement(config.toByteArray()), endorsement)
         assertNull(endorsement.reference)
         assertNull(endorsement.sigstoreBundle)
         assertNull(endorsement.issuerCertificate)
@@ -59,7 +60,7 @@ class ConfigAuthorizationTest {
     fun anApprovalReturns() {
         val recorder = Recorder()
         ConfigAuthorization.authorize(recorder, plain)
-        assertEquals(listOf(ConfigEndorsement("cvm-version: x".toByteArray())), recorder.seen)
+        assertEquals(listOf(ConfigEndorsement(config.toByteArray())), recorder.seen)
     }
 
     @Test
