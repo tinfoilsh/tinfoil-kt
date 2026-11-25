@@ -6,9 +6,10 @@ import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.days
 
 /**
- * The README's examples of this module, kept here so that they compile
- * against the API as it is. They are not run: each would verify a production
- * enclave. Change the README and this file together.
+ * The examples of this module in the README and in `docs/`, kept here so
+ * that they compile against the API as it is. They are not run: each would
+ * verify a production enclave. Change the documentation and this file
+ * together.
  */
 @Suppress("unused")
 class DocumentationExamplesTest {
