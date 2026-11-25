@@ -211,7 +211,8 @@ internal class GatewayRouter private constructor(
     private val policy: GatewayPolicy,
     private val secret: UserCacheSecret,
     private val suppliedCatalog: (() -> Catalog)?,
-    private val relay: String,
+    /** Where the gateway's catalog is: under [baseUrl]. */
+    private val catalogUrl: HttpUrl,
     private val internals: Internals,
     private val open: (ReplicaKey) -> EnclaveConnection,
 ) : AttestedSender {
@@ -228,7 +229,7 @@ internal class GatewayRouter private constructor(
     private val catalogFetcher: DocumentFetcher? =
         if (suppliedCatalog == null) GatewayCatalog.fetcher(internals.http) else null
     private val fetchedCatalog: CatalogCache? = catalogFetcher?.let { fetcher ->
-        CatalogCache({ GatewayCatalog.fetch(relay, fetcher) }, catalogScope, internals.timeSource)
+        CatalogCache({ GatewayCatalog.fetch(catalogUrl, fetcher) }, catalogScope, internals.timeSource)
     }
 
     private val origin = Origin.of(baseUrl)
@@ -289,14 +290,65 @@ internal class GatewayRouter private constructor(
     }
 
     /**
-     * The last attempt to verify each replica that is kept, failed ones
-     * included, unchecked.
+     * Verifies again the replica that [ensureVerified] would return for
+     * [model], and returns its new report. Replicas are tried in
+     * [ensureVerified]'s order, each verified again even if its
+     * verification is still valid, and the first that passes ends the
+     * search. So does one that fails but keeps a verification that is
+     * valid, which requests for the model are still sent under: its failure
+     * is thrown. One whose verification the failure withdrew, or that had
+     * none, is passed over, as [ensureVerified] passes it over. If no
+     * replica passes or keeps a valid verification, the last failure is
+     * thrown.
      */
-    val lastVerification: List<ReplicaVerification>
+    @Throws(TinfoilException::class, CancellationException::class)
+    suspend fun reverify(model: String): VerificationReport {
+        checkOpen()
+        policy.requireServed(model)
+        val route = policy.resolve(model, catalogNow())
+        var failure: TinfoilException? = null
+        for (host in rank(route.hosts, model, first = null).take(MAX_REPLICAS_TRIED)) {
+            coroutineContext.ensureActive()
+            val key = route.on(host)
+            val replica = try {
+                Background.making(::release) { replica(key) }
+            } catch (e: TinfoilException) {
+                // A closed client is not a replica's failure.
+                checkOpen()
+                failure = e
+                continue
+            }
+            try {
+                val report = replica.connection.reverify()
+                checkOpen()
+                return report
+            } catch (e: TinfoilException) {
+                checkOpen()
+                // Requests for the model still go to a replica whose
+                // verification the failure left valid.
+                if (replica.connection.currentVerification != null) {
+                    throw e
+                }
+                failure = e
+            } finally {
+                release(replica)
+            }
+        }
+        throw failure ?: ConfigurationException("model ${quote(model)} has no replicas")
+    }
+
+    /**
+     * Each replica that is kept and has had an attempt to verify it, failed
+     * ones included: its current verification and its last attempt.
+     */
+    val replicaVerifications: List<ReplicaVerification>
         get() = synchronized(lock) { replicas.entries.map { it.key to it.value } }
             .mapNotNull { (key, replica) ->
-                replica.connection.lastVerification?.let {
-                    ReplicaVerification(key.host, replica.models.sorted(), key.reference, key.pinnedModel, it)
+                // Current first: an attempt that completes in between then
+                // shows as the last attempt, which can only be newer.
+                val current = replica.connection.currentVerification
+                replica.connection.lastVerificationAttempt?.let {
+                    ReplicaVerification(key.host, replica.models.sorted(), key.reference, key.pinnedModel, current, it)
                 }
             }
             .sortedWith(compareBy({ it.host }, { it.reference }, { it.pinnedModel }))
@@ -590,8 +642,8 @@ internal class GatewayRouter private constructor(
     private fun closedError() = ConfigurationException("the client is closed")
 
     internal companion object {
-        /** Tinfoil's gateway. */
-        const val DEFAULT_URL: String = "https://inference-gateway.tinfoil.sh/v1/"
+        /** Tinfoil's gateway: its origin. */
+        const val DEFAULT_URL: String = "https://inference-gateway.tinfoil.sh/"
 
         /** How often one request follows the gateway to another replica. */
         const val MAX_REROUTES: Int = 3
@@ -637,19 +689,24 @@ internal class GatewayRouter private constructor(
             policy: Policy,
             userCacheSecret: String?,
             verificationCheck: VerificationCheck?,
-            onVerification: VerificationObserver?,
+            onVerificationAttempt: VerificationObserver?,
             catalog: (() -> Catalog)?,
             internals: Internals,
         ): GatewayRouter {
-            val base = Urls.baseUrl(requireNotEmpty(url, "url") ?: DEFAULT_URL)
-            if (!base.isHttps) {
+            val given = Urls.baseUrl(requireNotEmpty(url, "url") ?: DEFAULT_URL)
+            if (!given.isHttps) {
                 throw ConfigurationException("invalid base URL: the gateway base URL must use HTTPS")
             }
-            // Attestation documents and the catalog come through the gateway.
-            val authority = if (base.host.contains(':')) "[${base.host}]" else base.host
-            val relay = if (base.port == HttpUrl.defaultPort(base.scheme)) authority else "$authority:${base.port}"
-            Urls.requireRelay(relay)
-            val relayAtOrigin = AttestationRelay("https://$relay")
+            // The URL is the gateway's origin or the URL that it is mounted
+            // under, and its path is the mount's, not the API path:
+            // requests, the catalog and the attestation relay all join
+            // under it, whether or not it ends with a slash.
+            val base = if (given.encodedPath.endsWith("/")) {
+                given
+            } else {
+                given.newBuilder().encodedPath(given.encodedPath + "/").build()
+            }
+            val relay = AttestationRelay(base.toString())
             // The caller's map is read once, here.
             val gatewayPolicy = GatewayPolicy(HashMap(modelPins), policy, internals.newVerifier)
             val secret = UserCacheSecret.resolve(userCacheSecret, internals.processSecret)
@@ -658,17 +715,17 @@ internal class GatewayRouter private constructor(
                     enclave = replica.host,
                     pin = GatewayPolicy.pinOf(replica.reference),
                     transport = Transport.Ehbp(proxyUrl = base.toString()),
-                    // The gateway relays attestation documents at its origin.
-                    fetchAttestation = relayAtOrigin,
+                    // The gateway relays attestation documents under its URL.
+                    fetchAttestation = relay,
                     verifier = gatewayPolicy.verifierFor(replica),
                     // The router scopes the cache itself.
                     cacheSecret = null,
                     verificationCheck = verificationCheck,
-                    onVerification = onVerification,
+                    onVerificationAttempt = onVerificationAttempt,
                     internals = internals,
                 )
             }
-            return GatewayRouter(base, gatewayPolicy, secret, catalog, relay, internals, open)
+            return GatewayRouter(base, gatewayPolicy, secret, catalog, GatewayCatalog.under(base), internals, open)
         }
 
         /**

@@ -30,15 +30,15 @@ import sh.tinfoil.openai.internal.OpenAISettings
 @TinfoilOptionsDsl
 public class OpenAIOptions internal constructor() {
     /**
-     * The path of the API under the HTTP client's base URL. Null selects
-     * `/v1/`. It must be an absolute path, as RFC 3986 defines
-     * `path-absolute`: it starts with `/` but not `//`, holds only path
-     * characters and escapes, and has no query or fragment. It must not
-     * have a `.` or `..` segment, plain or percent-encoded, nor an encoded
-     * `/` or `\` (`%2F`, `%5C`). The base URL that it makes ends with `/`.
-     * A gateway client's URL already carries its path, so with one an API
-     * path is refused. Anything that is refused is a
-     * [ConfigurationException] from `create`.
+     * The path of the API under the HTTP client's base URL: the proxy URL,
+     * the enclave's origin or the gateway's URL. Null selects `/v1/`; to
+     * keep the default, leave it null, since an empty string is refused. It
+     * must be an absolute path, as RFC 3986 defines `path-absolute`: it
+     * starts with `/` but not `//`, holds only path characters and escapes,
+     * and has no query or fragment. It must not have a `.` or `..` segment,
+     * plain or percent-encoded, nor an encoded `/` or `\` (`%2F`, `%5C`).
+     * The base URL that it makes ends with `/`. Anything that is refused is
+     * a [ConfigurationException] from `create`.
      */
     public var apiPath: String? = null
 

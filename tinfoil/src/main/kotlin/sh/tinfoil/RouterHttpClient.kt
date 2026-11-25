@@ -59,16 +59,29 @@ public class RouterHttpClient private constructor(
     public val transport: Transport get() = connection.transport
 
     /**
+     * Returns the report of the chosen router's verification that the
+     * client's requests are sent under now, without any I/O, as
+     * [EnclaveHttpClient.currentVerification] does: null before the first
+     * verification passes, once it has reached its freshness deadline, and
+     * after the router refused its key or a verification that was to
+     * replace it failed with an [AttestationException]. The client does
+     * not verify again in the background, so after the deadline it is null
+     * until the next request or [ensureVerified].
+     */
+    public fun currentVerification(): VerificationReport? = connection.currentVerification
+
+    /**
      * Returns the outcome of the most recent attempt to verify the router
      * that the client chose, without any I/O, as
-     * [EnclaveHttpClient.lastVerification] does: its report, or the
+     * [EnclaveHttpClient.lastVerificationAttempt] does: its report, or the
      * [TinfoilException] that it failed with. The routers that
      * `create` tried and passed over are not described here; see
-     * [RouterOptions.onVerification]. A report that it returns may have
-     * reached its freshness deadline or been withdrawn since; use
-     * [ensureVerified] for one that is valid now.
+     * [RouterOptions.onVerificationAttempt]. A report that it returns may
+     * have reached its freshness deadline or been withdrawn since;
+     * [currentVerification] returns the verification that requests are
+     * sent under now.
      */
-    public fun lastVerification(): VerificationAttempt? = connection.lastVerification
+    public fun lastVerificationAttempt(): VerificationAttempt? = connection.lastVerificationAttempt
 
     /**
      * Returns the report of a verification of the router that is valid
@@ -275,7 +288,7 @@ public class RouterHttpClient private constructor(
             // any thread may call this.
             val transport = settings.transport
             val verificationCheck = settings.verificationCheck
-            val onVerification = settings.onVerification
+            val onVerificationAttempt = settings.onVerificationAttempt
             // Everything down to the fallback's connection is checked
             // before any I/O.
             val proxy = (transport as? Transport.Ehbp)?.proxyUrl?.also { Urls.routeUrl(it, "proxy URL") }
@@ -285,7 +298,7 @@ public class RouterHttpClient private constructor(
             val open = { host: String ->
                 EnclaveConnection.create(
                     host, RouterDiscovery.ROUTER_PIN, transport, settings.fetchAttestation, verifier, secret, verificationCheck,
-                    onVerification, internals,
+                    onVerificationAttempt, internals,
                     // The caller named no host, so a direct connection to
                     // the router is pinned in both transport modes.
                     proposed = true,

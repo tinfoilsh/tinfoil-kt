@@ -40,7 +40,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.hours
@@ -59,7 +61,7 @@ class GatewayHttpClientTest {
 
     private fun GatewayHttpClient.post(
         body: String,
-        path: String = "chat/completions",
+        path: String = "v1/chat/completions",
         authorization: String? = "Bearer $API_KEY",
     ): Request = Request.Builder().url(baseUrl.resolve(path)!!).post(body.toRequestBody(JSON)).apply {
         authorization?.let { header("Authorization", it) }
@@ -144,10 +146,33 @@ class GatewayHttpClientTest {
 
     @Test
     fun theDefaultBaseUrlIsTinfoilsGateway() {
-        assertEquals("https://inference-gateway.tinfoil.sh/v1/", GatewayHttpClient.DEFAULT_URL)
+        assertEquals("https://inference-gateway.tinfoil.sh/", GatewayHttpClient.DEFAULT_URL, "the gateway's origin")
         val client = gateway.unverified(baseUrl = null)
         assertEquals(GatewayHttpClient.DEFAULT_URL, client.baseUrl.toString())
-        assertEquals("GatewayHttpClient(baseUrl=https://inference-gateway.tinfoil.sh/v1/)", client.toString())
+        assertEquals("GatewayHttpClient(baseUrl=https://inference-gateway.tinfoil.sh/)", client.toString())
+    }
+
+    @Test
+    fun theCatalogTheRelayAndRequestsJoinUnderTheGatewaysUrl() = test {
+        // The gateway's origin, and a gateway mounted under a path, given
+        // with and without a trailing slash.
+        for ((mount, url) in listOf("/" to "", "/tinfoil/" to "tinfoil", "/tinfoil/" to "tinfoil/")) {
+            TestGateway(mount).use { at ->
+                at.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
+                val client = at.client(baseUrl = "https://${at.host}/$url")
+                val root = "https://${at.host}$mount"
+                assertEquals(root, client.baseUrl.toString())
+
+                client.execute(client.post(chat())).close()
+
+                assertEquals(
+                    listOf("${root}catalog", "${root}.well-known/tinfoil-attestation", "${root}v1/chat/completions"),
+                    at.requestUrls.map { it.substringBefore('?') },
+                    url,
+                )
+                assertTrue(at.received.single().sealed)
+            }
+        }
     }
 
     @Test
@@ -176,7 +201,7 @@ class GatewayHttpClientTest {
                     sink.writeUtf8(text)
                 }
             }
-            val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
+            val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
                 .header("X-Tinfoil-Model", "m").post(body).build()
             try {
                 client.execute(request).close()
@@ -202,7 +227,7 @@ class GatewayHttpClientTest {
         assertEquals(1, gateway.catalogFetches.get())
         assertEquals(0, gateway.verifier.verifications.get())
         assertEquals(emptyList(), gateway.attestationFetches)
-        assertEquals(emptyList(), client.lastVerification())
+        assertEquals(emptyList(), client.replicas())
         assertEquals(gateway.baseUrl, client.baseUrl.toString())
     }
 
@@ -297,7 +322,7 @@ class GatewayHttpClientTest {
         assertEquals(emptyList(), gateway.attestationFetches)
         assertEquals(0, gateway.verifier.verifications.get())
         assertEquals(0, gateway.received.size)
-        assertEquals(emptyList(), client.lastVerification())
+        assertEquals(emptyList(), client.replicas())
     }
 
     @Test
@@ -445,7 +470,7 @@ class GatewayHttpClientTest {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
         val body = """{ "model" : "m", "input" : [ 12345678901234567890 ] }"""
-        client.execute(client.post(body, path = "embeddings")).close()
+        client.execute(client.post(body, path = "v1/embeddings")).close()
         val received = gateway.received.single()
         assertEquals(body, received.text)
         assertTrue(received.sealed)
@@ -461,7 +486,7 @@ class GatewayHttpClientTest {
             assertEquals("ok", recoverable.response.body!!.string())
             assertTrue(recoverable.toString().contains("redacted"))
         }
-        val unsealed = Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "m").build()
+        val unsealed = Request.Builder().url(client.baseUrl.resolve("v1/models")!!).header("X-Tinfoil-Model", "m").build()
         client.executeRecoverable(unsealed).use { assertNull(it.recoveryToken) }
     }
 
@@ -481,7 +506,7 @@ class GatewayHttpClientTest {
             """{"model":"m","cache_salt":"a","c\u0061che_salt":"b"}""" to "\"cache_salt\" member",
         )
         for ((body, message) in repeats) {
-            for (path in listOf("chat/completions", "embeddings")) {
+            for (path in listOf("v1/chat/completions", "v1/embeddings")) {
                 val error = assertFailsWith<ConfigurationException>(body) { client.execute(client.post(body, path)) }
                 assertTrue(error.detail.contains("request body repeats the $message"), error.detail)
                 val named = client.post(body, path).newBuilder().header("X-Tinfoil-Model", "m").build()
@@ -497,7 +522,7 @@ class GatewayHttpClientTest {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
         val body = """{"model":"m","n":{"model":"a","model":"b","cache_salt":1},"temperature":0,"temperature":1}"""
-        client.execute(client.post(body, path = "embeddings")).close()
+        client.execute(client.post(body, path = "v1/embeddings")).close()
         assertEquals(body, gateway.received.single().text)
     }
 
@@ -523,7 +548,7 @@ class GatewayHttpClientTest {
             assertEquals(listOf("m"), client.models())
             val before = reads.get()
             val unnamed = listOf(
-                Request.Builder().url(client.baseUrl.resolve("models")!!).build(),
+                Request.Builder().url(client.baseUrl.resolve("v1/models")!!).build(),
                 client.post("{}"),
                 client.post("""{"model":""}"""),
                 client.post("""{"model":7}"""),
@@ -531,8 +556,8 @@ class GatewayHttpClientTest {
                 client.post("""[{"model":"m"}]"""),
                 client.post("\"m\""),
                 client.post(chat()).newBuilder().header("X-Tinfoil-Model", "").build().newBuilder().post("{}".toRequestBody(JSON)).build(),
-                Request.Builder().url(client.baseUrl.resolve("chat/completions")!!).post(chat().toRequestBody("text/plain".toMediaType())).build(),
-                Request.Builder().url(client.baseUrl.resolve("files/f1")!!).delete().build(),
+                Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!).post(chat().toRequestBody("text/plain".toMediaType())).build(),
+                Request.Builder().url(client.baseUrl.resolve("v1/files/f1")!!).delete().build(),
             )
             for (request in unnamed) {
                 val error = assertFailsWith<ConfigurationException>(request.toString()) { client.execute(request) }
@@ -563,7 +588,7 @@ class GatewayHttpClientTest {
             """{"model":"m","Model":"n"}""".toByteArray(),
         )
         for (body in bodies) {
-            val request = Request.Builder().url(client.baseUrl.resolve("chat/completions")!!)
+            val request = Request.Builder().url(client.baseUrl.resolve("v1/chat/completions")!!)
                 .header("X-Tinfoil-Model", "m").post(body.toRequestBody(JSON)).build()
             assertFailsWith<ConfigurationException> { client.execute(request) }
         }
@@ -575,7 +600,7 @@ class GatewayHttpClientTest {
     fun aRequestWithoutABodyGoesOutUnderTheModelThatItsHeaderNames() = test {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
-        val request = Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "m").build()
+        val request = Request.Builder().url(client.baseUrl.resolve("v1/models")!!).header("X-Tinfoil-Model", "m").build()
         client.execute(request).close()
         val received = gateway.received.single()
         // Its replica is verified all the same, and named to the gateway.
@@ -612,7 +637,7 @@ class GatewayHttpClientTest {
             reads.incrementAndGet()
             entries("m" to ("tinfoilsh/m" to listOf("a.example")))
         })
-        val url = client.baseUrl.resolve("realtime?model=m")!!
+        val url = client.baseUrl.resolve("v1/realtime?model=m")!!
         fun named() = Request.Builder().header("X-Tinfoil-Model", "m")
         val refused = listOf(
             named().url(url).header("Connection", "Upgrade").header("Upgrade", "websocket").build(),
@@ -671,11 +696,11 @@ class GatewayHttpClientTest {
                 Triple("a.example", "tinfoilsh/pinned@v1.2.3@sha256:${"cd".repeat(32)}", "pinned"),
                 Triple("a.example", "tinfoilsh/plain", "plain"),
             ),
-            client.lastVerification().map { Triple(it.host, it.reference, it.pinnedModel) },
+            client.replicas().map { Triple(it.host, it.reference, it.pinnedModel) },
         )
-        assertEquals(listOf(listOf("pinned"), listOf("plain")), client.lastVerification().map { it.models })
+        assertEquals(listOf(listOf("pinned"), listOf("plain")), client.replicas().map { it.models })
         assertTrue(own.pinChecks.get() >= 1)
-        assertEquals(reference, client.lastVerification().first().reference)
+        assertEquals(reference, client.replicas().first().reference)
     }
 
     @Test
@@ -714,7 +739,7 @@ class GatewayHttpClientTest {
         assertEquals("model \"plain\" is not pinned", error.detail)
         assertFailsWith<ConfigurationException> { client.ensureVerified("plain") }
         assertFailsWith<ConfigurationException> {
-            client.execute(Request.Builder().url(client.baseUrl.resolve("models")!!).header("X-Tinfoil-Model", "plain").build())
+            client.execute(Request.Builder().url(client.baseUrl.resolve("v1/models")!!).header("X-Tinfoil-Model", "plain").build())
         }
         assertNoIo()
         assertEquals(0, reads.get(), "the catalog is not read for a model without a pin")
@@ -761,7 +786,7 @@ class GatewayHttpClientTest {
         gateway.endorse = { replica, _ -> if (replica == order[2]) gateway.endorsement(replica) else gateway.refuse() }
         val results = CopyOnWriteArrayList<VerificationAttempt>()
         val hosts = CopyOnWriteArrayList<String>()
-        val client = gateway.client(onVerification = { host, result ->
+        val client = gateway.client(onVerificationAttempt = { host, result ->
             hosts += host
             results += result
         })
@@ -774,11 +799,15 @@ class GatewayHttpClientTest {
         assertTrue(gateway.received.single().sealed)
         // Each replica's entry holds its own last attempt, the failed ones
         // included.
-        val entries = client.lastVerification().associateBy { it.host }
+        val entries = client.replicas().associateBy { it.host }
         assertEquals(setOf(order[0], order[1], order[2]), entries.keys)
-        assertEquals(gateway.key(order[2]).publicKey, entries.getValue(order[2]).attempt.facts?.hpkePublicKey)
+        assertEquals(gateway.key(order[2]).publicKey, entries.getValue(order[2]).lastAttempt.facts?.hpkePublicKey)
+        assertEquals(entries.getValue(order[2]).lastAttempt.report, entries.getValue(order[2]).current)
+        assertEquals(order[2], jsonHost(entries.getValue(order[2]).current))
         for (failed in listOf(order[0], order[1])) {
-            val error = assertIs<AttestationException>(entries.getValue(failed).attempt.error)
+            assertEquals(failed, jsonHost(rejectedReport(entries.getValue(failed).lastAttempt.error)))
+            assertNull(entries.getValue(failed).current, "a replica that failed has no current verification")
+            val error = assertIs<AttestationException>(entries.getValue(failed).lastAttempt.error)
             val rejected = assertIs<VerificationException>(error.cause)
             assertEquals(VerificationLayer.QUOTE, rejected.report.failedStep?.layer)
         }
@@ -786,6 +815,7 @@ class GatewayHttpClientTest {
         awaitUntil { results.size == 5 }
         assertEquals(listOf(order[0], order[0], order[1], order[1], order[2]), hosts)
         assertEquals(listOf(false, false, false, false, true), results.map { it.report != null })
+        assertEquals(hosts, results.map { jsonHost(it.report ?: rejectedReport(it.error)) })
     }
 
     @Test
@@ -817,8 +847,8 @@ class GatewayHttpClientTest {
         assertFailsWith<AttestationException> { client.execute(client.post(chat())) }
         assertFailsWith<AttestationException> { client.ensureVerified("m") }
         assertEquals(0, gateway.received.size)
-        assertEquals(setOf("a.example", "b.example"), client.lastVerification().map { it.host }.toSet())
-        assertTrue(client.lastVerification().all { it.attempt.error is AttestationException })
+        assertEquals(setOf("a.example", "b.example"), client.replicas().map { it.host }.toSet())
+        assertTrue(client.replicas().all { it.lastAttempt.error is AttestationException })
 
         // A relay that has no document is a network error.
         gateway.attestation = { MockResponse().setResponseCode(502) }
@@ -859,13 +889,115 @@ class GatewayHttpClientTest {
         assertEquals(verification, client.ensureVerified("test-model"))
         // The replica that failed is asked again; the one that verified is not.
         assertEquals(listOf(order[0], order[0], order[1], order[0], order[0]), gateway.attestationFetches)
-        assertIs<AttestationException>(client.lastVerification().single { it.host == order[0] }.attempt.error)
-        val current = client.lastVerification().single { it.host == order[1] }
+        assertIs<AttestationException>(client.replicas().single { it.host == order[0] }.lastAttempt.error)
+        val current = client.replicas().single { it.host == order[1] }
         assertEquals(order[1], current.host)
         assertEquals(emptyList(), current.models, "no request has named a model to it yet")
         assertEquals("tinfoilsh/m", current.reference)
         assertEquals("test-model", current.pinnedModel)
-        assertEquals(verification, current.attempt.report)
+        assertEquals(verification, current.lastAttempt.report)
+        assertEquals(verification, current.current)
+    }
+
+    @Test
+    fun reverifyVerifiesTheReplicaInUseAgainAndNoOther() = test {
+        gateway.serve("test-model" to ("tinfoilsh/m" to replicas))
+        val order = GatewayRouter.rank(replicas, "test-model", null)
+        val client = gateway.client()
+        val ensured = client.ensureVerified("test-model")
+        gateway.clock.advance(60)
+
+        val reverified = client.reverify("test-model")
+
+        assertNotSame(ensured, reverified)
+        assertEquals(gateway.key(order[0]).publicKey, reverified.verifiedFacts?.hpkePublicKey)
+        assertEquals(order[0], jsonHost(ensured))
+        assertEquals(order[0], jsonHost(reverified))
+        assertEquals(listOf(order[0], order[0]), gateway.attestationFetches, "no other replica is verified")
+        val entry = client.replicas().single()
+        assertEquals(order[0], entry.host)
+        assertSame(reverified, entry.current)
+        assertSame(reverified, entry.lastAttempt.report)
+        assertSame(reverified, client.ensureVerified("test-model"))
+        assertEquals(2, gateway.attestationFetches.size)
+    }
+
+    @Test
+    fun reverifyThrowsAFailureThatKeepsTheReplicasVerification() = test {
+        gateway.serve("test-model" to ("tinfoilsh/m" to replicas))
+        val order = GatewayRouter.rank(replicas, "test-model", null)
+        val client = gateway.client()
+        val ensured = client.ensureVerified("test-model")
+        gateway.attestationFetches.clear()
+        gateway.attestation = { if (it == order[0]) MockResponse().setResponseCode(502) else MockResponse().setBody(it) }
+
+        val error = assertFailsWith<NetworkException> { client.reverify("test-model") }
+
+        assertEquals(listOf(order[0], order[0]), gateway.attestationFetches, "the next replica is not tried")
+        val entry = client.replicas().single()
+        assertSame(ensured, entry.current, "the replica's verification is still current")
+        assertSame(error, entry.lastAttempt.error, "its last attempt is the failure")
+        assertSame(ensured, client.ensureVerified("test-model"), "requests for the model still go to the replica")
+    }
+
+    @Test
+    fun reverifyMovesOnFromAReplicaWhoseVerificationAnAttestationFailureWithdrew() = test {
+        gateway.serve("test-model" to ("tinfoilsh/m" to replicas))
+        val order = GatewayRouter.rank(replicas, "test-model", null)
+        val client = gateway.client()
+        client.ensureVerified("test-model")
+        gateway.endorse = { replica, _ -> if (replica == order[0]) gateway.refuse() else gateway.endorsement(replica) }
+
+        val reverified = client.reverify("test-model")
+
+        assertEquals(gateway.key(order[1]).publicKey, reverified.verifiedFacts?.hpkePublicKey)
+        val entries = client.replicas().associateBy { it.host }
+        assertNull(entries.getValue(order[0]).current, "the failure withdrew the replica's verification")
+        assertIs<AttestationException>(entries.getValue(order[0]).lastAttempt.error)
+        assertSame(reverified, entries.getValue(order[1]).current)
+        assertSame(reverified, entries.getValue(order[1]).lastAttempt.report)
+        assertFalse(order[2] in entries, "the replicas after the one that passed are not verified")
+
+        val fetches = gateway.attestationFetches.size
+        assertSame(reverified, client.ensureVerified("test-model"), "ensureVerified returns the same replica")
+        assertTrue(gateway.attestationFetches.size > fetches, "after it tries the first replica again")
+    }
+
+    @Test
+    fun reverifyThrowsTheLastFailureWhenNoReplicaPasses() = test {
+        gateway.serve("test-model" to ("tinfoilsh/m" to replicas))
+        val client = gateway.client()
+        client.ensureVerified("test-model")
+        gateway.endorse = { _, _ -> gateway.refuse() }
+
+        assertFailsWith<AttestationException> { client.reverify("test-model") }
+
+        assertEquals(replicas.toSet(), client.replicas().map { it.host }.toSet())
+        assertTrue(client.replicas().all { it.current == null && it.lastAttempt.error is AttestationException })
+    }
+
+    @Test
+    fun reverifyRefusesAModelWithoutAPinAndVerifiesNothing() = test {
+        gateway.serve("test-model" to ("tinfoilsh/m" to replicas))
+        val client = gateway.client()
+
+        assertFailsWith<ConfigurationException> { client.reverify("unpinned") }
+
+        assertEquals(emptyList(), gateway.attestationFetches)
+        assertEquals(emptyList(), client.replicas())
+    }
+
+    @Test
+    fun aReplicasCurrentVerificationFollowsItsOwnFreshness() = test {
+        gateway.serve("test-model" to ("tinfoilsh/m" to replicas))
+        val client = gateway.client()
+        val ensured = client.ensureVerified("test-model")
+
+        gateway.clock.advance(3600)
+
+        val entry = client.replicas().single()
+        assertNull(entry.current, "an expired verification is not current")
+        assertSame(ensured, entry.lastAttempt.report)
     }
 
     @Test
@@ -903,12 +1035,12 @@ class GatewayHttpClientTest {
         for (i in 3..GatewayRouter.MAX_REPLICAS) {
             client.ensureVerified("m$i")
         }
-        assertEquals(GatewayRouter.MAX_REPLICAS, client.lastVerification().size)
+        assertEquals(GatewayRouter.MAX_REPLICAS, client.replicas().size)
         // Using the first again makes the second the least recently used.
         client.ensureVerified("m1")
         client.ensureVerified("m${GatewayRouter.MAX_REPLICAS + 1}")
-        assertEquals(GatewayRouter.MAX_REPLICAS, client.lastVerification().size)
-        val kept = client.lastVerification().map { it.host }.toSet()
+        assertEquals(GatewayRouter.MAX_REPLICAS, client.replicas().size)
+        val kept = client.replicas().map { it.host }.toSet()
         assertTrue("h1.example" in kept && "h2.example" !in kept)
         // One that was let go is verified again when it is next needed.
         val before = gateway.attestationFetches.size
@@ -932,15 +1064,15 @@ class GatewayHttpClientTest {
         }
         assertEquals("a-long-answer-".repeat(64), open.text())
         assertEquals("a-long-answer-".repeat(64), streamed.text())
-        val kept = client.lastVerification().map { it.host }.toSet()
+        val kept = client.replicas().map { it.host }.toSet()
         assertTrue("h1.example" in kept && "h2.example" in kept, "the replicas in use were kept")
         assertEquals(GatewayRouter.MAX_REPLICAS, kept.size)
         // Once their responses are closed, they can go like any other.
         for (i in 3..count) {
             client.ensureVerified("m$i")
         }
-        assertFalse("h1.example" in client.lastVerification().map { it.host })
-        assertEquals(GatewayRouter.MAX_REPLICAS, client.lastVerification().size)
+        assertFalse("h1.example" in client.replicas().map { it.host })
+        assertEquals(GatewayRouter.MAX_REPLICAS, client.replicas().size)
     }
 
     // A gateway that routes elsewhere.
@@ -968,7 +1100,7 @@ class GatewayHttpClientTest {
         val received = gateway.received.single()
         assertEquals(other, received.request.getHeader("X-Tinfoil-Seal"))
         assertEquals("https://$other", received.request.getHeader(ENCLAVE_URL_HEADER))
-        assertEquals(setOf(order[0], other), client.lastVerification().map { it.host }.toSet())
+        assertEquals(setOf(order[0], other), client.replicas().map { it.host }.toSet())
         assertTrue(received.sealed)
         assertFalse(received.wire.containsText(prompt))
         assertTrue(received.text!!.contains(prompt) && received.text!!.contains("\"cache_salt\":\"$SPEC_SALT\""), received.text)
@@ -1034,8 +1166,8 @@ class GatewayHttpClientTest {
         assertTrue(invalid.detail.startsWith("following gateway route to enclave evil.example/x?: invalid enclave"), invalid.detail)
         assertEquals(emptyList(), gateway.attestationFetches)
         // The replica that the route named was tried, and failed.
-        assertEquals(listOf("a.example", "evil.example"), client.lastVerification().map { it.host })
-        assertEquals(listOf(true, false), client.lastVerification().map { it.attempt.report != null })
+        assertEquals(listOf("a.example", "evil.example"), client.replicas().map { it.host })
+        assertEquals(listOf(true, false), client.replicas().map { it.lastAttempt.report != null })
     }
 
     @Test
@@ -1065,7 +1197,7 @@ class GatewayHttpClientTest {
 
             override fun writeTo(sink: BufferedSink) = upload.writeTo(sink)
         }
-        val url = client.baseUrl.resolve("audio/transcriptions")!!
+        val url = client.baseUrl.resolve("v1/audio/transcriptions")!!
         // With the header, the upload is streamed, and the gateway's answer is the caller's.
         val streamed = Request.Builder().url(url).header("X-Tinfoil-Model", "whisper").post(once).build()
         client.execute(streamed).use { assertEquals(412, it.code) }
@@ -1093,7 +1225,7 @@ class GatewayHttpClientTest {
         assertEquals(3, gateway.received.size)
         assertNull(gateway.received[1].plaintext, "the first attempt was sealed to the key that is gone")
         assertTrue(gateway.received[2].text!!.contains("again"))
-        assertEquals(gateway.key("a.example").publicKey, client.lastVerification().single().attempt.facts?.hpkePublicKey)
+        assertEquals(gateway.key("a.example").publicKey, client.replicas().single().lastAttempt.facts?.hpkePublicKey)
     }
 
     // Lifecycle.
@@ -1103,7 +1235,7 @@ class GatewayHttpClientTest {
         gateway.serve("m" to ("tinfoilsh/m" to listOf("a.example")))
         val client = gateway.client()
         client.execute(client.post(chat())).close()
-        val before = client.lastVerification()
+        val before = client.replicas()
         client.close()
         client.close()
 
@@ -1112,7 +1244,7 @@ class GatewayHttpClientTest {
             assertEquals("the client is closed", error.detail)
         }
         assertIs<ConfigurationException>(assertFailsWith<IOException> { client.newCall(client.post(chat())).execute() })
-        assertEquals(before, client.lastVerification())
+        assertEquals(before, client.replicas())
         // Nothing of it runs afterwards, however much time passes.
         val requests = gateway.server.requestCount
         gateway.timeSource += GatewayCatalog.REFRESH_INTERVAL * 10
@@ -1165,7 +1297,7 @@ class GatewayHttpClientTest {
         awaitUntil { gateway.attestationFetches.size == 1 }
         job.cancelAndJoin()
         // The verification, which no caller owns, still finishes.
-        awaitUntil { client.lastVerification().size == 1 }
+        awaitUntil { client.replicas().size == 1 }
         Thread.sleep(100)
         assertEquals(0, gateway.received.size)
     }
@@ -1230,7 +1362,7 @@ class GatewayHttpClientTest {
             assertFailsWith<TinfoilException> { client.execute(client.post("""{"model":"m","model":"n","user_cache_secret":"the-end-users-own-secret"}""")) },
         )
         val text = errors.joinToString("\n") { e -> generateSequence<Throwable>(e) { it.cause }.take(8).joinToString { it.toString() } } +
-            client.toString() + client.lastVerification().toString()
+            client.toString() + client.replicas().toString()
         for (hidden in listOf(secret, "the-end-users-own-secret", "a-private-prompt-0123456789", API_KEY)) {
             assertFalse(text.contains(hidden), hidden)
         }

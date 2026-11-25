@@ -46,7 +46,6 @@ class UrlsTest {
         for (host in refused) {
             assertFailsWith<ConfigurationException>("enclave \"$host\"") { Urls.enclaveUrl(host) }
             assertFailsWith<ConfigurationException>("enclave \"$host:8443\"") { Urls.enclaveUrl("$host:8443") }
-            assertFailsWith<ConfigurationException>("relay \"$host\"") { Urls.requireRelay(host) }
             assertFailsWith<ConfigurationException>("base URL \"$host\"") { Urls.baseUrl("https://$host/v1") }
         }
     }
@@ -61,8 +60,6 @@ class UrlsTest {
         // A label that only contains digits is still a name.
         assertEquals("host123.example", Urls.enclaveUrl("host123.example").host)
         assertEquals("123.example", Urls.enclaveUrl("123.example").host)
-        Urls.requireRelay("relay.example:8443")
-        assertFailsWith<ConfigurationException> { Urls.requireRelay("https://relay.example/") }
     }
 
     @Test

@@ -36,8 +36,9 @@ import java.io.IOException
  *
  * Requests are sent under [baseUrl]: the [API path][OpenAIOptions.apiPath],
  * `/v1/` by default, under the HTTP client's base URL, which is the proxy
- * URL of a [sh.tinfoil.Transport.Ehbp] or the enclave's own
- * `https://<enclave>/`; or, over a gateway client, the gateway's URL.
+ * URL of a [sh.tinfoil.Transport.Ehbp], the enclave's own
+ * `https://<enclave>/`, or the gateway's URL, its origin or the URL that it
+ * is mounted under.
  *
  * **Failures.** The OpenAI SDK throws unchecked exceptions, all of them
  * [com.openai.errors.OpenAIException]s. An error status from the API is one

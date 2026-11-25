@@ -58,7 +58,7 @@ class DocumentationExamplesTest {
 
     private suspend fun verificationReports(): EnclaveHttpClient {
         val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
-            onVerification = { host, attempt ->
+            onVerificationAttempt = { host, attempt ->
                 when (attempt) {
                     is VerificationAttempt.Passed ->
                         println("$host runs ${attempt.report.verifiedFacts?.codeDigest}")
@@ -74,7 +74,7 @@ class DocumentationExamplesTest {
 
     private suspend fun reportsAsJson(): EnclaveHttpClient {
         val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
-            onVerification = { _, attempt ->
+            onVerificationAttempt = { _, attempt ->
                 val report = attempt.report ?: (attempt.error?.cause as? VerificationException)?.report
                 report?.let { println(it.toJson()) }
             }

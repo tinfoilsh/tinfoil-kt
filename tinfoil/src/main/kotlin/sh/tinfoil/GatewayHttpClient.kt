@@ -53,22 +53,30 @@ public class GatewayHttpClient private constructor(
     private val router: GatewayRouter,
 ) : AttestedHttpClient {
     /**
-     * The gateway's base URL, which requests are sent under. Resolve request
-     * paths against it, as in `baseUrl.resolve("chat/completions")`.
+     * The gateway's URL, which requests are sent under: [GatewayOptions.url]
+     * or Tinfoil's gateway, [DEFAULT_URL], ending with `/`. It is the
+     * gateway's origin or the URL that it is mounted under, never the API
+     * path, as the proxy URL of [Transport.Ehbp] is for an
+     * [EnclaveHttpClient]: an OpenAI client joins its API path under it.
+     * Resolve request paths against it, as in
+     * `baseUrl.resolve("v1/chat/completions")`.
      */
     override val baseUrl: HttpUrl get() = router.baseUrl
 
     /**
      * Returns one entry for each replica that the client has tried to
      * verify and still keeps, failed replicas included, sorted by host,
-     * without any I/O. Each holds that replica's last attempt: its report
-     * if it passed, or the exception that it failed with, as
-     * [EnclaveHttpClient.lastVerification] describes. A replica's earlier
-     * success is not kept once a later attempt for it fails. A report may
-     * have reached its freshness deadline or been withdrawn since; use
-     * [ensureVerified] for a verification that is valid now.
+     * without any I/O. An entry's [current][ReplicaVerification.current]
+     * follows the rule of [EnclaveHttpClient.currentVerification] for that
+     * replica: the report of the verification that its requests are sent
+     * under now, while it is fresh and has not been withdrawn, and null
+     * otherwise. Its [lastAttempt][ReplicaVerification.lastAttempt] is the
+     * replica's most recent attempt, as
+     * [EnclaveHttpClient.lastVerificationAttempt] describes: a failed
+     * attempt replaces an earlier success there, though `current` keeps
+     * that success while the failure leaves it valid.
      */
-    public fun lastVerification(): List<ReplicaVerification> = router.lastVerification
+    public fun replicas(): List<ReplicaVerification> = router.replicaVerifications
 
     /**
      * The models that the client serves: those of the gateway's catalog
@@ -107,6 +115,36 @@ public class GatewayHttpClient private constructor(
      */
     @Throws(IOException::class, CancellationException::class)
     public suspend fun ensureVerified(model: String): VerificationReport = router.ensureVerified(model)
+
+    /**
+     * Verifies again the replica that [ensureVerified] would return for
+     * [model], even if its verification is still valid, and returns the new
+     * report. It tries the model's replicas in the order that
+     * [ensureVerified] tries them, verifying each again, and stops at the
+     * first that passes. Each failure follows the rule that
+     * [EnclaveHttpClient.reverify] describes, for its replica: an
+     * [AttestationException] withdraws the replica's verification, so this
+     * moves on to the next replica, as [ensureVerified] then does, and
+     * passes over a replica that had no verification in the same way. A
+     * failure of any other kind, such as a [NetworkException], keeps the
+     * replica's verification while it is valid, and requests for [model]
+     * still go to that replica, so this stops there and throws that
+     * failure. When no replica passes or keeps a valid verification, it
+     * throws the last failure. The replicas after the one that it stops at
+     * are not verified. It is safe to call from the main thread.
+     *
+     * @throws ConfigurationException if the client is closed or does not
+     *   serve [model]: it is not pinned, which is checked before the
+     *   catalog is read and before any replica is verified, or it is not in
+     *   the catalog.
+     * @throws NetworkException as described above, or if the catalog
+     *   cannot be fetched.
+     * @throws AttestationException if no replica of the model is to be
+     *   trusted, or the catalog names another repository for the model than
+     *   its pin does.
+     */
+    @Throws(IOException::class, CancellationException::class)
+    public suspend fun reverify(model: String): VerificationReport = router.reverify(model)
 
     /**
      * Sends [request] through the gateway, sealed to a verified replica of
@@ -253,7 +291,7 @@ public class GatewayHttpClient private constructor(
     override fun toString(): String = "GatewayHttpClient(baseUrl=$baseUrl)"
 
     public companion object {
-        /** The base URL of Tinfoil's gateway, which a client uses unless it is given another. */
+        /** The URL of Tinfoil's gateway, its origin, which a client uses unless it is given another. */
         // Not a `const`: the compiler would copy a constant's value into
         // the code that reads it, which would then keep the URL that it was
         // compiled against.
@@ -328,14 +366,15 @@ public class GatewayHttpClient private constructor(
         internal fun unverified(settings: GatewaySettings, internals: Internals): GatewayHttpClient = GatewayHttpClient(
             GatewayRouter.create(
                 settings.modelPins, settings.url, settings.policy,
-                settings.userCacheSecret, settings.verificationCheck, settings.onVerification, settings.catalog,
+                settings.userCacheSecret, settings.verificationCheck, settings.onVerificationAttempt, settings.catalog,
                 internals,
             ),
         )
 
         /**
-         * Fetches the catalog of the gateway at [host], a host with an
-         * optional port, and returns the models in it that a client can be
+         * Fetches the catalog of the gateway at the root of [host], a host
+         * with an optional port, from `https://<host>/catalog`, and
+         * returns the models in it that a client can be
          * routed to: those whose replicas run a repository of Tinfoil's,
          * `tinfoilsh/<name>`, named without a tag or a digest, and that
          * have at least one replica.
@@ -355,13 +394,13 @@ public class GatewayHttpClient private constructor(
         /** [fetchCatalog] with the parts that tests replace. */
         @JvmSynthetic
         internal suspend fun fetchCatalog(host: String, internals: Internals): Catalog {
-            GatewayCatalog.url(host)
+            val url = GatewayCatalog.url(host)
             // The fetch, the reading of what it returns and the closing of
             // its connections run on a background thread.
             return withContext(Background.dispatcher) {
                 val fetcher = GatewayCatalog.fetcher(internals.http)
                 try {
-                    GatewayCatalog.fetch(host, fetcher)
+                    GatewayCatalog.fetch(url, fetcher)
                 } finally {
                     fetcher.close()
                 }

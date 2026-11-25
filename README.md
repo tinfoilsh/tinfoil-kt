@@ -155,16 +155,18 @@ val enclave = EnclaveHttpClient.create(
 val client = Client.create(enclave, apiKey) {
     apiPath = "/v1/"
 }
-println(enclave.lastVerification()?.report?.verifiedFacts?.codeDigest)
+println(enclave.currentVerification()?.verifiedFacts?.codeDigest)
 ```
 
 Creating the OpenAI client does no network I/O: the HTTP client verified
 its service when it was created, and verifies it again by itself. Requests
 go to `apiPath`, `/v1/` by default, under the HTTP client's `baseUrl`: the
-enclave's origin, `https://<enclave>/`, or the proxy URL of
-`Transport.Ehbp`, whose path is where the proxy is mounted. Over a gateway
-client they go to the gateway's URL as it is given, and `apiPath` is
-refused. The OpenAI client does not own the HTTP client: close each, and one
+enclave's origin, `https://<enclave>/`, the proxy URL of `Transport.Ehbp`,
+whose path is where the proxy is mounted, or the gateway's URL, which is
+its origin, `https://inference-gateway.tinfoil.sh/` by default, or the URL
+that it is mounted under, never the API path. An `apiPath` must be an
+absolute path, and an empty one is refused: leave it unset for `/v1/`. The
+OpenAI client does not own the HTTP client: close each, and one
 HTTP client can serve several OpenAI clients, each with its own API key.
 `Client.create(apiKey)` makes its own router client, and closes it with
 itself.
@@ -216,16 +218,43 @@ and measured values that the steps before the failure established, side by
 side. The key fingerprints in partial facts are the document's claim alone,
 never verified. A failed fetch is a `NetworkException`, and has no report.
 
-`lastVerification()` returns the most recent attempt without any I/O, and
-the `onVerification` option is told of every attempt, with the host that it
-verified, once its outcome is decided:
+The clients keep the verification that their requests are sent under apart
+from the attempts that produced it:
+
+| Call | I/O | Returns |
+|---|---|---|
+| `ensureVerified()` | Only if needed | The report of a verification that is valid now, verifying first if the last one has expired or been withdrawn |
+| `reverify()` | Always | The report of a new verification, or its exception |
+| `currentVerification()` | None | The report of the verification that requests are sent under now: fresh and not withdrawn. Null before the first success, after an `AttestationException` withdrew it, and once it has expired |
+| `lastVerificationAttempt()` | None | The most recent attempt: its report if it passed, its exception if it failed |
+| `onVerificationAttempt` option | Push | Each attempt once its outcome is decided, failed attempts included |
+
+The two functions differ after a `reverify()` that fails for a reason other
+than attestation, such as a `NetworkException`: `lastVerificationAttempt()`
+returns the failure, while `currentVerification()` still returns the
+earlier report, which requests are still sent under until it expires. A
+`reverify()` that fails with an `AttestationException` withdraws the
+verification, so `currentVerification()` returns null and the next request
+verifies again.
+
+- Health and readiness checks call `ensureVerified()`. It returns at once
+  while the verification is valid, and verifies when it is not. Clients do
+  not verify again in the background, so `currentVerification()` is null
+  between the expiry of a verification and the next request; that is not
+  a failure.
+- Status displays show `currentVerification()` for the verification in
+  use, and `lastVerificationAttempt()` for the outcome of the latest
+  attempt, which may be a failure.
+- Live status and logging use `onVerificationAttempt`, which is told of
+  every attempt, with the host that it verified, including the retries
+  that `lastVerificationAttempt()` has already moved past:
 
 ```kotlin
 import sh.tinfoil.VerificationAttempt
 import sh.tinfoil.VerificationException
 
 val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
-    onVerification = { host, attempt ->
+    onVerificationAttempt = { host, attempt ->
         when (attempt) {
             is VerificationAttempt.Passed ->
                 println("$host runs ${attempt.report.verifiedFacts?.codeDigest}")
@@ -248,7 +277,7 @@ process, and read in the same way whichever SDK wrote it:
 
 ```kotlin
 val client = EnclaveHttpClient.create("enclave.example.com", Trust.RepoPin("org/repo")) {
-    onVerification = { _, attempt ->
+    onVerificationAttempt = { _, attempt ->
         val report = attempt.report ?: (attempt.error?.cause as? VerificationException)?.report
         report?.let { println(it.toJson()) }
     }
@@ -260,7 +289,11 @@ The JSON has a `schema_version`, one step for each layer, and either
 lowercase, times are RFC 3339 in UTC, and a fact that was not established
 is left out. A measurement names its `platform` and its registers, as in
 `{"platform": "tdx", "rtmr1": "…", "rtmr2": "…"}`, and the TLS and HPKE
-keys appear only in `verified_facts.crypto_material`.
+keys appear only in `verified_facts.crypto_material`. Every report that a
+client hands out names the host that the client contacted for the document
+in `metadata.host` (for a router client the router, for a gateway client
+the replica), so that a proxy that passes a report on need not add it. The
+host is what the client connected to, not an attested fact.
 
 The JSON authorizes nothing. This SDK has no API that reads it back into a
 report or into verified facts, and whoever holds it cannot tell whether a
@@ -307,6 +340,17 @@ are verified against its pin's repository, and against one release of it if
 the pin has a tag or a digest; the gateway's catalog must name that
 repository for the model. A pin without a policy of its own takes the
 client's `policy`.
+
+The gateway client verifies each model's replicas separately, so its
+`ensureVerified(model)` and `reverify(model)` take the model. `reverify`
+verifies again the replica that `ensureVerified` would return for it. When
+that replica fails with an `AttestationException`, its verification is
+withdrawn and `reverify` moves on to the next replica, as `ensureVerified`
+then does; any other failure keeps the replica's verification while it is
+valid, and is thrown. `replicas()` returns an entry for each replica that
+the client has tried to verify, with its host, the models requested through
+it, its `current` verification, which follows the rule of
+`currentVerification()` for that replica, and its `lastAttempt`.
 
 A request has to name its model, so the calls of the OpenAI SDK that name
 none, such as listing models, are refused; `GatewayHttpClient.models()` lists what
@@ -574,9 +618,13 @@ SDKs. The changes are breaking:
 | `EmbeddedReferences(runtime = ..., platform = ...)` | `Policy(artifacts = ArtifactTrust.EmbeddedArtifacts(runtime, platform))` |
 | `ModelPin(repo, verifier)` | `ModelPin(repo, policy)` |
 | `GatewayOptions.baseUrl`, `GatewayHttpClient.DEFAULT_BASE_URL` | `GatewayOptions.url`, `GatewayHttpClient.DEFAULT_URL` |
+| a gateway URL that carries the API path, as `https://inference-gateway.tinfoil.sh/v1/`, with the catalog and the attestation relay at its origin | the gateway's origin, `https://inference-gateway.tinfoil.sh/`, or the URL that it is mounted under, with the catalog and the relay joined under it; the OpenAI client adds `apiPath`, `/v1/` by default, which it now takes with a gateway client too |
 | `GatewayOptions.pinnedModelsOnly = true` | none: a gateway client serves only the models in `modelPins` |
 | a gateway client without `modelPins`, or a request for a model without a pin, which was verified against the catalog's repository | refused with a `ConfigurationException`: pin every model that the client is to serve |
 | `ReplicaVerification.pinnedModel: String?` | `ReplicaVerification.pinnedModel: String` |
+| `client.current` | `client.currentVerification()`, a `VerificationReport`, for the verification in use; `client.lastVerificationAttempt()` for the latest attempt |
+| `onVerificationResult = { result -> ... }` | `onVerificationAttempt = { host, attempt -> ... }`, called for failed attempts too |
+| `GatewayHttpClient.current`, with `ReplicaVerification.verification` | `GatewayHttpClient.replicas()`, with `ReplicaVerification.current` and `ReplicaVerification.lastAttempt` |
 | `Verifier.PUBLIC_REGISTRY_ID` | `Trust.PUBLIC_REGISTRY_ID` |
 | `client.pin` | `client.trust` on the enclave client; none on the router client |
 | `transportMode = TransportMode.EHBP` | `transport = Transport.Ehbp()` |

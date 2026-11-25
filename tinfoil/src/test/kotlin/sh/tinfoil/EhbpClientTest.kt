@@ -341,7 +341,7 @@ class EhbpClientTest {
         assertEquals(2, enclave.fetches)
         val received = atProxy.received.single()
         assertEquals("""{"q":"$MARKER"}""", received.text, "the body was sealed to the key of the new verification")
-        assertNotEquals(expired.publicKey, client.lastVerification().facts?.hpkePublicKey)
+        assertNotEquals(expired.publicKey, client.lastVerificationAttempt().facts?.hpkePublicKey)
     }
 
     // What is sealed.
@@ -377,7 +377,7 @@ class EhbpClientTest {
         enclave.endorsed = { other.fingerprint }
         val client = direct()
         assertEquals("https://${enclave.host}/".toHttpUrl(), client.baseUrl)
-        assertEquals(key.publicKey, client.lastVerification().facts?.hpkePublicKey)
+        assertEquals(key.publicKey, client.lastVerificationAttempt().facts?.hpkePublicKey)
 
         val response = client.execute(client.post("""{"question":"$MARKER"}"""))
 
@@ -1008,7 +1008,7 @@ class EhbpClientTest {
         val results = CopyOnWriteArrayList<VerificationAttempt>()
         val client = enclave.client(
             transport = Transport.Ehbp(proxyUrl),
-            onVerification = { _, result -> results += result },
+            onVerificationAttempt = { _, result -> results += result },
         )
         val attested = key
         key = SealingKey()
@@ -1035,8 +1035,8 @@ class EhbpClientTest {
             "each attempt is sealed anew",
         )
         assertEquals(2, enclave.fetches, "the enclave was verified again, once")
-        assertEquals(key.publicKey, client.lastVerification().facts?.hpkePublicKey)
-        assertNotEquals(attested.publicKey, client.lastVerification().facts?.hpkePublicKey)
+        assertEquals(key.publicKey, client.lastVerificationAttempt().facts?.hpkePublicKey)
+        assertNotEquals(attested.publicKey, client.lastVerificationAttempt().facts?.hpkePublicKey)
         assertNotNull(recoverable.recoveryToken, "the token is that of the request that was answered")
         awaitUntil { results.size == 2 }
 

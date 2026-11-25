@@ -57,9 +57,9 @@ class EnclaveHttpClientLiveTest {
 
         EnclaveHttpClient.create(enclave = enclave, trust = trust) {
             verificationCheck = VerificationCheck { seen += it }
-            onVerification = { _, attempt -> results += attempt }
+            onVerificationAttempt = { _, attempt -> results += attempt }
         }.use { client ->
-            val report = assertNotNull(client.lastVerification()?.report, "a client is verified when it is returned")
+            val report = assertNotNull(client.lastVerificationAttempt()?.report, "a client is verified when it is returned")
             val verified = assertNotNull(report.verifiedFacts)
             assertSame(verified, seen.single())
             assertSame(report, awaitOne(results).report)
@@ -101,7 +101,7 @@ class EnclaveHttpClientLiveTest {
 
         val error = assertFailsWith<AttestationException> {
             EnclaveHttpClient.create(enclave = enclave, trust = Trust.RepoPin("tinfoilsh/not-the-router")) {
-                onVerification = { _, attempt -> results += attempt }
+                onVerificationAttempt = { _, attempt -> results += attempt }
             }
         }
 

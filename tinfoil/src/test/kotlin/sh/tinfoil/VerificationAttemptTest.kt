@@ -32,8 +32,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * How a client reports each attempt to verify its enclave: through
- * `lastVerification()` and the `onVerification` option. Router discovery and
- * the gateway's replicas are tested with their clients.
+ * `lastVerificationAttempt()` and the `onVerificationAttempt` option.
+ * Router discovery and the gateway's replicas are tested with their clients.
  */
 class VerificationAttemptTest {
     private val enclave = TestEnclave()
@@ -49,7 +49,7 @@ class VerificationAttemptTest {
     private fun test(block: suspend CoroutineScope.() -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
     private suspend fun client(verificationCheck: VerificationCheck? = null): EnclaveHttpClient =
-        enclave.client(verificationCheck = verificationCheck, onVerification = { host, attempt -> attempts += host to attempt })
+        enclave.client(verificationCheck = verificationCheck, onVerificationAttempt = { host, attempt -> attempts += host to attempt })
 
     /** Waits for [count] attempts to be reported, and for no more. */
     private fun awaitAttempts(count: Int): List<Pair<String, VerificationAttempt>> {
@@ -65,7 +65,7 @@ class VerificationAttemptTest {
     fun anInitialVerificationIsReportedOnceWithTheEnclavesHostAndTheSameReport() = test {
         val client = client()
 
-        val last = assertIs<VerificationAttempt.Passed>(client.lastVerification())
+        val last = assertIs<VerificationAttempt.Passed>(client.lastVerificationAttempt())
         assertNotNull(last.report.verifiedFacts)
         assertNull(last.report.partialFacts)
         assertNull(last.error)
@@ -73,6 +73,7 @@ class VerificationAttemptTest {
         assertEquals(enclave.host, host)
         assertSame(last.report, reported.report)
         assertSame(last.report, client.ensureVerified())
+        assertSame(last.report, client.currentVerification())
     }
 
     @Test
@@ -102,7 +103,7 @@ class VerificationAttemptTest {
 
         val error = assertFailsWith<AttestationException> { client.reverify() }
 
-        val last = assertIs<VerificationAttempt.Failed>(client.lastVerification())
+        val last = assertIs<VerificationAttempt.Failed>(client.lastVerificationAttempt())
         assertSame(error, last.error)
         assertNull(last.report)
         assertIs<VerificationException>(last.error.cause)
@@ -124,19 +125,19 @@ class VerificationAttemptTest {
             assertTrue(cause !is VerificationException, "a failed fetch has no report")
             cause = cause.cause
         }
-        assertSame(error, client.lastVerification()?.error)
+        assertSame(error, client.lastVerificationAttempt()?.error)
         assertSame(error, awaitAttempts(3).last().second.error)
     }
 
     @Test
     fun aFailedReverificationReplacesAnEarlierSuccess() = test {
         val client = client()
-        val passed = assertNotNull(client.lastVerification()?.report)
+        val passed = assertNotNull(client.lastVerificationAttempt()?.report)
         enclave.verifier.verify = { _, _, _ -> throw rejection() }
 
         assertFailsWith<AttestationException> { client.reverify() }
 
-        assertIs<VerificationAttempt.Failed>(client.lastVerification())
+        assertIs<VerificationAttempt.Failed>(client.lastVerificationAttempt())
         assertEquals(listOf(passed, null, null), awaitAttempts(3).map { it.second.report })
     }
 
@@ -157,7 +158,8 @@ class VerificationAttemptTest {
         val reported = awaitAttempts(2)
         assertIs<VerificationAttempt.Failed>(reported[0].second)
         val retry = assertIs<VerificationAttempt.Passed>(reported[1].second)
-        assertSame(retry.report, client.lastVerification()?.report)
+        assertSame(retry.report, client.lastVerificationAttempt()?.report)
+        assertSame(retry.report, client.currentVerification())
     }
 
     @Test
@@ -171,7 +173,7 @@ class VerificationAttemptTest {
         val reported = awaitAttempts(2)
         assertEquals(listOf(enclave.host, enclave.host), reported.map { it.first })
         assertEquals(enclave.certificate.fingerprint, reported[1].second.report?.verifiedFacts?.tlsPublicKeyFingerprint)
-        assertSame(reported[1].second.report, client.lastVerification()?.report)
+        assertSame(reported[1].second.report, client.lastVerificationAttempt()?.report)
     }
 
     @Test
@@ -200,7 +202,7 @@ class VerificationAttemptTest {
     fun theCheckSeesOnlyVerifiedFactsAndNothingOfAFailedVerification() = test {
         val seen = CopyOnWriteArrayList<VerifiedFacts>()
         val client = client(verificationCheck = { seen += it })
-        assertSame(client.lastVerification()?.report?.verifiedFacts, seen.single())
+        assertSame(client.lastVerificationAttempt()?.report?.verifiedFacts, seen.single())
 
         enclave.verifier.verify = { _, _, _ -> throw rejection() }
         assertFailsWith<AttestationException> { client.reverify() }
@@ -212,8 +214,8 @@ class VerificationAttemptTest {
     fun theObserverMayReadTheLastVerificationWithoutADeadlock() = test {
         val holder = AtomicReference<EnclaveHttpClient>()
         val read = CopyOnWriteArrayList<Pair<VerificationAttempt, VerificationAttempt?>>()
-        val client = enclave.client(onVerification = { _, attempt ->
-            holder.get()?.let { read += attempt to it.lastVerification() }
+        val client = enclave.client(onVerificationAttempt = { _, attempt ->
+            holder.get()?.let { read += attempt to it.lastVerificationAttempt() }
         })
         holder.set(client)
 
@@ -234,7 +236,7 @@ class VerificationAttemptTest {
         // cancellation of its own.
         val thrown = listOf(IllegalStateException("observer"), NotImplementedError("observer"), CancellationException("observer"))
         val calls = AtomicInteger()
-        val client = enclave.client(onVerification = { host, attempt ->
+        val client = enclave.client(onVerificationAttempt = { host, attempt ->
             attempts += host to attempt
             throw thrown[calls.getAndIncrement() % thrown.size]
         })
@@ -253,7 +255,7 @@ class VerificationAttemptTest {
         val reports = waiters.awaitAll().map { it.getOrThrow() }
 
         assertSame(reports[0], reports[1], "both waiters got the one outcome")
-        assertSame(reports[0], client.lastVerification()?.report)
+        assertSame(reports[0], client.lastVerificationAttempt()?.report)
 
         // A failed verification reaches both of its waiters as itself, and
         // each of its attempts is still reported after the observer threw.
@@ -270,7 +272,7 @@ class VerificationAttemptTest {
         val error = assertIs<AttestationException>(errors[0])
         assertSame(error, errors[1], "both waiters got the one outcome")
         assertIs<VerificationException>(error.cause)
-        assertSame(error, client.lastVerification()?.error)
+        assertSame(error, client.lastVerificationAttempt()?.error)
         // Creation, the shared verification, and the two attempts of the
         // failed one, which was tried once more.
         val reported = awaitAttempts(4)
@@ -296,7 +298,7 @@ class VerificationAttemptTest {
         }
 
         assertEquals(before, client.ensureVerified().toString())
-        assertEquals(before, client.lastVerification()?.report.toString())
+        assertEquals(before, client.lastVerificationAttempt()?.report.toString())
         assertEquals(4, client.ensureVerified().steps.size)
     }
 }
