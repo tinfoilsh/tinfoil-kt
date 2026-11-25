@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   test:
+    name: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -37,9 +38,10 @@ jobs:
 
       # In both modules, tinfoil and tinfoil-openai. The build downloads the
       # verifier library of the tinfoil-go release in tinfoil-go.properties,
-      # and fails unless its SHA-256 is the pinned one.
-      - name: Build, lint, run the unit tests and check the public API
-        run: ./gradlew --console=plain assembleRelease lintRelease testDebugUnitTest apiCheck
+      # and fails unless its SHA-256 is the pinned one. Lint and the API
+      # check run in the job lint, at the same time as this one.
+      - name: Build and run the unit tests
+        run: ./gradlew --console=plain assembleRelease testDebugUnitTest
 
       # The tests that reach the verifier library are instrumented tests, which
       # need an emulator; they are run locally for now
@@ -52,3 +54,30 @@ jobs:
       # tinfoil-conformance.properties. With an emulator, they belong in a job
       # of their own, with TINFOIL_CONFORMANCE=1: that build refuses to
       # package the library, so it cannot share this job.
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          # Pull requests read the cache and never write it.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # In both modules, with the same download of the verifier library as
+      # the job test.
+      - name: Lint and check the public API
+        run: ./gradlew --console=plain lintRelease apiCheck
